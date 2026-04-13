@@ -1,0 +1,29 @@
+{
+    "task": "nuo_auditory",
+    "model_id": "2 states 3 covs",
+    "alias": "2 states 3 covs",
+    "subjects": [
+        "NUO001",
+        "NUO002",
+        "NUO003",
+        "NUO004",
+        "NUO005",
+        "NUO006",
+        "NUO007",
+        "NUO009",
+        "NUO010",
+        "NUO012"
+    ],
+    "tau": 3,
+    "cv_mode": "none",
+    "cv_repeats": 0,
+    "emission_cols": [
+        "bias",
+        "stim_vals",
+        "at_choice"
+    ],
+    "K_list": [
+        2
+    ],
+    "frozen_emissions": {}
+}

@@ -1,0 +1,46 @@
+{
+    "task": "2AFC",
+    "tau": 3,
+    "subjects": [
+        "325",
+        "326",
+        "327",
+        "329",
+        "330",
+        "332",
+        "333",
+        "335",
+        "337",
+        "419",
+        "420",
+        "422",
+        "561",
+        "616",
+        "617",
+        "619",
+        "623",
+        "807",
+        "820",
+        "821",
+        "873",
+        "875",
+        "907",
+        "909",
+        "911"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_vals",
+        "at_choice"
+    ],
+    "transition_cols": [
+        "prev_abs_stim"
+    ],
+    "frozen_emissions": {},
+    "K_list": [
+        2
+    ],
+    "model_id": "2 states 3 covs,prev_abs_stim",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5
+}

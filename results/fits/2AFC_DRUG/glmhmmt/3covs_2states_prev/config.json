@@ -1,0 +1,33 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 3,
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_vals",
+        "at_choice"
+    ],
+    "transition_cols": [
+        "reward_trace",
+        "prev_abs_stim",
+        "Drug"
+    ],
+    "frozen_emissions": {},
+    "K_list": [
+        2
+    ],
+    "model_id": "3covs_2states_prev",
+    "cv_mode": "none",
+    "cv_repeats": 0
+}

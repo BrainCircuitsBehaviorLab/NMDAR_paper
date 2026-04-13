@@ -1,0 +1,15 @@
+{
+    "task": "2AFC",
+    "tau": 5,
+    "emission_cols": [
+        "bias",
+        "stim_2",
+        "stim_4",
+        "stim_8",
+        "stim_20"
+    ],
+    "num_classes": 3,
+    "lapse": true,
+    "lapse_max": 0.5,
+    "model_id": "one hot lapses"
+}

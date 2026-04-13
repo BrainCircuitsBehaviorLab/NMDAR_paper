@@ -1,0 +1,23 @@
+{
+    "task": "MCDR",
+    "tau": 5,
+    "emission_cols": [
+        "stim4R",
+        "stim4C",
+        "stim4L",
+        "stim3R",
+        "stim3C",
+        "stim2R",
+        "stim3L",
+        "stim2L",
+        "stim2C",
+        "stim1R",
+        "stim1C",
+        "stim1L",
+        "bias"
+    ],
+    "num_classes": 3,
+    "lapse": false,
+    "lapse_max": 0.2,
+    "model_id": "One-hot"
+}

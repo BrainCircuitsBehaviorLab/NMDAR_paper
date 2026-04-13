@@ -1,0 +1,20 @@
+{
+    "task": "MCDR",
+    "tau": 5,
+    "emission_cols": [
+        "biasL",
+        "biasC",
+        "biasR",
+        "delay",
+        "SL",
+        "SC",
+        "SR",
+        "SLxdelay",
+        "SRxdelay",
+        "SCxdelay"
+    ],
+    "num_classes": 3,
+    "lapse": false,
+    "lapse_max": 0.2,
+    "model_id": "no_onset"
+}

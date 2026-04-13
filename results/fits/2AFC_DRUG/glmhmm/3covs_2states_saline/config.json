@@ -1,0 +1,29 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 1,
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_vals",
+        "at_choice"
+    ],
+    "frozen_emissions": {},
+    "K_list": [
+        2
+    ],
+    "model_id": "3covs_2states_saline",
+    "cv_mode": "none",
+    "cv_repeats": 0,
+    "condition_filter": "saline"
+}

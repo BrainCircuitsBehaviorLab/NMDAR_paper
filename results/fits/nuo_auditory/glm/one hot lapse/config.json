@@ -1,0 +1,30 @@
+{
+    "task": "nuo_auditory",
+    "tau": 50,
+    "emission_cols": [
+        "bias",
+        "stim_bin_00",
+        "stim_bin_01",
+        "stim_bin_02",
+        "stim_bin_03",
+        "stim_bin_04",
+        "stim_bin_05",
+        "stim_bin_06",
+        "stim_bin_07",
+        "stim_bin_08",
+        "choice_lag_01",
+        "choice_lag_02",
+        "choice_lag_03",
+        "choice_lag_04",
+        "choice_lag_05",
+        "choice_lag_06",
+        "choice_lag_07",
+        "choice_lag_10",
+        "choice_lag_08",
+        "choice_lag_09"
+    ],
+    "num_classes": 3,
+    "lapse": true,
+    "lapse_max": 0.5,
+    "model_id": "one hot lapse"
+}

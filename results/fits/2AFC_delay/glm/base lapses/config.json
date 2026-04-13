@@ -1,0 +1,15 @@
+{
+    "task": "2AFC_delay",
+    "tau": 3,
+    "emission_cols": [
+        "bias",
+        "stim",
+        "delay",
+        "stim_x_delay",
+        "at_choice"
+    ],
+    "num_classes": 3,
+    "lapse": true,
+    "lapse_max": 0.5,
+    "model_id": "base lapses"
+}

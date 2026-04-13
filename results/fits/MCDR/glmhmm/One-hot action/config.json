@@ -1,0 +1,40 @@
+{
+    "task": "MCDR",
+    "tau": 5,
+    "subjects": [
+        "A83",
+        "A86",
+        "A87",
+        "A89",
+        "A92",
+        "A93",
+        "A95",
+        "A96"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim1L",
+        "stim1C",
+        "stim1R",
+        "stim2L",
+        "stim2C",
+        "stim2R",
+        "stim3L",
+        "stim3C",
+        "stim3R",
+        "stim4L",
+        "stim4C",
+        "stim4R",
+        "A_L",
+        "A_C",
+        "A_R"
+    ],
+    "frozen_emissions": {},
+    "K_list": [
+        2
+    ],
+    "model_id": "One-hot action",
+    "cv_mode": "none",
+    "cv_repeats": 0,
+    "condition_filter": "all"
+}

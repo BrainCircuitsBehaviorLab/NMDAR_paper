@@ -1,0 +1,15 @@
+{
+    "task": "2AFC",
+    "tau": 5,
+    "emission_cols": [
+        "stim_vals",
+        "bias"
+    ],
+    "num_classes": 3,
+    "lapse_mode": "history",
+    "lapse_max": 0.7,
+    "n_restarts": 1,
+    "restart_noise_scale": 0.05,
+    "seed": 0,
+    "model_id": "base_lapses_shared"
+}

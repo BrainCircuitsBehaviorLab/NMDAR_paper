@@ -1,0 +1,17 @@
+[paths]
+data_dir = "./data/processed"
+results_dir = "./results"
+
+[plugins]
+adapter_paths = ["./src/process"]
+plot_paths = ["./src/plots"]
+
+[plot-saver]
+format = "pdf"
+default_label = "Save"
+save_all_label = "Save all model plots"
+
+[plot-saver.theme]
+radius = "8px"
+padding_y = "0.45rem"
+padding_x = "0.9rem"

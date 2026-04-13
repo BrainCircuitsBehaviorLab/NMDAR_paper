@@ -1,0 +1,16 @@
+{
+    "task": "2AFC",
+    "tau": 50,
+    "emission_cols": [
+        "stim_vals",
+        "at_choice",
+        "at_error",
+        "at_correct",
+        "prev_choice",
+        "wsls"
+    ],
+    "K_list": [
+        2
+    ],
+    "model_id": "glmhmm"
+}
