@@ -7,7 +7,7 @@ name = "nmdar-paper"
 version = "0.1.0"
 description = "Analysis notebooks and task adapters for the NMDAR paper."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = "==3.13"
 dependencies = [
     "bottleneck>=1.6.0",
     "glmhmmt>=0.1.8",
