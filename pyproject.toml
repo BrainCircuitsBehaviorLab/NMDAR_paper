@@ -10,8 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11, <3.14"
 dependencies = [
     "bottleneck>=1.6.0",
-    "glmhmmt>=0.1.8",
-    "marimo==0.23.0",
+    "glmhmmt==0.1.12",
+    "marimo==0.23.1",
     "numexpr>=2.14.1",
     "plot-saver",
     "tensorflow-probability==0.25.0",

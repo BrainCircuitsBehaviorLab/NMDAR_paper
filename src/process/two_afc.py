@@ -1,6 +1,7 @@
 """Task adapter for the 2AFC (Alexis human) task."""
 from __future__ import annotations
 
+from functools import lru_cache
 import types
 from typing import List, Tuple, Dict, Any
 
@@ -16,17 +17,24 @@ from glmhmmt.tasks.fitted_regressors import (
     weighted_sum_regressor,
 )
 from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
+from glmhmmt.runtime import get_data_dir
 
 # Default experiments to keep (avoids habituation / drug sessions)
 _KEEP_EXPERIMENTS = ["2AFC_2", "2AFC_3", "2AFC_4", "2AFC_6"]
 _SF_COL_PREFIX = "sf_"
 _STIM_ABS_COL_PREFIX = "stim_"
+_BIAS_HOT_COL_PREFIX = "bias_"
+_CHOICE_LAG_COL_PREFIX = "choice_lag_"
+_NUM_CHOICE_LAGS = 15
+_RAW_PARAM_MODEL_ID = "one hot sessions lags"
 EMISSION_COLS: list[str] = [
     "bias",
+    "bias_param",
     "stim_vals",
     "stim_param",
     "stim_strength",
     "at_choice",
+    "at_choice_param",
     "at_error",
     "at_correct",
     "reward_trace",
@@ -52,17 +60,36 @@ _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     fit_model_kind="glm",
     fit_model_id="one hot lapses",
     arrays_suffix="glm_arrays.npz",
-    exclude_features=("bias", "stim_0"),
+    source_feature_prefixes=(_STIM_ABS_COL_PREFIX,),
+    exclude_features=("stim_0",),
     excluded_subjects=("325", "325.0"),
     sign=-1.0,
+)
+_BIAS_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="bias_param",
+    fit_task="2AFC",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_BIAS_HOT_COL_PREFIX,),
+)
+_AT_CHOICE_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="at_choice_param",
+    fit_task="2AFC",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
 )
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "stim_vals": r"$\mathrm{Stimulus}$",
     "stim_param": r"$\mathrm{Stimulus}_{\mathrm{param}}$",
     "stim_strength": r"$\mathrm{Stimulus}_{\mathrm{strength}}$",
-    "bias": f"$\mid\mathrm{{bias}}\mid$",
+    "bias": r"$\mid\mathrm{bias}\mid$",
+    "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
     "at_choice": r"$\mathrm{A}_t^{\mathrm{choice}}$",
+    "at_choice_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
     "at_error": r"$\mathrm{A}_t^{\mathrm{error}}$",
     "at_correct": r"$\mathrm{A}_t^{\mathrm{correct}}$",
     "reward_trace": r"$\mathrm{Reward}_{\mathrm{trace}}$",
@@ -84,6 +111,16 @@ def _stim_abs_sort_key(name: str) -> tuple[int, str]:
     return (int(suffix), name) if suffix.isdigit() else (10**9, name)
 
 
+def _bias_hot_sort_key(name: str) -> tuple[int, str]:
+    suffix = name.removeprefix(_BIAS_HOT_COL_PREFIX)
+    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
+
+
+def _choice_lag_sort_key(name: str) -> tuple[int, str]:
+    suffix = name.removeprefix(_CHOICE_LAG_COL_PREFIX)
+    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
+
+
 def _stim_abs_cols(columns: list[str]) -> list[str]:
     return sorted(
         [
@@ -93,6 +130,30 @@ def _stim_abs_cols(columns: list[str]) -> list[str]:
             and col.removeprefix(_STIM_ABS_COL_PREFIX).isdigit()
         ],
         key=_stim_abs_sort_key,
+    )
+
+
+def _bias_hot_cols(columns: list[str]) -> list[str]:
+    return sorted(
+        [
+            col
+            for col in columns
+            if col.startswith(_BIAS_HOT_COL_PREFIX)
+            and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+        ],
+        key=_bias_hot_sort_key,
+    )
+
+
+def _choice_lag_cols(columns: list[str]) -> list[str]:
+    return sorted(
+        [
+            col
+            for col in columns
+            if col.startswith(_CHOICE_LAG_COL_PREFIX)
+            and col.removeprefix(_CHOICE_LAG_COL_PREFIX).isdigit()
+        ],
+        key=_choice_lag_sort_key,
     )
 
 
@@ -106,6 +167,48 @@ def _infer_stim_abs_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     ild_series = df["ILD"].drop_nulls() if isinstance(df, pl.DataFrame) else df["ILD"].dropna()
     stim_abs_levels = sorted({int(abs(v)) for v in ild_series.to_list()})
     return [f"{_STIM_ABS_COL_PREFIX}{stim_abs}" for stim_abs in stim_abs_levels]
+
+
+def _choice_lag_names() -> list[str]:
+    return [f"{_CHOICE_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, _NUM_CHOICE_LAGS + 1)]
+
+
+def _max_sessions_from_df(df: pl.DataFrame | pd.DataFrame) -> int:
+    if "subject" not in df.columns or "Session" not in df.columns:
+        return _max_subject_sessions()
+    if isinstance(df, pl.DataFrame):
+        return int(
+            df.group_by("subject")
+            .agg(pl.col("Session").n_unique().alias("n_sessions"))
+            .select(pl.col("n_sessions").max())
+            .item()
+            or 0
+        )
+    grouped = df.groupby("subject", sort=False)["Session"].nunique()
+    return int(grouped.max()) if len(grouped) else 0
+
+
+def _infer_bias_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
+    columns = list(df.columns)
+    existing = _bias_hot_cols(columns)
+    if existing:
+        return existing
+    max_sessions = _max_sessions_from_df(df)
+    return [f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(max_sessions)]
+
+
+@lru_cache(maxsize=1)
+def _max_subject_sessions() -> int:
+    dataset_path = get_data_dir() / "alexis_combined.parquet"
+    df = pl.read_parquet(dataset_path)
+    df = df.filter(pl.col("Experiment").is_in(_KEEP_EXPERIMENTS))
+    return int(
+        df.group_by("subject")
+        .agg(pl.col("Session").n_unique().alias("n_sessions"))
+        .select(pl.col("n_sessions").max())
+        .item()
+        or 0
+    )
 
 
 def _stim_param_weight_map() -> dict[int, float]:
@@ -178,6 +281,8 @@ class TwoAFCAdapter(TaskAdapter):
         df_sub: pl.DataFrame,
         tau: float = 50.0,
         include_stim_strength: bool = False,
+        include_bias_param: bool = False,
+        include_at_choice_param: bool = False,
     ) -> pl.DataFrame:
         """Return the Alexis 2AFC feature dataframe owned by this adapter."""
         from glmhmmt.cli.alexis_functions import get_action_trace, make_frames_dm
@@ -198,11 +303,28 @@ class TwoAFCAdapter(TaskAdapter):
                 for v in df_pd["ILD"].dropna().astype(int).tolist()
             }
         )
+        max_sessions = _max_subject_sessions()
+        session_order = list(dict.fromkeys(df_pd["Session"].tolist()))
+        session_to_idx = {session_name: idx for idx, session_name in enumerate(session_order)}
+        choice_lag_cols = _choice_lag_names()
         parts = []
         for _, df_session in df_pd.groupby("Session", sort=False):
             part = df_session.copy().reset_index(drop=True)
-            part["bias"] = 1.0
-            part["stim_vals"] = part["ILD"].astype(float) / stim_scale
+            session_idx = session_to_idx[df_session["Session"].iloc[0]]
+            bias_hot = pd.get_dummies(
+                pd.Series(
+                    np.full(len(part), session_idx, dtype=np.int32),
+                    index=part.index,
+                ),
+                prefix=_BIAS_HOT_COL_PREFIX.removesuffix("_"),
+                prefix_sep="_",
+                dtype=np.float32,
+            ).reindex(
+                columns=[f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(max_sessions)],
+                fill_value=0.0,
+            )
+
+            stim_hot_cols: dict[str, np.ndarray] = {}
             for stim_abs in stim_abs_levels:
                 if stim_abs == 0:
                     stim_col = np.where(part["ILD"] == 0, 1.0, 0.0).astype(np.float32)
@@ -212,7 +334,32 @@ class TwoAFCAdapter(TaskAdapter):
                         [1.0, -1.0],
                         default=0.0,
                     ).astype(np.float32)
-                part[f"{_STIM_ABS_COL_PREFIX}{stim_abs}"] = stim_col
+                stim_hot_cols[f"{_STIM_ABS_COL_PREFIX}{stim_abs}"] = stim_col
+            signed_choice = (2.0 * part["Choice"].fillna(0).astype(np.float32)) - 1.0
+
+            choice_lag_df = pd.DataFrame(
+                {
+                    lag_col: signed_choice.shift(lag_idx).fillna(0.0).astype(np.float32)
+                    for lag_idx, lag_col in enumerate(choice_lag_cols, start=1)
+                },
+                index=part.index,
+            )
+            part = pd.concat(
+                [
+                    part,
+                    pd.DataFrame(
+                        {
+                            "bias": np.ones(len(part), dtype=np.float32),
+                            "stim_vals": (part["ILD"].astype(float) / stim_scale).astype(np.float32),
+                        },
+                        index=part.index,
+                    ),
+                    bias_hot,
+                    pd.DataFrame(stim_hot_cols, index=part.index),
+                    choice_lag_df,
+                ],
+                axis=1,
+            )
             part[_STIM_PARAM_COL] = _build_stim_param(part, stim_abs_levels)
 
             existing_sf_cols = [
@@ -228,27 +375,62 @@ class TwoAFCAdapter(TaskAdapter):
                 part = pd.concat([part.reset_index(drop=True), stim_strength], axis=1)
 
             at_choice, at_error, at_correct, reward_trace = get_action_trace(part)
-            part["at_choice"] = np.asarray(at_choice, dtype=np.float32)
-            part["at_error"] = np.asarray(at_error, dtype=np.float32)
-            part["at_correct"] = np.asarray(at_correct, dtype=np.float32)
-            part["reward_trace"] = np.asarray(reward_trace, dtype=np.float32)
-            part["prev_choice"] = part["Choice"].shift(1).fillna(0).astype(np.float32)
-            part["prev_reward"] = part["Hit"].shift(1).fillna(0).astype(np.float32)
-
             cumulative_reward = part["Hit"].cumsum().shift(1).fillna(0).astype(float)
             max_cumulative_reward = float(np.nanmax(cumulative_reward.to_numpy())) if len(cumulative_reward) else 0.0
             if max_cumulative_reward > 0:
                 cumulative_reward = cumulative_reward / max_cumulative_reward
-            part["cumulative_reward"] = cumulative_reward.astype(np.float32)
-            part["prev_abs_stim"] = (part["ILD"].abs().shift(1).fillna(0) / stim_scale).astype(np.float32)
-            part["wsls"] = part["Side"].shift(1).fillna(0).replace({0: -1, 1: 1}).astype(np.float32)
+            derived_cols = pd.DataFrame(
+                {
+                    "at_choice": np.asarray(at_choice, dtype=np.float32),
+                    "at_error": np.asarray(at_error, dtype=np.float32),
+                    "at_correct": np.asarray(at_correct, dtype=np.float32),
+                    "reward_trace": np.asarray(reward_trace, dtype=np.float32),
+                    "prev_choice": part["Choice"].shift(1).fillna(0).astype(np.float32),
+                    "prev_reward": part["Hit"].shift(1).fillna(0).astype(np.float32),
+                    "cumulative_reward": cumulative_reward.astype(np.float32),
+                    "prev_abs_stim": (part["ILD"].abs().shift(1).fillna(0) / stim_scale).astype(np.float32),
+                    "wsls": part["Side"].shift(1).fillna(0).replace({0: -1, 1: 1}).astype(np.float32),
+                },
+                index=part.index,
+            )
+            part = pd.concat([part, derived_cols], axis=1)
+            if include_bias_param:
+                try:
+                    bias_param = weighted_sum_regressor(part, _BIAS_PARAM_SPEC, dtype=np.float32)
+                except (FileNotFoundError, ValueError) as exc:
+                    raise ValueError(
+                        f"Cannot build {_BIAS_PARAM_SPEC.target_name!r}; pooled fitted weights are unavailable "
+                        f"for {_BIAS_PARAM_SPEC.fit_task}/{_BIAS_PARAM_SPEC.fit_model_kind}/{_BIAS_PARAM_SPEC.fit_model_id}."
+                    ) from exc
+                part = pd.concat(
+                    [part, pd.DataFrame({"bias_param": bias_param}, index=part.index)],
+                    axis=1,
+                )
+            if include_at_choice_param:
+                try:
+                    at_choice_param = weighted_sum_regressor(part, _AT_CHOICE_PARAM_SPEC, dtype=np.float32)
+                except (FileNotFoundError, ValueError) as exc:
+                    raise ValueError(
+                        f"Cannot build {_AT_CHOICE_PARAM_SPEC.target_name!r}; pooled fitted weights are unavailable "
+                        f"for {_AT_CHOICE_PARAM_SPEC.fit_task}/{_AT_CHOICE_PARAM_SPEC.fit_model_kind}/{_AT_CHOICE_PARAM_SPEC.fit_model_id}."
+                    ) from exc
+                part = pd.concat(
+                    [part, pd.DataFrame({"at_choice_param": at_choice_param}, index=part.index)],
+                    axis=1,
+                )
             parts.append(part)
 
         return pl.from_pandas(pd.concat(parts, ignore_index=True))
 
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
         """Return the default 2AFC feature dataframe without frame regressors."""
-        return self._build_feature_df(df_sub, tau=tau, include_stim_strength=False)
+        return self._build_feature_df(
+            df_sub,
+            tau=tau,
+            include_stim_strength=False,
+            include_bias_param=False,
+            include_at_choice_param=False,
+        )
 
     def _resolved_emission_cols(
         self,
@@ -285,10 +467,14 @@ class TwoAFCAdapter(TaskAdapter):
         include_stim_strength = "stim_strength" in requested_emission_cols or any(
             col.startswith(_SF_COL_PREFIX) for col in requested_emission_cols
         )
+        include_bias_param = "bias_param" in requested_emission_cols
+        include_at_choice_param = "at_choice_param" in requested_emission_cols
         feature_df = self._build_feature_df(
             df_sub,
             tau=tau,
             include_stim_strength=include_stim_strength,
+            include_bias_param=include_bias_param,
+            include_at_choice_param=include_at_choice_param,
         )
         return self.build_design_matrices(
             feature_df,
@@ -335,7 +521,11 @@ class TwoAFCAdapter(TaskAdapter):
     def default_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
         # Exclude stim_strength (multi-column) and stim_param (alternate stimulus
         # encoding) by default; include precomputed sf_ cols at runtime.
-        default_cols = [c for c in EMISSION_COLS if c not in {"stim_strength", _STIM_PARAM_COL}]
+        default_cols = [
+            c
+            for c in EMISSION_COLS
+            if c not in {"stim_strength", _STIM_PARAM_COL, "bias_param", "at_choice_param"}
+        ]
         if df is not None:
             default_cols.extend(self.sf_cols(df))
         return list(dict.fromkeys(default_cols))
@@ -348,6 +538,8 @@ class TwoAFCAdapter(TaskAdapter):
         if df is not None:
             available_cols.extend(self.sf_cols(df))
             available_cols.extend(self.stim_abs_cols(df))
+            available_cols.extend(self.bias_hot_cols(df))
+            available_cols.extend(self.choice_lag_cols(df))
         return list(dict.fromkeys(available_cols))
 
     def available_transition_cols(self) -> List[str]:
@@ -393,6 +585,18 @@ class TwoAFCAdapter(TaskAdapter):
     def stim_abs_cols(self, df: pl.DataFrame) -> List[str]:
         """Return signed one-hot columns for absolute ILD magnitudes."""
         return _infer_stim_abs_cols_from_df(df)
+
+    def bias_hot_cols(self, df: pl.DataFrame) -> List[str]:
+        """Return subject-local session one-hot columns."""
+        return _infer_bias_hot_cols_from_df(df)
+
+    def choice_lag_cols(self, df: pl.DataFrame | None = None) -> List[str]:
+        """Return the previous-choice one-hot lag columns."""
+        if df is not None:
+            existing = _choice_lag_cols(list(df.columns))
+            if existing:
+                return existing
+        return _choice_lag_names()
 
     @property
     def choice_labels(self) -> list[str]:

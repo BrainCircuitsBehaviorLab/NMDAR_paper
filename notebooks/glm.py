@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.0"
+__generated_with = "0.23.1"
 app = marimo.App(width="medium")
 
 
@@ -41,6 +41,7 @@ def _():
     from glmhmmt.postprocess import build_trial_df
     from glmhmmt.runtime import configure_paths, get_runtime_paths
     from glmhmmt.tasks import get_adapter
+    from glmhmmt.views import get_state_color
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
@@ -91,7 +92,7 @@ def _(get_adapter, model_cfg):
 
 
 @app.cell
-def _(ModelManagerWidget, wrap_anywidget):
+def _(ModelManagerWidget, mo):
     mm_widget = ModelManagerWidget(
         model_type="glm",
         task="2AFC",
@@ -99,8 +100,8 @@ def _(ModelManagerWidget, wrap_anywidget):
         lapse_mode="none",
         lapse_max=0.2,
     )
-    ui_model_manager = wrap_anywidget(mm_widget)
-    return (ui_model_manager,)
+    ui_model_manager = mo.ui.anywidget(mm_widget)
+    return mm_widget, ui_model_manager
 
 
 @app.cell
@@ -108,6 +109,12 @@ def _(ModelCfg, ui_model_manager):
     model_cfg = ModelCfg.from_value(ui_model_manager.value)
     is_2afc = (model_cfg.task != "MCDR")
     return is_2afc, model_cfg
+
+
+@app.cell
+def _(mo):
+    get_last_fit_click, set_last_fit_click = mo.state(0)
+    return get_last_fit_click, set_last_fit_click
 
 
 @app.cell
@@ -163,24 +170,90 @@ def _(current_hash, mo, save_plot, ui_model_manager):
 
 
 @app.cell
-def _(fit_main, mo, model_cfg, task_name):
-    _clicks = model_cfg.run_fit_clicks
-    mo.stop(_clicks == 0, mo.md("Configure parameters and press **Run GLM Fit**."))
+def _(
+    current_hash,
+    fit_main,
+    get_last_fit_click,
+    mm_widget,
+    mo,
+    model_cfg,
+    paths,
+    set_last_fit_click,
+    task_name,
+):
+    _last_fit_click = get_last_fit_click()
+    mo.stop(
+        model_cfg.run_fit_clicks <= _last_fit_click,
+        mo.md("Configure parameters and press **Run fit**."),
+    )
+    set_last_fit_click(model_cfg.run_fit_clicks)
 
-    with mo.status.spinner(title=f"Fitting GLM for {len(model_cfg.subjects)} subjects..."):
-        fit_main(
-            subjects=model_cfg.subjects,
-            out_dir=None,
-            tau=model_cfg.tau,
-            emission_cols=model_cfg.emission_cols,
-            task=task_name,
-            model_alias=model_cfg.alias if model_cfg.alias else None,
-            lapse_mode=model_cfg.lapse_mode,
-            lapse_max=model_cfg.lapse_max,
-            n_restarts=1
+    _n_restarts = 1
+    _selected_id = model_cfg.existing or (model_cfg.alias if model_cfg.alias else current_hash)
+    _OUT = paths.RESULTS / "fits" / task_name / "glm" / _selected_id
+
+    def _progress_title(info: dict) -> str:
+        return (
+            f"Fitting GLM subject {info['subject_index']}/{info['subject_total']}: "
+            f"{info['subject']}"
         )
 
-    mo.md("✅ Fit complete. Plots updating...")
+    def _progress_subtitle(info: dict) -> str:
+        _base = f"Restart {info['restart_index']}/{info['restart_total']}"
+        if info.get("event") == "restart_complete":
+            return f"{_base} complete"
+        return _base
+
+    _total_progress = max(1, len(model_cfg.subjects) * _n_restarts)
+    mm_widget.is_running = True
+    try:
+        with mo.status.progress_bar(
+            total=_total_progress,
+            title="Fitting GLM",
+            subtitle=f"{len(model_cfg.subjects)} subjects × {_n_restarts} restart(s)",
+            completion_title="Fit complete",
+            completion_subtitle=f"Saved under {_selected_id}",
+        ) as _bar:
+            def _on_progress(info: dict) -> None:
+                if info.get("event") == "restart_start":
+                    _bar.update(
+                        increment=0,
+                        title=_progress_title(info),
+                        subtitle=_progress_subtitle(info),
+                    )
+                    return
+                if info.get("event") == "restart_complete":
+                    _bar.update(
+                        increment=1,
+                        title=_progress_title(info),
+                        subtitle=_progress_subtitle(info),
+                    )
+
+            fit_main(
+                subjects=model_cfg.subjects,
+                out_dir=_OUT,
+                tau=model_cfg.tau,
+                emission_cols=model_cfg.emission_cols,
+                task=task_name,
+                model_alias=model_cfg.alias if model_cfg.alias else None,
+                lapse_mode=model_cfg.lapse_mode,
+                lapse_max=model_cfg.lapse_max,
+                n_restarts=_n_restarts,
+                verbose=False,
+                progress_callback=_on_progress,
+            )
+        mm_widget.saved_model_name = _selected_id
+        mm_widget.alias_error = ""
+        mm_widget.alias_status = ""
+        if not model_cfg.alias:
+            mm_widget.alias = _selected_id
+        mm_widget._update_options()
+        if _selected_id in mm_widget.existing_models:
+            mm_widget.existing_model = _selected_id
+    finally:
+        mm_widget.is_running = False
+
+    mo.md("✅ Fit complete — plots below update automatically.")
     return
 
 
@@ -245,6 +318,202 @@ def _(adapter, arrays_store, build_views):
 @app.cell
 def _(is_2afc, np, pd, plt, sns):
     import re
+
+    _stim_pattern = re.compile(r"^stim_(\d+)$")
+    _choice_lag_pattern = re.compile(r"^choice_lag_(\d+)$")
+    _bias_pattern = re.compile(r"^bias_(\d+)$")
+    _stim_hot_order = [2, 4, 8, 20]
+
+    def _weights_df_to_plot_df(weights_df) -> pd.DataFrame:
+        df_plot = weights_df.to_pandas() if hasattr(weights_df, "to_pandas") else pd.DataFrame(weights_df)
+        df_plot = df_plot[df_plot["class_idx"] == 0].copy()
+        df_plot["feature"] = df_plot["feature"].astype(str)
+        df_plot["weight"] = pd.to_numeric(df_plot["weight"], errors="coerce")
+        df_plot["weight"] = -df_plot["weight"]
+        df_plot["state_rank"] = 0
+        df_plot["state_label"] = "State 0"
+        return df_plot.dropna(subset=["weight"]).copy()
+
+    def _raw_one_hot_mask(feature_series: pd.Series) -> pd.Series:
+        feature_names = feature_series.astype(str)
+        return (
+            feature_names.str.match(_stim_pattern)
+            | feature_names.str.match(_choice_lag_pattern)
+            | feature_names.str.match(_bias_pattern)
+        )
+
+    def plot_emission_weights_summary_clean(weights_df) -> plt.Figure | None:
+        df_plot = _weights_df_to_plot_df(weights_df)
+        if df_plot.empty:
+            return None
+        df_plot = df_plot.loc[~_raw_one_hot_mask(df_plot["feature"])].copy()
+        if df_plot.empty:
+            return None
+
+        def _feature_group(name: str) -> tuple[int, str]:
+            lname = str(name).lower()
+            if lname.startswith("stim"):
+                return (0, lname)
+            if "bias" in lname:
+                return (1, lname)
+            if lname.startswith("at_"):
+                return (2, lname)
+            return (3, lname)
+
+        feature_order = sorted(pd.unique(df_plot["feature"]), key=_feature_group)
+        df_plot["feature_label"] = pd.Categorical(
+            df_plot["feature"],
+            categories=feature_order,
+            ordered=True,
+        )
+        summary = (
+            df_plot.groupby("feature_label", as_index=False, observed=False)["weight"]
+            .mean()
+            .sort_values("feature_label")
+        )
+        if summary.empty:
+            return None
+
+        positions = np.arange(len(feature_order))
+        fig, ax = plt.subplots(figsize=(max(6.0, 0.9 * len(feature_order)), 4.2))
+        ax.plot(
+            positions,
+            summary["weight"],
+            color="#1f77b4",
+            marker="o",
+            linewidth=2.0,
+            markersize=6,
+        )
+        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.set_title("Emission weights")
+        ax.set_xlabel("")
+        ax.set_ylabel("Weight")
+        ax.set_xticks(positions)
+        ax.set_xticklabels(feature_order, rotation=35, ha="right")
+        sns.despine(ax=ax)
+        fig.tight_layout()
+        return fig
+
+    def plot_stim_hot_weights(weights_df) -> plt.Figure | None:
+        df_plot = _weights_df_to_plot_df(weights_df)
+        if df_plot.empty:
+            return None
+        df_plot["stim_level"] = df_plot["feature"].str.extract(_stim_pattern, expand=False)
+        df_plot = df_plot[df_plot["stim_level"].notna()].copy()
+        if df_plot.empty:
+            return None
+        df_plot["stim_level"] = df_plot["stim_level"].astype(int)
+        df_plot = df_plot[df_plot["stim_level"].isin(_stim_hot_order)].copy()
+        if df_plot.empty:
+            return None
+        observed_levels = [level for level in _stim_hot_order if level in set(df_plot["stim_level"])]
+        summary = (
+            df_plot.groupby("stim_level", as_index=False)["weight"]
+            .mean()
+            .sort_values("stim_level")
+        )
+        if summary.empty:
+            return None
+
+        positions = np.arange(len(observed_levels))
+        fig, ax = plt.subplots(figsize=(5, 4))
+        ax.plot(
+            positions,
+            summary["weight"],
+            color="#1f77b4",
+            marker="o",
+            linewidth=2.0,
+            markersize=6,
+        )
+        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.set_title("stim_hot")
+        ax.set_xlabel("Stimulus level")
+        ax.set_ylabel("Weight")
+        ax.set_xticks(positions)
+        ax.set_xticklabels([str(level) for level in observed_levels])
+        sns.despine(ax=ax)
+        fig.tight_layout()
+        return fig
+
+    def plot_choice_lag_weights(weights_df) -> plt.Figure | None:
+        df_plot = _weights_df_to_plot_df(weights_df)
+        if df_plot.empty:
+            return None
+        df_plot["lag"] = df_plot["feature"].str.extract(_choice_lag_pattern, expand=False)
+        df_plot = df_plot[df_plot["lag"].notna()].copy()
+        if df_plot.empty:
+            return None
+        df_plot["lag"] = df_plot["lag"].astype(int)
+        lag_ticks = sorted(pd.unique(df_plot["lag"]).tolist())
+        summary = (
+            df_plot.groupby("lag", as_index=False)["weight"]
+            .mean()
+            .sort_values("lag")
+        )
+        if summary.empty:
+            return None
+
+        positions = np.arange(len(lag_ticks))
+        fig, ax = plt.subplots(figsize=(5, 4))
+        ax.plot(
+            positions,
+            summary["weight"],
+            color="#1f77b4",
+            marker="o",
+            linewidth=2.0,
+            markersize=6,
+        )
+        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.set_title("choice_lag_*")
+        ax.set_xlabel("Lag")
+        ax.set_ylabel("Weight")
+        ax.set_xticks(positions)
+        ax.set_xticklabels([str(lag) for lag in lag_ticks])
+        sns.despine(ax=ax)
+        fig.tight_layout()
+        return fig
+
+    def plot_bias_hot_weights(weights_df) -> plt.Figure | None:
+        df_plot = _weights_df_to_plot_df(weights_df)
+        if df_plot.empty:
+            return None
+        df_plot["session_idx"] = df_plot["feature"].str.extract(_bias_pattern, expand=False)
+        df_plot = df_plot[df_plot["session_idx"].notna()].copy()
+        if df_plot.empty:
+            return None
+        df_plot["session_idx"] = df_plot["session_idx"].astype(int)
+        session_order = sorted(pd.unique(df_plot["session_idx"]).tolist())
+        summary = (
+            df_plot.groupby("session_idx", as_index=False)["weight"]
+            .mean()
+            .sort_values("session_idx")
+        )
+        if summary.empty:
+            return None
+
+        positions = np.arange(len(session_order))
+        fig, ax = plt.subplots(figsize=(5, 4))
+        ax.plot(
+            positions,
+            summary["weight"],
+            color="#1f77b4",
+            marker="o",
+            linewidth=2.0,
+            markersize=6,
+        )
+        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.set_title("bias_hot")
+        ax.set_xlabel("Session index")
+        ax.set_ylabel("Weight")
+        if len(session_order) == 1:
+            ax.set_xticks([0])
+            ax.set_xticklabels([str(session_order[0])])
+        else:
+            ax.set_xticks([positions[0], positions[-1]])
+            ax.set_xticklabels([str(session_order[0]), str(session_order[-1])])
+        sns.despine(ax=ax)
+        fig.tight_layout()
+        return fig
 
     def plot_sequence_feature_weights(weights_df) -> plt.Figure | None:
         """Plot only sequential stimulus features (s_i / sf_i) from the canonical weights df."""
@@ -343,7 +612,13 @@ def _(is_2afc, np, pd, plt, sns):
         fig.tight_layout()
         return fig
 
-    return (plot_sequence_feature_weights,)
+    return (
+        plot_bias_hot_weights,
+        plot_choice_lag_weights,
+        plot_emission_weights_summary_clean,
+        plot_sequence_feature_weights,
+        plot_stim_hot_weights,
+    )
 
 
 @app.cell
@@ -375,12 +650,22 @@ def _(mo):
 
 
 @app.cell
+def _(weights_df):
+    weights_df
+    return
+
+
+@app.cell
 def _(
     K,
     arrays_store,
     mo,
     pl,
+    plot_bias_hot_weights,
+    plot_choice_lag_weights,
+    plot_emission_weights_summary_clean,
     plot_sequence_feature_weights,
+    plot_stim_hot_weights,
     plots,
     save_plot,
     selected,
@@ -390,13 +675,15 @@ def _(
     mo.stop(not arrays_store, mo.md("No results loaded."))
     views_sel = {s: views[s] for s in selected}
     _weights_df_sel = weights_df.filter(pl.col("subject").is_in(selected))
-    _state_labels = {s: dict(views[s].state_name_by_idx) for s in selected}
 
     _fig_by_subject = plots.plot_emission_weights_by_subject(
         views=views_sel,
         K=K,
     )
-    _summary_figs = [plots.plot_emission_weights_summary(views=views_sel, K=K)]
+    _fig_summary = plot_emission_weights_summary_clean(_weights_df_sel)
+    _fig_stim_hot = plot_stim_hot_weights(_weights_df_sel)
+    _fig_choice_lag = plot_choice_lag_weights(_weights_df_sel)
+    _fig_bias_hot = plot_bias_hot_weights(_weights_df_sel)
     _fig_lapses = plots.plot_lapse_rates_boxplot(views=views_sel, K=K, collapse_lapses=False)
     _fig_seq = plot_sequence_feature_weights(_weights_df_sel)
     _items = [mo.md("#### By subject"), _fig_by_subject]
@@ -409,16 +696,28 @@ def _(
                 mo.md("No `s_i` / `sf_i` regressors found in the current GLM fit."),
             ]
         )
-    _summary_panel = mo.hstack(
-        [
-            mo.vstack([*_summary_figs, save_plot(_summary_figs, "emission weights", stem="emission_weights")], align="center"),
-            mo.vstack([_fig_lapses, save_plot(_fig_lapses, "lapse rates", stem="lapse_rates")], align="center"),
-        ],
-        align="start",
-        justify="start",
-        gap=1.0,
+    _summary_cards = []
+    if _fig_summary is not None:
+        _summary_cards.append(
+            mo.vstack(
+                [_fig_summary, save_plot(_fig_summary, "emission weights", stem="emission_weights")],
+                align="center",
+            )
+        )
+    _summary_cards.append(
+        mo.vstack([_fig_lapses, save_plot(_fig_lapses, "lapse rates", stem="lapse_rates")], align="center")
     )
+    _summary_panel = mo.hstack(_summary_cards, align="start", justify="start", gap=1.0)
     _items.extend([mo.md("#### Summary"), _summary_panel])
+
+    if _fig_stim_hot:
+        _items.extend(
+            [
+                mo.md("#### One-hot families"),
+                mo.hstack([_fig_stim_hot, _fig_choice_lag], align="start", justify="start", gap=1.0),
+                _fig_bias_hot
+            ]
+        )
     mo.vstack(_items, align = "center")
     return (views_sel,)
 
@@ -452,7 +751,7 @@ def _(is_2afc, mo, pl, plots, save_plot, selected, trial_df, views_sel):
     _fig_all, _ = plots.plot_categorical_performance_all(
         _plot_df_all,
         "glm",
-        # background_style=ui_psychometric_background.value,
+        background_style="model",
         **_perf_kwargs,
     )
 
