@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.1"
+__generated_with = "0.22.0"
 app = marimo.App(width="medium")
 
 
@@ -322,7 +322,6 @@ def _(is_2afc, np, pd, plt, sns):
     _stim_pattern = re.compile(r"^stim_(\d+)$")
     _choice_lag_pattern = re.compile(r"^choice_lag_(\d+)$")
     _bias_pattern = re.compile(r"^bias_(\d+)$")
-    _stim_hot_order = [2, 4, 8, 20]
 
     def _weights_df_to_plot_df(weights_df) -> pd.DataFrame:
         df_plot = weights_df.to_pandas() if hasattr(weights_df, "to_pandas") else pd.DataFrame(weights_df)
@@ -334,48 +333,41 @@ def _(is_2afc, np, pd, plt, sns):
         df_plot["state_label"] = "State 0"
         return df_plot.dropna(subset=["weight"]).copy()
 
-    def _raw_one_hot_mask(feature_series: pd.Series) -> pd.Series:
-        feature_names = feature_series.astype(str)
-        return (
-            feature_names.str.match(_stim_pattern)
-            | feature_names.str.match(_choice_lag_pattern)
-            | feature_names.str.match(_bias_pattern)
-        )
-
-    def plot_emission_weights_summary_clean(weights_df) -> plt.Figure | None:
+    def plot_feature_rule_lineplot(
+        weights_df,
+        *,
+        pattern,
+        title: str,
+        xlabel: str,
+        order: list[int] | None = None,
+    ) -> plt.Figure | None:
         df_plot = _weights_df_to_plot_df(weights_df)
         if df_plot.empty:
             return None
-        df_plot = df_plot.loc[~_raw_one_hot_mask(df_plot["feature"])].copy()
+        df_plot["x_value"] = df_plot["feature"].str.extract(pattern, expand=False)
+        df_plot = df_plot[df_plot["x_value"].notna()].copy()
         if df_plot.empty:
             return None
-
-        def _feature_group(name: str) -> tuple[int, str]:
-            lname = str(name).lower()
-            if lname.startswith("stim"):
-                return (0, lname)
-            if "bias" in lname:
-                return (1, lname)
-            if lname.startswith("at_"):
-                return (2, lname)
-            return (3, lname)
-
-        feature_order = sorted(pd.unique(df_plot["feature"]), key=_feature_group)
-        df_plot["feature_label"] = pd.Categorical(
-            df_plot["feature"],
-            categories=feature_order,
+        df_plot["x_value"] = df_plot["x_value"].astype(int)
+        ordered_values = order or sorted(pd.unique(df_plot["x_value"]).tolist())
+        df_plot = df_plot[df_plot["x_value"].isin(ordered_values)].copy()
+        if df_plot.empty:
+            return None
+        df_plot["x_value"] = pd.Categorical(
+            df_plot["x_value"],
+            categories=ordered_values,
             ordered=True,
         )
         summary = (
-            df_plot.groupby("feature_label", as_index=False, observed=False)["weight"]
+            df_plot.groupby("x_value", as_index=False, observed=False)["weight"]
             .mean()
-            .sort_values("feature_label")
+            .sort_values("x_value")
         )
         if summary.empty:
             return None
 
-        positions = np.arange(len(feature_order))
-        fig, ax = plt.subplots(figsize=(max(6.0, 0.9 * len(feature_order)), 4.2))
+        positions = np.arange(len(summary))
+        fig, ax = plt.subplots(figsize=(max(5.0, 0.8 * len(summary)), 4.0))
         ax.plot(
             positions,
             summary["weight"],
@@ -385,135 +377,39 @@ def _(is_2afc, np, pd, plt, sns):
             markersize=6,
         )
         ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-        ax.set_title("Emission weights")
-        ax.set_xlabel("")
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
         ax.set_ylabel("Weight")
         ax.set_xticks(positions)
-        ax.set_xticklabels(feature_order, rotation=35, ha="right")
+        ax.set_xticklabels([str(value) for value in summary["x_value"].tolist()])
         sns.despine(ax=ax)
         fig.tight_layout()
         return fig
 
     def plot_stim_hot_weights(weights_df) -> plt.Figure | None:
-        df_plot = _weights_df_to_plot_df(weights_df)
-        if df_plot.empty:
-            return None
-        df_plot["stim_level"] = df_plot["feature"].str.extract(_stim_pattern, expand=False)
-        df_plot = df_plot[df_plot["stim_level"].notna()].copy()
-        if df_plot.empty:
-            return None
-        df_plot["stim_level"] = df_plot["stim_level"].astype(int)
-        df_plot = df_plot[df_plot["stim_level"].isin(_stim_hot_order)].copy()
-        if df_plot.empty:
-            return None
-        observed_levels = [level for level in _stim_hot_order if level in set(df_plot["stim_level"])]
-        summary = (
-            df_plot.groupby("stim_level", as_index=False)["weight"]
-            .mean()
-            .sort_values("stim_level")
+        return plot_feature_rule_lineplot(
+            weights_df,
+            pattern=_stim_pattern,
+            title="stim_hot",
+            xlabel="Stimulus level",
+            order=[2, 4, 8, 20],
         )
-        if summary.empty:
-            return None
-
-        positions = np.arange(len(observed_levels))
-        fig, ax = plt.subplots(figsize=(5, 4))
-        ax.plot(
-            positions,
-            summary["weight"],
-            color="#1f77b4",
-            marker="o",
-            linewidth=2.0,
-            markersize=6,
-        )
-        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-        ax.set_title("stim_hot")
-        ax.set_xlabel("Stimulus level")
-        ax.set_ylabel("Weight")
-        ax.set_xticks(positions)
-        ax.set_xticklabels([str(level) for level in observed_levels])
-        sns.despine(ax=ax)
-        fig.tight_layout()
-        return fig
 
     def plot_choice_lag_weights(weights_df) -> plt.Figure | None:
-        df_plot = _weights_df_to_plot_df(weights_df)
-        if df_plot.empty:
-            return None
-        df_plot["lag"] = df_plot["feature"].str.extract(_choice_lag_pattern, expand=False)
-        df_plot = df_plot[df_plot["lag"].notna()].copy()
-        if df_plot.empty:
-            return None
-        df_plot["lag"] = df_plot["lag"].astype(int)
-        lag_ticks = sorted(pd.unique(df_plot["lag"]).tolist())
-        summary = (
-            df_plot.groupby("lag", as_index=False)["weight"]
-            .mean()
-            .sort_values("lag")
+        return plot_feature_rule_lineplot(
+            weights_df,
+            pattern=_choice_lag_pattern,
+            title="choice_lag_*",
+            xlabel="Lag",
         )
-        if summary.empty:
-            return None
-
-        positions = np.arange(len(lag_ticks))
-        fig, ax = plt.subplots(figsize=(5, 4))
-        ax.plot(
-            positions,
-            summary["weight"],
-            color="#1f77b4",
-            marker="o",
-            linewidth=2.0,
-            markersize=6,
-        )
-        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-        ax.set_title("choice_lag_*")
-        ax.set_xlabel("Lag")
-        ax.set_ylabel("Weight")
-        ax.set_xticks(positions)
-        ax.set_xticklabels([str(lag) for lag in lag_ticks])
-        sns.despine(ax=ax)
-        fig.tight_layout()
-        return fig
 
     def plot_bias_hot_weights(weights_df) -> plt.Figure | None:
-        df_plot = _weights_df_to_plot_df(weights_df)
-        if df_plot.empty:
-            return None
-        df_plot["session_idx"] = df_plot["feature"].str.extract(_bias_pattern, expand=False)
-        df_plot = df_plot[df_plot["session_idx"].notna()].copy()
-        if df_plot.empty:
-            return None
-        df_plot["session_idx"] = df_plot["session_idx"].astype(int)
-        session_order = sorted(pd.unique(df_plot["session_idx"]).tolist())
-        summary = (
-            df_plot.groupby("session_idx", as_index=False)["weight"]
-            .mean()
-            .sort_values("session_idx")
+        return plot_feature_rule_lineplot(
+            weights_df,
+            pattern=_bias_pattern,
+            title="bias_hot",
+            xlabel="Session index",
         )
-        if summary.empty:
-            return None
-
-        positions = np.arange(len(session_order))
-        fig, ax = plt.subplots(figsize=(5, 4))
-        ax.plot(
-            positions,
-            summary["weight"],
-            color="#1f77b4",
-            marker="o",
-            linewidth=2.0,
-            markersize=6,
-        )
-        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-        ax.set_title("bias_hot")
-        ax.set_xlabel("Session index")
-        ax.set_ylabel("Weight")
-        if len(session_order) == 1:
-            ax.set_xticks([0])
-            ax.set_xticklabels([str(session_order[0])])
-        else:
-            ax.set_xticks([positions[0], positions[-1]])
-            ax.set_xticklabels([str(session_order[0]), str(session_order[-1])])
-        sns.despine(ax=ax)
-        fig.tight_layout()
-        return fig
 
     def plot_sequence_feature_weights(weights_df) -> plt.Figure | None:
         """Plot only sequential stimulus features (s_i / sf_i) from the canonical weights df."""
@@ -615,7 +511,6 @@ def _(is_2afc, np, pd, plt, sns):
     return (
         plot_bias_hot_weights,
         plot_choice_lag_weights,
-        plot_emission_weights_summary_clean,
         plot_sequence_feature_weights,
         plot_stim_hot_weights,
     )
@@ -663,7 +558,6 @@ def _(
     pl,
     plot_bias_hot_weights,
     plot_choice_lag_weights,
-    plot_emission_weights_summary_clean,
     plot_sequence_feature_weights,
     plot_stim_hot_weights,
     plots,
@@ -680,11 +574,11 @@ def _(
         views=views_sel,
         K=K,
     )
-    _fig_summary = plot_emission_weights_summary_clean(_weights_df_sel)
+    _fig_summary = plots.plot_emission_weights_summary(views_sel, K = K)
     _fig_stim_hot = plot_stim_hot_weights(_weights_df_sel)
     _fig_choice_lag = plot_choice_lag_weights(_weights_df_sel)
     _fig_bias_hot = plot_bias_hot_weights(_weights_df_sel)
-    _fig_lapses = plots.plot_lapse_rates_boxplot(views=views_sel, K=K, collapse_lapses=False)
+    _fig_lapses = plots.plot_lapse_rates_boxplot(views=views_sel, K=K)
     _fig_seq = plot_sequence_feature_weights(_weights_df_sel)
     _items = [mo.md("#### By subject"), _fig_by_subject]
     if _fig_seq is not None:

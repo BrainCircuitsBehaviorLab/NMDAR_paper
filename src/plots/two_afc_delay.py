@@ -1772,6 +1772,29 @@ def _regressor_state_panel(
 
 def prepare_predictions_df(df_pred):
     """Prepare a canonical 2AFC-delay trial predictions DataFrame for plotting."""
+    def _correct_prob_expr(pl_module):
+        stim = pl_module.col("stimulus").cast(pl_module.Float64)
+        return (
+            pl_module.when(stim.is_in([0.0, 1.0]))
+            .then(pl_module.when(stim == 0.0).then(pl_module.col("pL")).otherwise(pl_module.col("pR")))
+            .when(stim.is_in([-1.0, 1.0]))
+            .then(pl_module.when(stim < 0.0).then(pl_module.col("pL")).otherwise(pl_module.col("pR")))
+            .otherwise(None)
+        )
+
+    def _correct_prob_pandas(df: pd.DataFrame) -> pd.Series:
+        stim = pd.to_numeric(df["stimulus"], errors="coerce")
+        out = pd.Series(np.nan, index=df.index, dtype=float)
+
+        binary_mask = stim.isin([0.0, 1.0])
+        signed_mask = stim.isin([-1.0, 1.0])
+
+        out.loc[binary_mask & (stim == 0.0)] = pd.to_numeric(df.loc[binary_mask & (stim == 0.0), "pL"], errors="coerce")
+        out.loc[binary_mask & (stim == 1.0)] = pd.to_numeric(df.loc[binary_mask & (stim == 1.0), "pR"], errors="coerce")
+        out.loc[signed_mask & (stim < 0.0)] = pd.to_numeric(df.loc[signed_mask & (stim < 0.0), "pL"], errors="coerce")
+        out.loc[signed_mask & (stim > 0.0)] = pd.to_numeric(df.loc[signed_mask & (stim > 0.0), "pR"], errors="coerce")
+        return out
+
     try:
         import polars as pl
 
@@ -1794,7 +1817,7 @@ def prepare_predictions_df(df_pred):
 
         df = df.with_columns(
             pl.col("pR").alias("p_pred"),
-            pl.when(pl.col("stimulus") == 0).then(pl.col("pL")).otherwise(pl.col("pR")).alias("p_model_correct"),
+            _correct_prob_expr(pl).alias("p_model_correct"),
         )
         if "delays" in df.columns:
             df = df.with_columns(pl.col("delays").cast(pl.Float64).alias("delay"))
@@ -1819,7 +1842,7 @@ def prepare_predictions_df(df_pred):
             raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
 
         df["p_pred"] = df["pR"]
-        df["p_model_correct"] = df.apply(lambda row: row["pL"] if row["stimulus"] == 0 else row["pR"], axis=1)
+        df["p_model_correct"] = _correct_prob_pandas(df)
         if "delays" in df.columns:
             df["delay"] = pd.to_numeric(df["delays"], errors="coerce")
         elif "delay_raw" in df.columns:
@@ -2279,9 +2302,9 @@ def plot_categorical_performance_all(
     else:
         df_pd = df.copy()
 
-    has_cond = cond_col in df_pd.columns
-    has_exp = exp_col in df_pd.columns
-    n_panels = 1 + int(has_cond) + int(has_exp)
+    conds = sorted(df_pd[cond_col].dropna().unique()) if cond_col in df_pd.columns else []
+    exps = sorted(df_pd[exp_col].dropna().unique()) if exp_col in df_pd.columns else []
+    n_panels = 1 + len(conds) + len(exps)
     fig, axes = plt.subplots(1, n_panels, figsize=(4 * n_panels, 4), sharey=True)
     axes = np.atleast_1d(axes)
     ax_idx = 0
@@ -2294,28 +2317,27 @@ def plot_categorical_performance_all(
     )
     ax_idx += 1
 
-    if has_cond:
-        conds = sorted(df_pd[cond_col].dropna().unique())
+    if conds:
         cond_colors = {"rest": "#444444", "saline": "#1f77b4", "drug": "#d62728"}
-        for cond in conds:
+        for ci, cond in enumerate(conds):
             _plot_delay_accuracy_panel(
                 axes[ax_idx],
                 df_pd[df_pd[cond_col] == cond],
-                title=f"b) {cond}",
+                title=f"{chr(ord('b') + ci)}) {cond}",
                 color=cond_colors.get(cond, "k"),
             )
-        ax_idx += 1
+            ax_idx += 1
 
-    if has_exp:
-        exps = sorted(df_pd[exp_col].dropna().unique())
+    if exps:
         exp_palette = sns.color_palette("Set2", len(exps))
         for ei, exp in enumerate(exps):
             _plot_delay_accuracy_panel(
                 axes[ax_idx],
                 df_pd[df_pd[exp_col] == exp],
-                title=f"c) {exp}",
+                title=f"{chr(ord('b') + len(conds) + ei)}) {exp}",
                 color=exp_palette[ei],
             )
+            ax_idx += 1
 
     fig.suptitle(model_name, y=1.02)
     fig.tight_layout()
