@@ -40,6 +40,16 @@ from matplotlib.lines import Line2D
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 from src.process.two_afc_delay import _stim_param_weight_map, EMISSION_REGRESSOR_LABELS
+from glmhmmt.plots import (
+    plot_transition_matrix as _plot_transition_matrix_simple,
+    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
+    plot_weights_boxplot as _plot_weights_boxplot_simple,
+)
+from glmhmmt.postprocess import (
+    build_transition_matrix_by_subject_payload,
+    build_transition_matrix_payload,
+    build_weights_boxplot_payload,
+)
 from glmhmmt.model_plots import (
     norm_ll as _norm_ll,
     plot_binary_emission_weights as _plot_binary_emission_weights,
@@ -66,8 +76,6 @@ from glmhmmt.model_plots import (
     plot_state_posterior_count_kde as _plot_state_posterior_count_kde,
     plot_trans_mat as _plot_trans_mat,
     plot_trans_mat_boxplots as _plot_trans_mat_boxplots,
-    plot_transition_matrix as _plot_transition_matrix,
-    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject,
     plot_transition_weights,
 )
 from glmhmmt.views import get_state_color, get_state_palette
@@ -77,6 +85,7 @@ sns.set_style("ticks")
 
 _SESSION_COL = "session"
 _SORT_COL = "trial_idx"
+_EMISSION_WEIGHT_SIGN = 1.0
 
 def _state_colors(K: int) -> List[str]:
     return get_state_palette(K)[:K]
@@ -239,156 +248,21 @@ def plot_weights_boxplot(
     state_colors: Optional[Sequence[str]] = None,
     title: str = "GLM-HMM weights (across subjects)",
     figsize: Optional[Tuple[float, float]] = None,
+    connect_subjects: bool = True,
+    show_ttests: bool = True,
 ) -> plt.Figure:
-    """Lineplot and Boxplot of weights per state across N subjects with statistical annotations."""
-    from scipy.stats import ttest_rel
-    import itertools
-
-    W = np.asarray(all_weights)
-    if W.ndim == 3:
-        W = W[:, :, None, :]
-    N, K, C_m1, M = W.shape
-    W_avg = W.mean(axis=2)
-
-    labels = list(state_labels) if state_labels else _default_labels(K, C_m1 + 1)
-    colors = list(state_colors) if state_colors is not None else _state_colors(K)
-    x = np.arange(M)
-
-    # Convert to DataFrame for seaborn
-    records = []
-    for n in range(N):
-        for k in range(K):
-            for m in range(M):
-                records.append(
-                    {
-                        "Subject": n,
-                        "State": labels[k],
-                        "Feature": feature_names[m],
-                        "Weight": W_avg[n, k, m],
-                        "StateIdx": k,
-                        "FeatureIdx": m,
-                    }
-                )
-    df = pd.DataFrame(records)
-
-    fig, axes = plt.subplots(1, 2, figsize=figsize or (8, 4), sharex=True)
-    ax_line, ax_box = axes
-
-    palette = {labels[k]: colors[k] for k in range(K)}
-    sns.lineplot( data=df, x="Feature", y="Weight", hue="State", palette=palette, ax=ax_line, markers=True, marker="o", markersize=8, markeredgewidth=0, alpha=0.85, errorbar="se", legend=False,
-                 err_kws={"edgecolor": "none", "linewidth": 0},)
-    ax_line.axhline(0, color="k", lw=0.8, ls="--")
-    ax_line.set_ylabel("Weight")
-    ax_line.set_xlabel("")
-    ax_line.set_title(title)
-
-    hue_width = 0.8 / K
-    positions = []
-    grouped_weights = []
-    for m in range(M):
-        for k in range(K):
-            positions.append(m + (k - (K - 1) / 2) * hue_width)
-            grouped_weights.append(W_avg[:, k, m])
-
-    box = ax_box.boxplot(
-        grouped_weights,
-        positions=positions,
-        widths=hue_width * 0.9,
-        patch_artist=True,
-        showfliers=False,
-        showcaps=False,
-        zorder=0,
+    return _plot_weights_boxplot_simple(
+        **build_weights_boxplot_payload(
+            all_weights,
+            feature_names=feature_names,
+            state_labels=state_labels,
+            state_colors=state_colors,
+        ),
+        title=title,
+        figsize=figsize,
+        connect_subjects=connect_subjects,
+        show_ttests=show_ttests,
     )
-
-    for patch in box["boxes"]:
-        patch.set(facecolor="white", edgecolor="#666666", linewidth=1.1)
-    for elem in ("whiskers", "caps"):
-        for artist in box[elem]:
-            artist.set(color="#666666", linewidth=1.0)
-    for idx, median in enumerate(box["medians"]):
-        median.set(color=colors[idx % K], linewidth=3)
-
-    for m in range(M):
-        for n in range(N):
-            xs = []
-            ys = []
-            for k in range(K):
-                xs.append(m + (k - (K - 1) / 2) * hue_width)
-                ys.append(W_avg[n, k, m])
-            ax_box.plot(xs, ys, color="#7A7A7A", alpha=0.125, lw=1.5, zorder=5)
-
-    # for m in range(M):
-    #     for k in range(K):
-    #         x_pos = m + (k - (K - 1) / 2) * hue_width
-    #         ax_box.scatter(
-    #             np.full(N, x_pos),
-    #             W_avg[:, k, m],
-    #             color=colors[k],
-    #             alpha=0.6,
-    #             s=22,
-    #             zorder=3,
-    #             linewidths=0,
-    #         )
-    ax_box.axhline(0, color="k", lw=0.8, ls="--")
-
-    def get_star(pval):
-        if pval < 0.001:
-            return "***"
-        elif pval < 0.01:
-            return "**"
-        elif pval < 0.05:
-            return "*"
-        return "ns"
-
-    y_range = df["Weight"].max() - df["Weight"].min()
-    if y_range == 0:
-        y_range = 1
-
-    state_pairs = list(itertools.combinations(range(K), 2))
-    for m in range(M):
-        y_max = df[df["FeatureIdx"] == m]["Weight"].max()
-        y_offset_step = y_range * 0.05
-        current_y_offset = y_max + y_offset_step
-
-        for p1, p2 in state_pairs:
-            w1 = W_avg[:, p1, m]
-            w2 = W_avg[:, p2, m]
-
-            try:
-                stat, pval = ttest_rel(w1, w2)
-                star = get_star(pval)
-            except Exception:
-                star = ""
-
-            if star:
-                offset_1 = (p1 - (K - 1) / 2) * hue_width
-                offset_2 = (p2 - (K - 1) / 2) * hue_width
-                x1 = m + offset_1
-                x2 = m + offset_2
-
-                h = 0
-                ax_box.plot(
-                    [x1, x1, x2, x2],
-                    [current_y_offset, current_y_offset + h, current_y_offset + h, current_y_offset],
-                    lw=1,
-                    c="k",
-                )
-                ax_box.text((x1 + x2) / 2, current_y_offset + h, star, ha="center", va="bottom", color="k")
-                current_y_offset += y_offset_step * 1.5
-
-    ax_box.set_xticks(range(M))
-    ax_box.set_xticklabels(_format_feature_labels(feature_names), rotation=0, ha="center")
-    ax_box.set_ylabel("Weight")
-
-    legend_handles = [
-        Line2D([0], [0], marker="o", linestyle="", markerfacecolor=colors[k], markeredgecolor="none", markersize=7, label=labels[k])
-        for k in range(K)
-    ]
-    ax_box.legend(legend_handles, labels[:K], frameon=False, bbox_to_anchor=(1.01, 1), loc="upper left")
-
-    sns.despine(fig=fig)
-    fig.tight_layout()
-    return fig
 
 
 plot_trans_mat = _plot_trans_mat
@@ -399,6 +273,38 @@ norm_ll = _norm_ll
 plot_ll = _plot_ll
 plot_model_comparison = _plot_model_comparison
 plot_model_comparison_diffs = _plot_model_comparison_diffs
+
+
+def plot_transition_matrix_by_subject(
+    arrays_store: dict,
+    state_labels: dict,
+    K: int,
+    subjects: list,
+):
+    return _plot_transition_matrix_by_subject_simple(
+        **build_transition_matrix_by_subject_payload(
+            arrays_store=arrays_store,
+            state_labels=state_labels,
+            K=K,
+            subjects=subjects,
+        )
+    )
+
+
+def plot_transition_matrix(
+    arrays_store: dict,
+    state_labels: dict,
+    K: int,
+    subjects: list,
+):
+    return _plot_transition_matrix_simple(
+        **build_transition_matrix_payload(
+            arrays_store=arrays_store,
+            state_labels=state_labels,
+            K=K,
+            subjects=subjects,
+        )
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -591,10 +497,10 @@ def eval_glm_on_ild_grid(
                         )
                     stim_logit += stim_param_value * w[stim_param_idx]
                 logit = base_logit + stim_logit
-                # W[k,0,:] parameterises P(class-0 = LEFT); class-1 (RIGHT) is
-                # the softmax reference (logit=0). So P(right) = sigmoid(-logit).
-                p_left = 1.0 / (1.0 + np.exp(-logit))
-                p_trial = gL + (1.0 - gL - gR) * (1.0 - p_left)
+                # W[k,0,:] parameterises P(class-0 = RIGHT); class-1 (LEFT) is
+                # the softmax reference (logit=0). So P(right) = sigmoid(logit).
+                p_right_trial = 1.0 / (1.0 + np.exp(-logit))
+                p_trial = gL + (1.0 - gL - gR) * p_right_trial
                 if weights_t is not None:
                     p_right[k, gi] = float(np.average(p_trial, weights=weights_t))
                 else:
@@ -637,9 +543,9 @@ def eval_glm_on_ild_grid(
 
         for k in range(K):
             logit = X_grid @ W[k, 0, :]
-            # W[k,0,:] is logit for class-0 (LEFT); P(right) = sigmoid(-logit)
-            p_left = 1.0 / (1.0 + np.exp(-logit))
-            p_right[k] = gL + (1.0 - gL - gR) * (1.0 - p_left)
+            # W[k,0,:] is logit for class-0 (RIGHT); P(right) = sigmoid(logit)
+            p_right_trial = 1.0 / (1.0 + np.exp(-logit))
+            p_right[k] = gL + (1.0 - gL - gR) * p_right_trial
 
     if K == 1:
         return ild_grid, p_right[0]
@@ -709,8 +615,8 @@ def eval_glm_on_feature_grid(
             base_logit = other_logit - swept_contrib
             for gi, gv in enumerate(grid):
                 logit = base_logit + gv * w[feat_idx]
-                p_left = 1.0 / (1.0 + np.exp(-logit))
-                p_trial = gL + (1.0 - gL - gR) * (1.0 - p_left)
+                p_right_trial = 1.0 / (1.0 + np.exp(-logit))
+                p_trial = gL + (1.0 - gL - gR) * p_right_trial
                 if weights_t is not None:
                     p_right[k, gi] = float(np.average(p_trial, weights=weights_t))
                 else:
@@ -725,8 +631,8 @@ def eval_glm_on_feature_grid(
             X_grid[:, bias_idx] = 1.0
         for k in range(K):
             logit = X_grid @ W[k, 0, :]
-            p_left = 1.0 / (1.0 + np.exp(-logit))
-            p_right[k] = gL + (1.0 - gL - gR) * (1.0 - p_left)
+            p_right_trial = 1.0 / (1.0 + np.exp(-logit))
+            p_right[k] = gL + (1.0 - gL - gR) * p_right_trial
 
     if K == 1:
         return grid, p_right[0]
@@ -1867,7 +1773,7 @@ def plot_emission_weights_by_subject(
     return _plot_binary_emission_weights_by_subject(
         views,
         K,
-        weight_sign=-1.0,
+        weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
         abs_features=("bias",),
@@ -1884,7 +1790,7 @@ def plot_emission_weights_summary(
     return _plot_binary_emission_weights_summary(
         views,
         K,
-        weight_sign=-1.0,
+        weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
         abs_features=("bias",),
@@ -1900,7 +1806,7 @@ def plot_emission_weights_summary_lineplot(
     return _plot_binary_emission_weights_summary_lineplot(
         views,
         K,
-        weight_sign=-1.0,
+        weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
         abs_features=("bias",),
@@ -1916,7 +1822,7 @@ def plot_emission_weights_summary_boxplot(
     return _plot_binary_emission_weights_summary_boxplot(
         views,
         K,
-        weight_sign=-1.0,
+        weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
         abs_features=("bias",),
@@ -1931,7 +1837,7 @@ def plot_lapse_rates_boxplot(
     return _plot_lapse_rates_boxplot(
         views,
         K,
-        choice_labels=("Left", "Right"),
+        choice_labels=("Right", "Left"),
         title=f"Lapse rates  (K={K})",
     )
 
@@ -1945,17 +1851,13 @@ def plot_emission_weights(
     return _plot_binary_emission_weights(
         views,
         K,
-        weight_sign=-1.0,
+        weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
         abs_features=("bias",),
         feature_labeler=_feature_label,
         save_path=save_path,
     )
-
-plot_transition_matrix_by_subject = _plot_transition_matrix_by_subject
-plot_transition_matrix = _plot_transition_matrix
-
 
 def plot_posterior_probs(
     views: dict,

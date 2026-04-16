@@ -1,0 +1,30 @@
+{
+    "task": "2AFC_delay",
+    "tau": 2,
+    "subjects": [
+        "C37",
+        "C38",
+        "E10",
+        "E11",
+        "E13",
+        "N19",
+        "N24",
+        "N25",
+        "N27",
+        "N28"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim",
+        "stim_x_delay",
+        "at_choice"
+    ],
+    "frozen_emissions": {},
+    "K_list": [
+        2
+    ],
+    "model_id": "base",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5,
+    "condition_filter": "all"
+}

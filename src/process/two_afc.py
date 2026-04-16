@@ -58,12 +58,12 @@ _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     target_name="stim_param",
     fit_task="2AFC",
     fit_model_kind="glm",
-    fit_model_id="one hot lapses",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
     arrays_suffix="glm_arrays.npz",
     source_feature_prefixes=(_STIM_ABS_COL_PREFIX,),
     exclude_features=("stim_0",),
     excluded_subjects=("325", "325.0"),
-    sign=-1.0,
+    sign=1.0,
 )
 _BIAS_PARAM_SPEC = FittedWeightRegressorSpec(
     target_name="bias_param",

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.22.0"
+__generated_with = "0.23.1"
 app = marimo.App(width="medium")
 
 
@@ -38,7 +38,12 @@ def _():
         select_subject_behavior_df,
     )
     from glmhmmt.cli.fit_glm import main as fit_main, generate_model_id
-    from glmhmmt.postprocess import build_trial_df
+    from glmhmmt.postprocess import (
+        build_trial_df,
+        build_emission_weights_df,
+        build_weights_boxplot_payload,
+    )
+    from glmhmmt.plots import plot_weights_boxplot
     from glmhmmt.runtime import configure_paths, get_runtime_paths
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import get_state_color
@@ -53,6 +58,8 @@ def _():
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
         build_editor_payload,
+        build_emission_weights_df,
+        build_weights_boxplot_payload,
         build_trial_and_weights_df,
         build_trial_df,
         fit_main,
@@ -65,6 +72,7 @@ def _():
         paths,
         pd,
         pl,
+        plot_weights_boxplot,
         plt,
         resolve_selected_model_id,
         select_subject_behavior_df,
@@ -151,6 +159,11 @@ def _(make_plot_saver, mo, paths, selected_model_id, task_name):
     return (save_plot,)
 
 
+@app.cell
+def _():
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -188,7 +201,7 @@ def _(
     )
     set_last_fit_click(model_cfg.run_fit_clicks)
 
-    _n_restarts = 1
+    _n_restarts = 5
     _selected_id = model_cfg.existing or (model_cfg.alias if model_cfg.alias else current_hash)
     _OUT = paths.RESULTS / "fits" / task_name / "glm" / _selected_id
 
@@ -237,7 +250,6 @@ def _(
                 task=task_name,
                 model_alias=model_cfg.alias if model_cfg.alias else None,
                 lapse_mode=model_cfg.lapse_mode,
-                lapse_max=model_cfg.lapse_max,
                 n_restarts=_n_restarts,
                 verbose=False,
                 progress_callback=_on_progress,
@@ -554,12 +566,15 @@ def _(weights_df):
 def _(
     K,
     arrays_store,
+    build_emission_weights_df,
+    build_weights_boxplot_payload,
     mo,
     pl,
     plot_bias_hot_weights,
     plot_choice_lag_weights,
     plot_sequence_feature_weights,
     plot_stim_hot_weights,
+    plot_weights_boxplot,
     plots,
     save_plot,
     selected,
@@ -574,11 +589,14 @@ def _(
         views=views_sel,
         K=K,
     )
-    _fig_summary = plots.plot_emission_weights_summary(views_sel, K = K)
+
+    _fig_summary = plot_weights_boxplot(
+        **build_weights_boxplot_payload(build_emission_weights_df(views_sel))
+    )
     _fig_stim_hot = plot_stim_hot_weights(_weights_df_sel)
     _fig_choice_lag = plot_choice_lag_weights(_weights_df_sel)
     _fig_bias_hot = plot_bias_hot_weights(_weights_df_sel)
-    _fig_lapses = plots.plot_lapse_rates_boxplot(views=views_sel, K=K)
+    _fig_lapses = plots.plot_lapse_rates_boxplot(views=views_sel, K=K,)
     _fig_seq = plot_sequence_feature_weights(_weights_df_sel)
     _items = [mo.md("#### By subject"), _fig_by_subject]
     if _fig_seq is not None:
@@ -614,6 +632,13 @@ def _(
         )
     mo.vstack(_items, align = "center")
     return (views_sel,)
+
+
+@app.cell
+def _(views_sel):
+    for _subject in views_sel:
+        print(views_sel[_subject].lapse_rates)
+    return
 
 
 @app.cell(hide_code=True)

@@ -1,0 +1,16 @@
+{
+    "task": "2AFC",
+    "tau": 2,
+    "emission_cols": [
+        "bias_param",
+        "stim_param",
+        "at_choice_param"
+    ],
+    "num_classes": 3,
+    "lapse_mode": "history_conditioned",
+    "lapse_max": 1.0,
+    "n_restarts": 1,
+    "restart_noise_scale": 0.05,
+    "seed": 0,
+    "model_id": "baseparam"
+}

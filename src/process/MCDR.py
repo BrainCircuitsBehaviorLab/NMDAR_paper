@@ -1,6 +1,7 @@
 """Task adapter for the MCDR (3-AFC rats) task."""
 from __future__ import annotations
 
+from functools import lru_cache
 import types
 from typing import List, Tuple, Dict, Any
 
@@ -8,16 +9,37 @@ import jax.numpy as jnp
 import numpy as np
 import polars as pl
 
+from glmhmmt.runtime import get_data_dir
 from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
+from glmhmmt.tasks.fitted_regressors import (
+    FittedWeightRegressorSpec,
+    weighted_sum_regressor,
+)
+
+_BIAS_HOT_COL_PREFIX = "bias_"
+_CHOICE_LAG_COL_PREFIX = "choice_lag_"
+_CHOICE_LAG_SIDES = ("L", "C", "R")
+_CHOICE_SIDE_TO_CLASS = {"L": 0, "C": 1, "R": 2}
+_NUM_CHOICE_LAGS = 15
+_STIM_PARAM_MODEL_ID = "One-hot"
+_RAW_PARAM_MODEL_ID = "one hot sessions lags"
+_STIM_HOT_COLS = tuple(
+    f"stim{stim_idx}{side}"
+    for stim_idx in range(1, 5)
+    for side in _CHOICE_LAG_SIDES
+)
 
 EMISSION_COLS: list[str] = [
     "bias",
+    "bias_param",
     "biasL", "biasC", "biasR", "onsetL", "onsetC", "onsetR", "delay",
     "SL", "SC", "SR",
     "SLxdelay", "SCxdelay", "SRxdelay",
     "SLxD", "SCxD", "SRxD",
     "D", "DL", "DC", "DR",
     "A_L", "A_C", "A_R",
+    "choice_lag_param",
+    "stim_param",
     "speed1", "speed2", "speed3",
     "stim1L", "stim1C", "stim1R",
     "stim2L", "stim2C", "stim2R",
@@ -26,6 +48,137 @@ EMISSION_COLS: list[str] = [
 ]
 
 TRANSITION_COLS: list[str] = ["A_plus", "A_minus", "A_L", "A_C", "A_R"]
+
+_BIAS_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="bias_param",
+    fit_task="MCDR",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_BIAS_HOT_COL_PREFIX,),
+    class_idx=0,
+)
+_CHOICE_LAG_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="choice_lag_param",
+    fit_task="MCDR",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
+    class_idx=0,
+)
+_STIM_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="stim_param",
+    fit_task="MCDR",
+    fit_model_kind="glm",
+    fit_model_id=_STIM_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_features=_STIM_HOT_COLS,
+    class_idx=0,
+)
+
+
+def _safe_weighted_sum_regressor(
+    part,
+    spec: FittedWeightRegressorSpec,
+) -> np.ndarray | None:
+    try:
+        return weighted_sum_regressor(part, spec, dtype=np.float32)
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _bias_hot_sort_key(name: str) -> tuple[int, str]:
+    suffix = name.removeprefix(_BIAS_HOT_COL_PREFIX)
+    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
+
+
+def _choice_lag_sort_key(name: str) -> tuple[int, int, str]:
+    suffix = name.removeprefix(_CHOICE_LAG_COL_PREFIX)
+    if len(suffix) >= 2 and suffix[:-1].isdigit() and suffix[-1] in _CHOICE_LAG_SIDES:
+        return (int(suffix[:-1]), _CHOICE_LAG_SIDES.index(suffix[-1]), name)
+    return (10**9, 10**9, name)
+
+
+def _stim_hot_sort_key(name: str) -> tuple[int, int, str]:
+    if name.startswith("stim") and len(name) >= 6 and name[4].isdigit() and name[-1] in _CHOICE_LAG_SIDES:
+        return (int(name[4]), _CHOICE_LAG_SIDES.index(name[-1]), name)
+    return (10**9, 10**9, name)
+
+
+def _bias_hot_cols(columns: list[str]) -> list[str]:
+    return sorted(
+        [
+            col
+            for col in columns
+            if col.startswith(_BIAS_HOT_COL_PREFIX)
+            and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+        ],
+        key=_bias_hot_sort_key,
+    )
+
+
+def _choice_lag_cols(columns: list[str]) -> list[str]:
+    return sorted(
+        [
+            col
+            for col in columns
+            if col.startswith(_CHOICE_LAG_COL_PREFIX)
+            and len(col.removeprefix(_CHOICE_LAG_COL_PREFIX)) >= 2
+            and col.removeprefix(_CHOICE_LAG_COL_PREFIX)[:-1].isdigit()
+            and col.removeprefix(_CHOICE_LAG_COL_PREFIX)[-1] in _CHOICE_LAG_SIDES
+        ],
+        key=_choice_lag_sort_key,
+    )
+
+
+def _stim_hot_cols(columns: list[str]) -> list[str]:
+    return sorted(
+        [col for col in columns if col in _STIM_HOT_COLS],
+        key=_stim_hot_sort_key,
+    )
+
+
+def _choice_lag_names() -> list[str]:
+    return [
+        f"{_CHOICE_LAG_COL_PREFIX}{lag_idx:02d}{side}"
+        for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)
+        for side in _CHOICE_LAG_SIDES
+    ]
+
+
+def _max_sessions_from_df(df: pl.DataFrame) -> int:
+    if "subject" not in df.columns or "session" not in df.columns:
+        return _max_subject_sessions()
+    return int(
+        df.group_by("subject")
+        .agg(pl.col("session").n_unique().alias("n_sessions"))
+        .select(pl.col("n_sessions").max())
+        .item()
+        or 0
+    )
+
+
+def _infer_bias_hot_cols_from_df(df: pl.DataFrame) -> list[str]:
+    existing = _bias_hot_cols(list(df.columns))
+    if existing:
+        return existing
+    max_sessions = _max_sessions_from_df(df)
+    return [f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(max_sessions)]
+
+
+@lru_cache(maxsize=1)
+def _max_subject_sessions() -> int:
+    dataset_path = get_data_dir() / "df_filtered.parquet"
+    df = pl.read_parquet(dataset_path)
+    df = df.filter(pl.col("subject") != "A84")
+    return int(
+        df.group_by("subject")
+        .agg(pl.col("session").n_unique().alias("n_sessions"))
+        .select(pl.col("n_sessions").max())
+        .item()
+        or 0
+    )
 
 
 @_register(["mcdr"])
@@ -63,11 +216,29 @@ class MCDRAdapter(TaskAdapter):
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
         """Return the MCDR trial dataframe with all derived regressors."""
         df_sub = df_sub.sort(self.sort_col)
+        session_order = df_sub["session"].unique(maintain_order=True).to_list()
+        session_to_idx = {session_name: idx for idx, session_name in enumerate(session_order)}
+        max_sessions = _max_subject_sessions()
+        session_idx_expr = pl.col("session").replace_strict(session_to_idx).cast(pl.Int32)
         df_sub = df_sub.with_columns(
             [
+                session_idx_expr.alias("_session_idx"),
                 ((pl.col("stimd_n") - pl.col("stimd_n").mean()) / pl.col("stimd_n").std()).alias("stimd_n_z"),
             ]
         )
+        lag_exprs: list[pl.Expr] = []
+        for lag_idx in range(1, _NUM_CHOICE_LAGS + 1):
+            lagged_response = pl.col("response").shift(lag_idx).over(self.session_col)
+            for side, class_idx in _CHOICE_SIDE_TO_CLASS.items():
+                lag_exprs.append(
+                    lagged_response.eq(class_idx).fill_null(False).cast(pl.Float32).alias(
+                        f"{_CHOICE_LAG_COL_PREFIX}{lag_idx:02d}{side}"
+                    )
+                )
+        session_bias_exprs = [
+            pl.col("_session_idx").eq(idx).cast(pl.Float32).alias(f"{_BIAS_HOT_COL_PREFIX}{idx}")
+            for idx in range(max_sessions)
+        ]
         df_sub = df_sub.with_columns(
             [
                 pl.col("response").cast(pl.Int32),
@@ -138,6 +309,8 @@ class MCDRAdapter(TaskAdapter):
                 (1 / (pl.col("timepoint_3") - pl.col("timepoint_4"))).cast(pl.Float32).alias("speed3"),
                 (1 / (pl.col("timepoint_3") - pl.col("timepoint_2"))).cast(pl.Float32).alias("speed2"),
                 (1 / (pl.col("timepoint_2") - pl.col("timepoint_1"))).cast(pl.Float32).alias("speed1"),
+                *session_bias_exprs,
+                *lag_exprs,
             ]
         )
         df_sub = df_sub.with_columns(
@@ -146,10 +319,32 @@ class MCDRAdapter(TaskAdapter):
                 (1.0 - pl.col("previous_outcome")).ewm_mean(half_life=tau, adjust=False).over(self.session_col).alias("A_minus"),
             ]
         )
-        return df_sub.with_columns(
+        df_sub = df_sub.with_columns(
             [
                 ((pl.col(c) - pl.col(c).mean()) / pl.col(c).std()).cast(pl.Float32).alias(c)
                 for c in ["speed1", "speed2", "speed3"]
+            ]
+        ).drop("_session_idx")
+        bias_param = _safe_weighted_sum_regressor(df_sub, _BIAS_PARAM_SPEC)
+        choice_lag_param = _safe_weighted_sum_regressor(df_sub, _CHOICE_LAG_PARAM_SPEC)
+        stim_param = _safe_weighted_sum_regressor(df_sub, _STIM_PARAM_SPEC)
+        return df_sub.with_columns(
+            [
+                (
+                    pl.Series("bias_param", bias_param)
+                    if bias_param is not None
+                    else pl.lit(0.0).cast(pl.Float32).alias("bias_param")
+                ),
+                (
+                    pl.Series("choice_lag_param", choice_lag_param)
+                    if choice_lag_param is not None
+                    else pl.lit(0.0).cast(pl.Float32).alias("choice_lag_param")
+                ),
+                (
+                    pl.Series("stim_param", stim_param)
+                    if stim_param is not None
+                    else pl.lit(0.0).cast(pl.Float32).alias("stim_param")
+                ),
             ]
         )
 
@@ -177,10 +372,11 @@ class MCDRAdapter(TaskAdapter):
         """Return ``(y, X, U, names)`` from the MCDR feature dataframe."""
         ecols = emission_cols if emission_cols is not None else list(EMISSION_COLS)
         ucols = transition_cols if transition_cols is not None else list(TRANSITION_COLS)
-        bad_e = [c for c in ecols if c not in EMISSION_COLS]
+        allowed_ecols = set(self.available_emission_cols(feature_df))
+        bad_e = [c for c in ecols if c not in allowed_ecols]
         bad_u = [c for c in ucols if c not in TRANSITION_COLS]
         if bad_e:
-            raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {EMISSION_COLS}")
+            raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
         if bad_u:
             raise ValueError(f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}")
 
@@ -199,6 +395,14 @@ class MCDRAdapter(TaskAdapter):
     def default_transition_cols(self) -> List[str]:
         return list(TRANSITION_COLS)
 
+    def available_emission_cols(self, df=None) -> List[str]:
+        available_cols = list(EMISSION_COLS)
+        if df is not None:
+            available_cols.extend(self.bias_hot_cols(df))
+            available_cols.extend(self.choice_lag_cols(df))
+            available_cols.extend(self.stim_hot_cols(df))
+        return list(dict.fromkeys(available_cols))
+
     def resolve_design_names(
         self,
         emission_cols: List[str] | None = None,
@@ -207,13 +411,33 @@ class MCDRAdapter(TaskAdapter):
     ) -> Dict[str, List[str]]:
         ecols = list(emission_cols) if emission_cols is not None else list(EMISSION_COLS)
         ucols = list(transition_cols) if transition_cols is not None else list(TRANSITION_COLS)
-        bad_e = [c for c in ecols if c not in EMISSION_COLS]
+        allowed_ecols = set(self.available_emission_cols(df))
+        bad_e = [c for c in ecols if c not in allowed_ecols]
         bad_u = [c for c in ucols if c not in TRANSITION_COLS]
         if bad_e:
-            raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {EMISSION_COLS}")
+            raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
         if bad_u:
             raise ValueError(f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}")
         return {"X_cols": ecols, "U_cols": ucols}
+
+    def bias_hot_cols(self, df: pl.DataFrame) -> List[str]:
+        """Return session one-hot bias columns."""
+        return _infer_bias_hot_cols_from_df(df)
+
+    def choice_lag_cols(self, df: pl.DataFrame | None = None) -> List[str]:
+        """Return explicit previous-choice lag columns."""
+        if df is not None:
+            existing = _choice_lag_cols(list(df.columns))
+            if existing:
+                return existing
+        return _choice_lag_names()
+
+    def stim_hot_cols(self, df: pl.DataFrame | None = None) -> List[str]:
+        """Return stimulus-window one-hot columns."""
+        if df is None:
+            return list(_STIM_HOT_COLS)
+        existing = _stim_hot_cols(list(df.columns))
+        return existing if existing else list(_STIM_HOT_COLS)
 
     @property
     def choice_labels(self) -> list[str]:

@@ -509,11 +509,11 @@ wheels = [
 
 [[package]]
 name = "fastcore"
-version = "1.12.38"
+version = "1.12.39"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e9/1b/3a154001b183ef685c4916840893f95f75313b405a5f8b9297173a645125/fastcore-1.12.38.tar.gz", hash = "sha256:2ef7a1373b088f2df4b4921746696e18abc2121b3b2ea5ece854a6412c9bd60c", size = 97692, upload-time = "2026-04-10T22:28:59.728Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/d8/b659655b38bb66f6b7ceb2aa9345cd105fed1f2443758778cfd057375eff/fastcore-1.12.39.tar.gz", hash = "sha256:a179b5255f13a1a5cd87411439ab75eaa565c32fcbc63ed79e236002b69bbc5c", size = 97665, upload-time = "2026-04-13T22:34:04.019Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/ae/8b4b1e6a9fb5aad36dc00f1807793183f348a8a32bbe39f2325009d7be78/fastcore-1.12.38-py3-none-any.whl", hash = "sha256:4a8730e091f2e0e171fd0c8c42c67073a939858e613351782f88f66e6b2a7bc9", size = 102326, upload-time = "2026-04-10T22:28:57.776Z" },
+    { url = "https://files.pythonhosted.org/packages/48/36/78e3a4044f88a4d7e5b214ff39ae76b925d8d0efafe2559b63062e3a94b8/fastcore-1.12.39-py3-none-any.whl", hash = "sha256:7299fa8ef35edf3db9e1eee452a5454672aceeb75673921686c0768859507b16", size = 102297, upload-time = "2026-04-13T22:34:02.609Z" },
 ]
 
 [[package]]
@@ -595,7 +595,7 @@ wheels = [
 
 [[package]]
 name = "glmhmmt"
-version = "0.1.12"
+version = "0.1.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
@@ -606,7 +606,6 @@ dependencies = [
     { name = "jaxlib" },
     { name = "jaxtyping" },
     { name = "marimo" },
-    { name = "matplotlib" },
     { name = "nbformat" },
     { name = "numba" },
     { name = "numpy" },
@@ -623,9 +622,9 @@ dependencies = [
     { name = "traitlets" },
     { name = "wigglystuff" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/93/bbdbb1955638e3b9b57463ea4382cbdc5aa004868121610bd20b24bfad78/glmhmmt-0.1.12.tar.gz", hash = "sha256:19bead0b559ae9564ea3d5b6a927f6e6c6d076425ca8d50aef5e5530a19168dc", size = 138532, upload-time = "2026-04-15T13:00:11.594Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/54/400c0c458a7b505ecd8959bbe58108b9c66e628e4dd7041d67c8ea8790ca/glmhmmt-0.1.17.tar.gz", hash = "sha256:3142bece30a15704618c2219cb380bc8ebe6fd172485acbda171500e27b8284e", size = 141548, upload-time = "2026-04-16T14:01:23.702Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0a/8e/23c01312f9811501cee8973bf9c8b4cce3ef7c2b442ab21e497339405504/glmhmmt-0.1.12-py3-none-any.whl", hash = "sha256:ab58e4283380c025cbf418df1a597e4a28bdcc782ec51f62a39f2488d12ce75f", size = 158747, upload-time = "2026-04-15T13:00:09.881Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/5c/9b74987bc4d537236a2fec0131872d10df091d4932d5238cbaf49812e07b/glmhmmt-0.1.17-py3-none-any.whl", hash = "sha256:4a1c34cc611868517f9c8825d14265ea0295bbeca5415c345646e8755865e5ca", size = 163482, upload-time = "2026-04-16T14:01:21.967Z" },
 ]
 
 [[package]]
@@ -1088,7 +1087,7 @@ wheels = [
 
 [[package]]
 name = "marimo"
-version = "0.22.0"
+version = "0.23.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1110,8 +1109,22 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/95/b7bb0fd8f00fc7b567a46eb6230492d0c0f53a622bd3c16fa142b54eef81/marimo-0.23.1.tar.gz", hash = "sha256:c1c1ed859cfac45f4bb54fe882fc6941ac22b3b4b7a4505285e6139e0321f886", size = 38270839, upload-time = "2026-04-10T23:14:04.103Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/38/d0fbc9e7d58434bc608cb769e819053daae3ba43f4b9d819011a89276eda/marimo-0.22.0-py3-none-any.whl", hash = "sha256:b5a194e4e4f731512b8c6d82801473c502a2befbe547518717077706eabb59ba", size = 38659118, upload-time = "2026-03-31T21:07:07.076Z" },
+    { url = "https://files.pythonhosted.org/packages/db/b4/53ca91d287b52ae1806ce947659a4357472cd4ab1f54ae5638cff8cc8a25/marimo-0.23.1-py3-none-any.whl", hash = "sha256:fb2546fdd669fcba5cf3b1aaaa8fd84196c292935bc2dce457cf8077ae2e8608", size = 38696007, upload-time = "2026-04-10T23:14:00.126Z" },
+]
+
+[[package]]
+name = "marimo-toml-editor"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anywidget" },
+    { name = "traitlets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/21/43/76853ee8cdf6de8c491f5b8a767c26bf487f67dc78554bc4b285fad7f4d2/marimo_toml_editor-0.1.1.tar.gz", hash = "sha256:93862f48ef07f32341f07d08d93803b5ead96be4ae3701307c37f51e1f9b68ff", size = 8920554, upload-time = "2026-02-22T21:45:38.284Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/e0/e727cec5113a0b3d111c9b3bd4b43dcd50a65bb00a9264858ed570e102a8/marimo_toml_editor-0.1.1-py3-none-any.whl", hash = "sha256:b90875293d8b9957d54feb98b6c00127ae82565b8114adba882b9e3de6506fef", size = 16622, upload-time = "2026-02-22T21:45:36.844Z" },
 ]
 
 [[package]]
@@ -1280,21 +1293,25 @@ dependencies = [
     { name = "bottleneck" },
     { name = "glmhmmt" },
     { name = "marimo" },
+    { name = "marimo-toml-editor" },
     { name = "numexpr" },
     { name = "plot-saver" },
     { name = "tensorflow-probability" },
     { name = "tfp-nightly" },
+    { name = "tqdm" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "bottleneck", specifier = ">=1.6.0" },
-    { name = "glmhmmt", specifier = "==0.1.12" },
-    { name = "marimo", specifier = "==0.22.0" },
+    { name = "glmhmmt", specifier = "==0.1.17" },
+    { name = "marimo", specifier = "==0.23.1" },
+    { name = "marimo-toml-editor", specifier = ">=0.1.1" },
     { name = "numexpr", specifier = ">=2.14.1" },
-    { name = "plot-saver" },
+    { name = "plot-saver", specifier = "==0.1.5" },
     { name = "tensorflow-probability", specifier = "==0.25.0" },
     { name = "tfp-nightly", specifier = "==0.26.0.dev20260205" },
+    { name = "tqdm", specifier = ">=4.67.3" },
 ]
 
 [[package]]
@@ -1458,11 +1475,11 @@ wheels = [
 
 [[package]]
 name = "packaging"
-version = "26.0"
+version = "26.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/65/ee/299d360cdc32edc7d2cf530f3accf79c4fca01e96ffc950d8a52213bd8e4/packaging-26.0.tar.gz", hash = "sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4", size = 143416, upload-time = "2026-01-21T20:50:39.064Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/de/0d2b39fb4af88a0258f3bac87dfcbb48e73fbdea4a2ed0e2213f9a4c2f9a/packaging-26.1.tar.gz", hash = "sha256:f042152b681c4bfac5cae2742a55e103d27ab2ec0f3d88037136b6bfe7c9c5de", size = 215519, upload-time = "2026-04-14T21:12:49.362Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/b9/c538f279a4e237a006a2c98387d081e9eb060d203d8ed34467cc0f0b9b53/packaging-26.0-py3-none-any.whl", hash = "sha256:b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529", size = 74366, upload-time = "2026-01-21T20:50:37.788Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/c2/920ef838e2f0028c8262f16101ec09ebd5969864e5a64c4c05fad0617c56/packaging-26.1-py3-none-any.whl", hash = "sha256:5d9c0669c6285e491e0ced2eee587eaf67b670d94a19e94e3984a481aba6802f", size = 95831, upload-time = "2026-04-14T21:12:47.56Z" },
 ]
 
 [[package]]
@@ -1603,16 +1620,16 @@ wheels = [
 
 [[package]]
 name = "plot-saver"
-version = "0.1.2"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
     { name = "marimo" },
     { name = "traitlets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/bf/791359f5b48baa3bfe5f6b99cf91ea3e2bef1d45ecb671abc7f236056687/plot_saver-0.1.2.tar.gz", hash = "sha256:062bf43ed6f83634ed6795cf9abd8866b22d8d6d456c2ecb8bc47929392d25d1", size = 7209, upload-time = "2026-04-13T09:31:52.03Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/6a/1a63af63ed9f33cf869e2beaaca49877ea98e7488268dd129ca284bf3130/plot_saver-0.1.5.tar.gz", hash = "sha256:8396c90610ac0afdd62181bc98e4a63e960645a4086e6e2390c7182231af5abd", size = 55527, upload-time = "2026-04-16T14:02:18.972Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/08/5af4d3167017f89cfb8e7a1bf3579d9113a2f9e034a7836c80283870e90b/plot_saver-0.1.2-py3-none-any.whl", hash = "sha256:64bd19db49f61ceafec493fe4ef48a9d12439385f89080c63e92bbc2792a748e", size = 9138, upload-time = "2026-04-13T09:31:50.871Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/2e/f9d55a10bd36b5e415dc419e3157bb98ab9b60fc3511e4751433584e21b1/plot_saver-0.1.5-py3-none-any.whl", hash = "sha256:8165830e3e89903dd8449ae9fe698ae924b3a04ae0373c72f421a7fc9c89345b", size = 8818, upload-time = "2026-04-16T14:02:17.815Z" },
 ]
 
 [[package]]
@@ -2271,6 +2288,18 @@ wheels = [
 ]
 
 [[package]]
+name = "tqdm"
+version = "4.67.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
+]
+
+[[package]]
 name = "traitlets"
 version = "5.14.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2490,7 +2519,7 @@ wheels = [
 
 [[package]]
 name = "wigglystuff"
-version = "0.3.2"
+version = "0.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
@@ -2498,9 +2527,9 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/77/e7/691d0b621868ef0c13a212d991a97027f6ea2ad052713ae4cab03cb4663d/wigglystuff-0.3.2.tar.gz", hash = "sha256:e0681ad1023009f047bf6049f1f136b0af1b99ac5b5d62ad894d790d45279f54", size = 2983174, upload-time = "2026-04-10T10:44:01.827Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/95/6747cc3e063355e3c6b0c0ae9bfe4618e7dfbc6a99dae64b1766290c499d/wigglystuff-0.3.3.tar.gz", hash = "sha256:7d1f2e016a9fd84ceb06568de8fc0031a658996f7a465b470e32b01082cf1745", size = 2983746, upload-time = "2026-04-15T12:39:30.794Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/80/852313a15818ce12be423ad6912367fc125fd97d6a43c644db43197617b9/wigglystuff-0.3.2-py3-none-any.whl", hash = "sha256:f58fc6d4d3e63f6f8294c758d51ee71ddfb7e1f1c81b43b04adae4386cdda1b2", size = 3053088, upload-time = "2026-04-10T10:43:59.111Z" },
+    { url = "https://files.pythonhosted.org/packages/32/34/e810806c8e8fa6aa030545f349a831336b3491c95c0ec564fc3cddb38ee8/wigglystuff-0.3.3-py3-none-any.whl", hash = "sha256:a18e8444bb588896decaea0142fe88f51bfc832cba3e4dd5eb0a80bb78b286ba", size = 3053592, upload-time = "2026-04-15T12:39:32.753Z" },
 ]
 
 [[package]]

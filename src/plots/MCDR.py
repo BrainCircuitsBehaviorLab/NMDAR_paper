@@ -20,6 +20,14 @@ import polars as pl
 import seaborn as sns
 from scipy.stats import t
 
+from glmhmmt.plots import (
+    plot_transition_matrix as _plot_transition_matrix_simple,
+    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
+)
+from glmhmmt.postprocess import (
+    build_transition_matrix_by_subject_payload,
+    build_transition_matrix_payload,
+)
 from glmhmmt.runtime import load_app_config
 from glmhmmt.model_plots import (
     _state_color,
@@ -40,8 +48,6 @@ from glmhmmt.model_plots import (
     plot_state_posterior_count_kde,
     plot_state_occupancy,
     plot_state_occupancy_overall_boxplot,
-    plot_transition_matrix,
-    plot_transition_matrix_by_subject,
     plot_tau_sweep,
     plot_transition_weights,
 )
@@ -58,6 +64,38 @@ def _empty_plot(message: str = "No data") -> plt.Figure:
     ax.text(0.5, 0.5, message, ha="center", va="center")
     ax.axis("off")
     return fig
+
+
+def plot_transition_matrix(
+    arrays_store: dict,
+    state_labels: dict,
+    K: int,
+    subjects: list,
+):
+    return _plot_transition_matrix_simple(
+        **build_transition_matrix_payload(
+            arrays_store=arrays_store,
+            state_labels=state_labels,
+            K=K,
+            subjects=subjects,
+        )
+    )
+
+
+def plot_transition_matrix_by_subject(
+    arrays_store: dict,
+    state_labels: dict,
+    K: int,
+    subjects: list,
+):
+    return _plot_transition_matrix_by_subject_simple(
+        **build_transition_matrix_by_subject_payload(
+            arrays_store=arrays_store,
+            state_labels=state_labels,
+            K=K,
+            subjects=subjects,
+        )
+    )
 
 
 def _resolve_emission_plot_inputs(

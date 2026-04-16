@@ -10,12 +10,14 @@ readme = "README.md"
 requires-python = ">=3.11, <3.14"
 dependencies = [
     "bottleneck>=1.6.0",
-    "glmhmmt==0.1.13",
-    "marimo==0.22.0",
+    "glmhmmt==0.1.17",
+    "marimo==0.23.1",
+    "marimo-toml-editor>=0.1.1",
     "numexpr>=2.14.1",
-    "plot-saver",
+    "plot-saver==0.1.5",
     "tensorflow-probability==0.25.0",
     "tfp-nightly==0.26.0.dev20260205",
+    "tqdm>=4.67.3",
 ]
 
 [tool.hatch.build.targets.wheel]
