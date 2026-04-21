@@ -16,6 +16,23 @@ from glmhmmt.tasks.fitted_regressors import (
     weighted_sum_regressor,
 )
 
+try:
+    from glmhmmt.tasks import build_selector_groups as _build_selector_groups
+except ImportError:
+    def _build_selector_groups(available_cols: list[str], registry: list[dict]) -> list[dict]:
+        available = set(available_cols)
+        registered: set[str] = set()
+        result: list[dict] = []
+        for group in registry:
+            filtered = {k: v for k, v in group["members"].items() if v in available}
+            if filtered:
+                result.append({**group, "members": filtered})
+                registered.update(filtered.values())
+        for col in available_cols:
+            if col not in registered:
+                result.append({"key": col, "label": col, "members": {"N": col}})
+        return result
+
 # Default experiments to keep (avoids habituation / malformed sessions)
 _KEEP_EXPERIMENTS = ["2AFC_2", "2AFC_3", "2AFC_4", "2AFC_6"]
 _SF_COL_PREFIX = "sf_"
@@ -57,6 +74,22 @@ _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     sign=-1.0,
 )
 
+_EMISSION_GROUPS: list[dict] = [
+    {"key": "bias", "label": "bias", "members": {"N": "bias"}},
+    {"key": "stim_vals", "label": "stim vals", "members": {"N": "stim_vals"}},
+    {"key": "stim_param", "label": "stim param", "members": {"N": "stim_param"}},
+    {"key": "stim_strength", "label": "stim strength", "members": {"N": "stim_strength"}},
+    {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
+    {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
+    {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
+    {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
+    {"key": "prev_choice", "label": "prev choice", "members": {"N": "prev_choice"}},
+    {"key": "wsls", "label": "WSLS", "members": {"N": "wsls"}},
+    {"key": "prev_reward", "label": "prev reward", "members": {"N": "prev_reward"}},
+    {"key": "cumulative_reward", "label": "cumulative reward", "members": {"N": "cumulative_reward"}},
+    {"key": "prev_abs_stim", "label": "prev abs stim", "members": {"N": "prev_abs_stim"}},
+]
+
 
 def _sf_sort_key(name: str) -> tuple[int, str]:
     suffix = name.removeprefix(_SF_COL_PREFIX)
@@ -90,6 +123,38 @@ def _infer_stim_abs_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     ild_series = df["ILD"].drop_nulls() if isinstance(df, pl.DataFrame) else df["ILD"].dropna()
     stim_abs_levels = sorted({int(abs(v)) for v in ild_series.to_list()})
     return [f"{_STIM_ABS_COL_PREFIX}{stim_abs}" for stim_abs in stim_abs_levels]
+
+
+def _build_emission_groups(available_cols: list[str]) -> list[dict]:
+    available = set(available_cols)
+    result: list[dict] = []
+    registered: set[str] = set()
+
+    def add_scalar(group: dict) -> None:
+        filtered = {k: v for k, v in group["members"].items() if v in available}
+        if filtered:
+            result.append({**group, "members": filtered})
+            registered.update(filtered.values())
+
+    stim_cols = _stim_abs_cols(available_cols)
+    for group in _EMISSION_GROUPS:
+        add_scalar(group)
+        if group["key"] == "stim_param" and stim_cols:
+            result.append(
+                {
+                    "key": "stim_hot",
+                    "label": "stim_hot",
+                    "members": {},
+                    "toggle_members": [col for col in stim_cols if col != "stim_0"],
+                    "hide_members": True,
+                }
+            )
+            registered.update(stim_cols)
+
+    remaining = [col for col in available_cols if col not in registered]
+    if remaining:
+        result.extend(_build_selector_groups(remaining, []))
+    return result
 
 
 def _build_stim_param(part: pd.DataFrame, stim_abs_levels: list[int]) -> np.ndarray:
@@ -334,6 +399,13 @@ class TwoAFCDrugAdapter(TaskAdapter):
 
     def stim_abs_cols(self, df: pl.DataFrame) -> List[str]:
         return _infer_stim_abs_cols_from_df(df)
+
+    def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
+        return _build_emission_groups(list(available_cols))
+
+    def build_transition_groups(self, available_cols: List[str]) -> list[dict]:
+        del available_cols
+        return []
 
     @property
     def choice_labels(self) -> list[str]:

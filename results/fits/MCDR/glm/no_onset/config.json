@@ -8,13 +8,13 @@
         "delay",
         "SL",
         "SC",
-        "SR",
-        "SLxdelay",
-        "SRxdelay",
-        "SCxdelay"
+        "SR"
     ],
     "num_classes": 3,
-    "lapse": false,
+    "lapse_mode": "none",
     "lapse_max": 0.2,
+    "n_restarts": 1,
+    "restart_noise_scale": 0.05,
+    "seed": 0,
     "model_id": "no_onset"
 }

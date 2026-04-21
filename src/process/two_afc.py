@@ -10,6 +10,7 @@ import pandas as pd
 import jax.numpy as jnp
 import polars as pl
 
+from ._choice_tau import compute_choice_ewma, load_subject_choice_half_life
 from glmhmmt.tasks.fitted_regressors import (
     FittedWeightRegressorSpec,
     mean_feature_weights_from_fit,
@@ -19,6 +20,38 @@ from glmhmmt.tasks.fitted_regressors import (
 from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
 from glmhmmt.runtime import get_data_dir
 
+try:
+    from glmhmmt.tasks import build_selector_groups as _build_selector_groups
+except ImportError:
+    def _build_selector_groups(available_cols: list[str], registry: list[dict]) -> list[dict]:
+        available = set(available_cols)
+        registered: set[str] = set()
+        result: list[dict] = []
+        for group in registry:
+            filtered = {k: v for k, v in group["members"].items() if v in available}
+            if filtered:
+                result.append({**group, "members": filtered})
+                registered.update(filtered.values())
+        for col in available_cols:
+            if col not in registered:
+                result.append({"key": col, "label": col, "members": {"N": col}})
+        return result
+    
+from src.process.common import (
+    attach_quantile_bin_column,
+    attach_response_right_column,
+    display_regressor_name,
+    mean_glm_feature_curve as _mean_glm_feature_curve,
+    mean_glm_ild_curve as _mean_glm_ild_curve,
+    p_right_label,
+    prepare_simple_regressor_curve,
+    summarize_grouped_panel,
+    subject_glm_feature_curves as _subject_glm_feature_curves,
+    subject_glm_ild_curves as _subject_glm_ild_curves,
+    to_pandas_df,
+)
+
+
 # Default experiments to keep (avoids habituation / drug sessions)
 _KEEP_EXPERIMENTS = ["2AFC_2", "2AFC_3", "2AFC_4", "2AFC_6"]
 _SF_COL_PREFIX = "sf_"
@@ -26,7 +59,7 @@ _STIM_ABS_COL_PREFIX = "stim_"
 _BIAS_HOT_COL_PREFIX = "bias_"
 _CHOICE_LAG_COL_PREFIX = "choice_lag_"
 _NUM_CHOICE_LAGS = 15
-_RAW_PARAM_MODEL_ID = "one hot sessions lags"
+_RAW_PARAM_MODEL_ID = "one hot"
 EMISSION_COLS: list[str] = [
     "bias",
     "bias_param",
@@ -99,6 +132,24 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "cumulative_reward": r"$\mathrm{CumReward}$",
     "wsls": r"$\mathrm{WSLS}$",
 }
+
+_EMISSION_GROUPS: list[dict] = [
+    {"key": "bias", "label": "bias", "members": {"N": "bias"}},
+    {"key": "bias_param", "label": "bias param", "members": {"N": "bias_param"}},
+    {"key": "stim_vals", "label": "stim vals", "members": {"N": "stim_vals"}},
+    {"key": "stim_param", "label": "stim param", "members": {"N": "stim_param"}},
+    {"key": "stim_strength", "label": "stim strength", "members": {"N": "stim_strength"}},
+    {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
+    {"key": "at_choice_param", "label": "choice param", "members": {"N": "at_choice_param"}},
+    {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
+    {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
+    {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
+    {"key": "prev_choice", "label": "prev choice", "members": {"N": "prev_choice"}},
+    {"key": "wsls", "label": "WSLS", "members": {"N": "wsls"}},
+    {"key": "prev_reward", "label": "prev reward", "members": {"N": "prev_reward"}},
+    {"key": "cumulative_reward", "label": "cumulative reward", "members": {"N": "cumulative_reward"}},
+    {"key": "prev_abs_stim", "label": "prev abs stim", "members": {"N": "prev_abs_stim"}},
+]
 
 
 def _sf_sort_key(name: str) -> tuple[int, str]:
@@ -173,6 +224,63 @@ def _choice_lag_names() -> list[str]:
     return [f"{_CHOICE_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, _NUM_CHOICE_LAGS + 1)]
 
 
+def _build_emission_groups(available_cols: list[str]) -> list[dict]:
+    available = set(available_cols)
+    result: list[dict] = []
+    registered: set[str] = set()
+
+    def add_scalar(group: dict) -> None:
+        filtered = {k: v for k, v in group["members"].items() if v in available}
+        if filtered:
+            result.append({**group, "members": filtered})
+            registered.update(filtered.values())
+
+    def add_hidden_family(*, key: str, label: str, family_cols: list[str], toggle_cols: list[str] | None = None) -> None:
+        if not family_cols:
+            return
+        members = list(toggle_cols if toggle_cols is not None else family_cols)
+        result.append(
+            {
+                "key": key,
+                "label": label,
+                "members": {},
+                "toggle_members": members,
+                "hide_members": True,
+            }
+        )
+        registered.update(family_cols)
+
+    stim_cols = _stim_abs_cols(available_cols)
+    bias_hot_cols = _bias_hot_cols(available_cols)
+    choice_lag_cols = _choice_lag_cols(available_cols)
+
+    for group in _EMISSION_GROUPS:
+        key = group["key"]
+        if key == "bias":
+            add_scalar(group)
+            add_hidden_family(key="bias_hot", label="bias_hot", family_cols=bias_hot_cols)
+            continue
+        if key == "stim_param":
+            add_scalar(group)
+            add_hidden_family(
+                key="stim_hot",
+                label="stim_hot",
+                family_cols=stim_cols,
+                toggle_cols=[col for col in stim_cols if col != "stim_0"],
+            )
+            continue
+        if key == "at_choice":
+            add_scalar(group)
+            add_hidden_family(key="at_choice_lag", label="choice_lag", family_cols=choice_lag_cols)
+            continue
+        add_scalar(group)
+
+    remaining = [col for col in available_cols if col not in registered]
+    if remaining:
+        result.extend(_build_selector_groups(remaining, []))
+    return result
+
+
 def _max_sessions_from_df(df: pl.DataFrame | pd.DataFrame) -> int:
     if "subject" not in df.columns or "Session" not in df.columns:
         return _max_subject_sessions()
@@ -238,6 +346,300 @@ def _build_stim_param(part: pd.DataFrame, stim_abs_levels: list[int]) -> np.ndar
         )
     return weighted_sum_regressor(part, _STIM_PARAM_SPEC, dtype=np.float32)
 
+PRED_COL = "p_pred"
+RESPONSE_MODE = "pm1_or_prob"
+BASELINE = 0.5
+
+
+def prepare_predictions_df(df_pred):
+    """Prepare a canonical 2AFC trial-level predictions dataframe."""
+    if isinstance(df_pred, pl.DataFrame):
+        df = df_pred.clone()
+        required = {"stimulus", "response", "performance"}
+        missing = sorted(required.difference(df.columns))
+        if missing:
+            raise ValueError(f"Missing required 2AFC columns: {missing}")
+
+        if "correct_bool" not in df.columns:
+            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
+        if "pL" not in df.columns or "pR" not in df.columns:
+            raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
+
+        return df.with_columns(
+            pl.col("pR").alias("p_pred"),
+            pl.when(pl.col("stimulus") == 0)
+            .then(pl.col("pL"))
+            .otherwise(pl.col("pR"))
+            .alias("p_model_correct"),
+        )
+
+    df = df_pred.copy()
+    required = {"stimulus", "response", "performance"}
+    missing = sorted(required.difference(df.columns))
+    if missing:
+        raise ValueError(f"Missing required 2AFC columns: {missing}")
+
+    if "correct_bool" not in df.columns:
+        df["correct_bool"] = df["performance"].astype(bool)
+    if "pL" not in df.columns or "pR" not in df.columns:
+        raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
+
+    df["p_pred"] = df["pR"]
+    df["p_model_correct"] = df.apply(
+        lambda row: row["pL"] if row["stimulus"] == 0 else row["pR"],
+        axis=1,
+    )
+    return df
+
+
+def mean_glm_ild_curve(arrays_store, subjects, X_cols, *, ild_max, state_k=None):
+    return _mean_glm_ild_curve(
+        arrays_store,
+        subjects,
+        X_cols,
+        ild_max=ild_max,
+        state_k=state_k,
+        stim_param_weight_map=_stim_param_weight_map,
+        right_logit_sign=-1.0,
+    )
+
+
+def subject_glm_ild_curves(arrays_store, subjects, X_cols, *, ild_max, state_k=None):
+    return _subject_glm_ild_curves(
+        arrays_store,
+        subjects,
+        X_cols,
+        ild_max=ild_max,
+        state_k=state_k,
+        stim_param_weight_map=_stim_param_weight_map,
+        right_logit_sign=-1.0,
+    )
+
+
+def mean_glm_feature_curve(
+    arrays_store,
+    subjects,
+    X_cols,
+    *,
+    feature_name,
+    grid_min,
+    grid_max,
+    state_k=None,
+    n_grid: int = 300,
+):
+    return _mean_glm_feature_curve(
+        arrays_store,
+        subjects,
+        X_cols,
+        feature_name=feature_name,
+        grid_min=grid_min,
+        grid_max=grid_max,
+        state_k=state_k,
+        n_grid=n_grid,
+        right_logit_sign=-1.0,
+    )
+
+
+def subject_glm_feature_curves(
+    arrays_store,
+    subjects,
+    X_cols,
+    *,
+    feature_name,
+    grid_min,
+    grid_max,
+    state_k=None,
+    n_grid: int = 300,
+):
+    return _subject_glm_feature_curves(
+        arrays_store,
+        subjects,
+        X_cols,
+        feature_name=feature_name,
+        grid_min=grid_min,
+        grid_max=grid_max,
+        state_k=state_k,
+        n_grid=n_grid,
+        right_logit_sign=-1.0,
+    )
+
+
+def prepare_right_by_regressor_simple(
+    trial_df,
+    *,
+    regressor_col: str,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+):
+    return prepare_simple_regressor_curve(
+        trial_df,
+        regressor_col=regressor_col,
+        pred_col=PRED_COL,
+        response_mode=RESPONSE_MODE,
+        baseline=BASELINE,
+        ylabel=p_right_label(),
+        xlabel=xlabel,
+        n_bins=n_bins,
+    )
+
+
+def prepare_binned_accuracy_figure(
+    trial_df,
+    *,
+    regressor_col: str,
+) -> tuple[list[dict] | None, str | None]:
+    df_pd = to_pandas_df(trial_df)
+    if regressor_col not in df_pd.columns:
+        return None, None
+
+    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=4)
+    if df_pd is None:
+        return None, None
+    reg_bin_labels = bin_centers["_reg_bin"].tolist()
+
+    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
+    if df_pd.empty:
+        return None, None
+
+    conds = sorted(df_pd["condition"].dropna().unique()) if "condition" in df_pd.columns else []
+    exps = sorted(df_pd["experiment"].dropna().unique()) if "experiment" in df_pd.columns else []
+    ild_ticks = sorted(pd.to_numeric(df_pd["ILD"], errors="coerce").dropna().unique()) if "ILD" in df_pd.columns else []
+
+    panels: list[dict] = []
+
+    panels.append(
+        {
+            "summary": summarize_grouped_panel(
+                df_pd,
+                line_group_col="_reg_bin",
+                x_col="ILD",
+                subject_col="subject",
+                data_col="_response_right",
+                model_col=PRED_COL,
+                line_order=reg_bin_labels,
+            ),
+            "meta": {
+                "xlabel": "ILD (dB)",
+                "ylabel": p_right_label(),
+                "legend_title": display_regressor_name(regressor_col),
+                "baseline": BASELINE,
+                "xticks": ild_ticks,
+            }
+        }
+    )
+
+    for cond in conds:
+        panels.append(
+            {
+                "summary": summarize_grouped_panel(
+                    df_pd,
+                    line_group_col="_reg_bin",
+                    x_col="ILD",
+                    subject_col="subject",
+                    data_col="_response_right",
+                    model_col=PRED_COL,
+                    line_order=reg_bin_labels,
+                    subgroup_col="condition",
+                    subgroup_value=cond,
+                ),
+                "meta": {
+                    "xlabel": "ILD (dB)",
+                    "ylabel": p_right_label(),
+                    "legend_title": display_regressor_name(regressor_col),
+                    "baseline": BASELINE,
+                    "xticks": ild_ticks,
+                },
+            }
+        )
+
+    for exp in exps:
+        panels.append(
+            {
+                "summary": summarize_grouped_panel(
+                    df_pd,
+                    line_group_col="_reg_bin",
+                    x_col="ILD",
+                    subject_col="subject",
+                    data_col="_response_right",
+                    model_col=PRED_COL,
+                    line_order=reg_bin_labels,
+                    subgroup_col="experiment",
+                    subgroup_value=exp,
+                ),
+                "meta": {
+                    "xlabel": "ILD (dB)",
+                    "ylabel": p_right_label(),
+                    "legend_title": display_regressor_name(regressor_col),
+                    "baseline": BASELINE,
+                    "xticks": ild_ticks,
+                },
+            }
+        )
+
+    return panels, display_regressor_name(regressor_col)
+
+
+def prepare_right_by_regressor(
+    trial_df,
+    *,
+    regressor_col: str,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+):
+    df_pd = to_pandas_df(trial_df)
+    required = {regressor_col, "response", PRED_COL, "subject", "ILD"}
+    if not required.issubset(df_pd.columns):
+        return None, None
+
+    df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
+    df_pd[PRED_COL] = pd.to_numeric(df_pd[PRED_COL], errors="coerce")
+    df_pd["ILD"] = pd.to_numeric(df_pd["ILD"], errors="coerce")
+    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
+
+    df_pd = df_pd[
+        np.isfinite(df_pd[regressor_col])
+        & np.isfinite(df_pd[PRED_COL])
+        & np.isfinite(df_pd["_response_right"])
+        & np.isfinite(df_pd["ILD"])
+    ].copy()
+    if df_pd.empty:
+        return None, None
+
+    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=n_bins)
+    if df_pd is None:
+        return None, None
+    bin_order = bin_centers["_reg_bin"].tolist()
+
+    ild_order = sorted(df_pd["ILD"].dropna().unique().tolist())
+
+    summary = summarize_grouped_panel(
+        df_pd,
+        line_group_col="ILD",
+        x_col="_reg_bin",
+        subject_col="subject",
+        data_col="_response_right",
+        model_col=PRED_COL,
+        line_order=ild_order,
+        x_order=bin_order,
+    )
+    if summary.empty:
+        return None, None
+
+    summary = summary.merge(bin_centers, on="_reg_bin", how="left")
+
+    meta = {
+        "xlabel": xlabel or display_regressor_name(regressor_col),
+        "ylabel": p_right_label(),
+        "legend_title": "Signed ILD",
+        "baseline": BASELINE,
+        "line_order": ild_order,
+        "legend_outside": True,
+    }
+    return summary, meta
+
+
+
+
 
 @_register(["two_afc", "2afc"])
 class TwoAFCAdapter(TaskAdapter):
@@ -281,6 +683,7 @@ class TwoAFCAdapter(TaskAdapter):
         df_sub: pl.DataFrame,
         tau: float = 50.0,
         include_stim_strength: bool = False,
+        include_stim_param: bool = False,
         include_bias_param: bool = False,
         include_at_choice_param: bool = False,
     ) -> pl.DataFrame:
@@ -291,6 +694,11 @@ class TwoAFCAdapter(TaskAdapter):
         df_pd = df_pd.sort_values(["Session", "Trial"]).reset_index(drop=True)
         if df_pd.empty:
             return pl.from_pandas(df_pd)
+        subject_half_life = load_subject_choice_half_life(
+            task_key=self.task_key,
+            fit_model_id=_RAW_PARAM_MODEL_ID,
+            subject=str(df_pd["subject"].iloc[0]) if "subject" in df_pd.columns and len(df_pd) else None,
+        )
 
         stim_scale = float(df_pd["ILD"].abs().max() or 0.0)
         if stim_scale <= 0:
@@ -360,7 +768,8 @@ class TwoAFCAdapter(TaskAdapter):
                 ],
                 axis=1,
             )
-            part[_STIM_PARAM_COL] = _build_stim_param(part, stim_abs_levels)
+            if include_stim_param:
+                part[_STIM_PARAM_COL] = _build_stim_param(part, stim_abs_levels)
 
             existing_sf_cols = [
                 c for c in part.columns if str(c).startswith(_SF_COL_PREFIX)
@@ -375,6 +784,12 @@ class TwoAFCAdapter(TaskAdapter):
                 part = pd.concat([part.reset_index(drop=True), stim_strength], axis=1)
 
             at_choice, at_error, at_correct, reward_trace = get_action_trace(part)
+            if subject_half_life is not None:
+                prev_signed_choice = signed_choice.shift(1).fillna(0.0).astype(np.float32)
+                at_choice = compute_choice_ewma(
+                    prev_signed_choice.to_numpy(dtype=np.float32),
+                    half_life=subject_half_life,
+                )
             cumulative_reward = part["Hit"].cumsum().shift(1).fillna(0).astype(float)
             max_cumulative_reward = float(np.nanmax(cumulative_reward.to_numpy())) if len(cumulative_reward) else 0.0
             if max_cumulative_reward > 0:
@@ -428,6 +843,7 @@ class TwoAFCAdapter(TaskAdapter):
             df_sub,
             tau=tau,
             include_stim_strength=False,
+            include_stim_param=False,
             include_bias_param=False,
             include_at_choice_param=False,
         )
@@ -467,12 +883,14 @@ class TwoAFCAdapter(TaskAdapter):
         include_stim_strength = "stim_strength" in requested_emission_cols or any(
             col.startswith(_SF_COL_PREFIX) for col in requested_emission_cols
         )
+        include_stim_param = _STIM_PARAM_COL in requested_emission_cols
         include_bias_param = "bias_param" in requested_emission_cols
         include_at_choice_param = "at_choice_param" in requested_emission_cols
         feature_df = self._build_feature_df(
             df_sub,
             tau=tau,
             include_stim_strength=include_stim_strength,
+            include_stim_param=include_stim_param,
             include_bias_param=include_bias_param,
             include_at_choice_param=include_at_choice_param,
         )
@@ -519,8 +937,6 @@ class TwoAFCAdapter(TaskAdapter):
     # ── column defaults ─────────────────────────────────────────────────────
 
     def default_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        # Exclude stim_strength (multi-column) and stim_param (alternate stimulus
-        # encoding) by default; include precomputed sf_ cols at runtime.
         default_cols = [
             c
             for c in EMISSION_COLS
@@ -597,6 +1013,13 @@ class TwoAFCAdapter(TaskAdapter):
             if existing:
                 return existing
         return _choice_lag_names()
+
+    def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
+        return _build_emission_groups(list(available_cols))
+
+    def build_transition_groups(self, available_cols: List[str]) -> list[dict]:
+        del available_cols
+        return []
 
     @property
     def choice_labels(self) -> list[str]:

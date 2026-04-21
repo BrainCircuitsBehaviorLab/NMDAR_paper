@@ -2,27 +2,49 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import json
+from pathlib import Path
 import types
 from typing import List, Tuple, Dict, Any
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import polars as pl
 
-from glmhmmt.runtime import get_data_dir
+from ._choice_tau import load_subject_choice_half_life
+from glmhmmt.runtime import get_data_dir, get_results_dir
 from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
 from glmhmmt.tasks.fitted_regressors import (
     FittedWeightRegressorSpec,
     weighted_sum_regressor,
 )
 
+try:
+    from glmhmmt.tasks import build_selector_groups as _build_selector_groups
+except ImportError:
+    def _build_selector_groups(available_cols: list[str], registry: list[dict]) -> list[dict]:
+        available = set(available_cols)
+        registered: set[str] = set()
+        result: list[dict] = []
+        for group in registry:
+            filtered = {k: v for k, v in group["members"].items() if v in available}
+            if filtered:
+                result.append({**group, "members": filtered})
+                registered.update(filtered.values())
+        for col in available_cols:
+            if col not in registered:
+                result.append({"key": col, "label": col, "members": {"N": col}})
+        return result
+
 _BIAS_HOT_COL_PREFIX = "bias_"
 _CHOICE_LAG_COL_PREFIX = "choice_lag_"
 _CHOICE_LAG_SIDES = ("L", "C", "R")
+_CHOICE_LAG_REFERENCE_SIDE = "C"
 _CHOICE_SIDE_TO_CLASS = {"L": 0, "C": 1, "R": 2}
 _NUM_CHOICE_LAGS = 15
 _STIM_PARAM_MODEL_ID = "One-hot"
-_RAW_PARAM_MODEL_ID = "one hot sessions lags"
+_RAW_PARAM_MODEL_ID = "one hot"
 _STIM_HOT_COLS = tuple(
     f"stim{stim_idx}{side}"
     for stim_idx in range(1, 5)
@@ -76,6 +98,35 @@ _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     source_features=_STIM_HOT_COLS,
     class_idx=0,
 )
+
+_EMISSION_GROUPS: list[dict] = [
+    {"key": "bias", "label": "bias", "members": {"N": "bias"}},
+    {"key": "bias_param", "label": "bias param", "members": {"N": "bias_param"}},
+    {"key": "bias_side", "label": "bias side", "members": {"L": "biasL", "C": "biasC", "R": "biasR"}},
+    {"key": "onset", "label": "onset", "members": {"L": "onsetL", "C": "onsetC", "R": "onsetR"}},
+    {"key": "delay", "label": "delay", "members": {"N": "delay"}},
+    {"key": "S", "label": "S", "members": {"L": "SL", "C": "SC", "R": "SR"}},
+    {"key": "SxDelay", "label": "S×delay", "members": {"L": "SLxdelay", "C": "SCxdelay", "R": "SRxdelay"}},
+    {"key": "SxD", "label": "S×D", "members": {"L": "SLxD", "C": "SCxD", "R": "SRxD"}},
+    {"key": "D", "label": "D (type)", "members": {"N": "D"}},
+    {"key": "D_side", "label": "D side", "members": {"L": "DL", "C": "DC", "R": "DR"}},
+    {"key": "A", "label": "A (action)", "members": {"L": "A_L", "C": "A_C", "R": "A_R"}},
+    {"key": "choice_lag_param", "label": "choice lag param", "members": {"N": "choice_lag_param"}},
+    {"key": "stim_param", "label": "stim param", "members": {"N": "stim_param"}},
+    {"key": "speed1", "label": "speed 1", "members": {"N": "speed1"}},
+    {"key": "speed2", "label": "speed 2", "members": {"N": "speed2"}},
+    {"key": "speed3", "label": "speed 3", "members": {"N": "speed3"}},
+    # {"key": "stim1", "label": "stim 1", "members": {"L": "stim1L", "C": "stim1C", "R": "stim1R"}},
+    # {"key": "stim2", "label": "stim 2", "members": {"L": "stim2L", "C": "stim2C", "R": "stim2R"}},
+    # {"key": "stim3", "label": "stim 3", "members": {"L": "stim3L", "C": "stim3C", "R": "stim3R"}},
+    # {"key": "stim4", "label": "stim 4", "members": {"L": "stim4L", "C": "stim4C", "R": "stim4R"}},
+]
+
+_TRANSITION_GROUPS: list[dict] = [
+    {"key": "A_plus", "label": "A+", "members": {"N": "A_plus"}},
+    {"key": "A_minus", "label": "A−", "members": {"N": "A_minus"}},
+    {"key": "A_trans", "label": "A (action)", "members": {"L": "A_L", "C": "A_C", "R": "A_R"}},
+]
 
 
 def _safe_weighted_sum_regressor(
@@ -132,6 +183,22 @@ def _choice_lag_cols(columns: list[str]) -> list[str]:
     )
 
 
+def _reference_coded_choice_lag_cols(columns: list[str]) -> list[str]:
+    return [
+        col
+        for col in _choice_lag_cols(columns)
+        if not col.endswith(_CHOICE_LAG_REFERENCE_SIDE)
+    ]
+
+
+def _reference_choice_lag_cols(columns: list[str]) -> list[str]:
+    return [
+        col
+        for col in _choice_lag_cols(columns)
+        if col.endswith(_CHOICE_LAG_REFERENCE_SIDE)
+    ]
+
+
 def _stim_hot_cols(columns: list[str]) -> list[str]:
     return sorted(
         [col for col in columns if col in _STIM_HOT_COLS],
@@ -139,17 +206,101 @@ def _stim_hot_cols(columns: list[str]) -> list[str]:
     )
 
 
-def _choice_lag_names() -> list[str]:
+def _build_emission_groups(available_cols: list[str]) -> list[dict]:
+    available = set(available_cols)
+    result: list[dict] = []
+    registered: set[str] = set()
+
+    def add_group(group: dict) -> None:
+        filtered = {k: v for k, v in group["members"].items() if v in available}
+        if filtered:
+            result.append({**group, "members": filtered})
+            registered.update(filtered.values())
+
+    bias_hot_cols = _bias_hot_cols(available_cols)
+    stim_hot_cols = _stim_hot_cols(available_cols)
+    choice_lag_cols = _choice_lag_cols(available_cols)
+    choice_lag_toggle_cols = _reference_coded_choice_lag_cols(available_cols)
+    choice_lag_exclude_cols = _reference_choice_lag_cols(available_cols)
+
+    for group in _EMISSION_GROUPS:
+        add_group(group)
+        if group["key"] == "bias":
+            if bias_hot_cols:
+                result.append(
+                    {
+                        "key": "bias_hot",
+                        "label": "bias_hot",
+                        "members": {},
+                        "toggle_members": list(bias_hot_cols),
+                        "hide_members": True,
+                    }
+                )
+                registered.update(bias_hot_cols)
+    if stim_hot_cols:
+        result.append(
+            {
+                "key": "stim_one_hot",
+                "label": "stim one-hot",
+                "members": {},
+                "toggle_members": list(stim_hot_cols),
+                "hide_members": True,
+            }
+        )
+        registered.update(stim_hot_cols)
+
+    grouped_choice_lags: dict[str, dict[str, str]] = {}
+    for col in choice_lag_cols:
+        suffix = col.removeprefix(_CHOICE_LAG_COL_PREFIX)
+        lag_token, side = suffix[:-1], suffix[-1]
+        grouped_choice_lags.setdefault(lag_token, {})[side] = col
+        registered.add(col)
+
+    # for lag_token in sorted(grouped_choice_lags, key=int):
+    #     result.append(
+    #         {
+    #             "key": f"choice_lag_{lag_token}",
+    #             "label": f"choice lag {lag_token}",
+    #             "members": grouped_choice_lags[lag_token],
+    #         }
+    #     )
+
+    if choice_lag_cols:
+        result.append(
+            {
+                "key": "choice_lag",
+                "label": "choice lag",
+                "members": {},
+                "toggle_members": list(choice_lag_toggle_cols),
+                "exclude_members": list(choice_lag_exclude_cols),
+                "hide_members": True,
+            }
+        )
+
+    remaining = [col for col in available_cols if col not in registered]
+    if remaining:
+        result.extend(_build_selector_groups(remaining, []))
+    return result
+
+
+def _choice_lag_names(*, include_reference: bool = True) -> list[str]:
+    sides = (
+        _CHOICE_LAG_SIDES
+        if include_reference
+        else tuple(side for side in _CHOICE_LAG_SIDES if side != _CHOICE_LAG_REFERENCE_SIDE)
+    )
     return [
         f"{_CHOICE_LAG_COL_PREFIX}{lag_idx:02d}{side}"
         for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)
-        for side in _CHOICE_LAG_SIDES
+        for side in sides
     ]
 
 
 def _max_sessions_from_df(df: pl.DataFrame) -> int:
-    if "subject" not in df.columns or "session" not in df.columns:
+    if "session" not in df.columns:
         return _max_subject_sessions()
+    if "subject" not in df.columns:
+        return int(df["session"].n_unique())
     return int(
         df.group_by("subject")
         .agg(pl.col("session").n_unique().alias("n_sessions"))
@@ -180,6 +331,560 @@ def _max_subject_sessions() -> int:
         or 0
     )
 
+
+def _config_has_choice_lag_family(cfg: dict[str, Any]) -> bool:
+    emission_cols = [str(col) for col in (cfg.get("emission_cols") or [])]
+    return any(
+        col.startswith(_CHOICE_LAG_COL_PREFIX) or col == "choice_lag_param"
+        for col in emission_cols
+    )
+
+
+def _choice_lag_config_sort_key(path: Path, cfg: dict[str, Any]) -> tuple[int, int, str]:
+    emission_cols = [str(col) for col in cfg.get("emission_cols", [])]
+    model_id = str(cfg.get("model_id", path.parent.name))
+    choice_lag_count = sum(col.startswith(_CHOICE_LAG_COL_PREFIX) for col in emission_cols)
+    exact_model_match = 0 if model_id == _RAW_PARAM_MODEL_ID or path.parent.name == _RAW_PARAM_MODEL_ID else 1
+    return (exact_model_match, -choice_lag_count, model_id)
+
+
+def _resolve_choice_action_half_life(
+    *,
+    subject: str | None,
+    default_half_life: float,
+    results_dir: Path | None = None,
+) -> float:
+    subject_half_life = load_subject_choice_half_life(
+        task_key="MCDR",
+        fit_model_id=_RAW_PARAM_MODEL_ID,
+        subject=subject,
+    )
+    if subject_half_life is not None:
+        return float(subject_half_life)
+
+    fits_root = (results_dir or get_results_dir()) / "fits" / "MCDR" / "glm"
+    if not fits_root.exists():
+        return float(default_half_life)
+
+    candidates: list[tuple[Path, dict[str, Any]]] = []
+    for cfg_path in fits_root.glob("*/config.json"):
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if _config_has_choice_lag_family(cfg):
+            candidates.append((cfg_path, cfg))
+
+    if not candidates:
+        return float(default_half_life)
+
+    cfg_path, cfg = min(
+        candidates,
+        key=lambda item: _choice_lag_config_sort_key(item[0], item[1]),
+    )
+    del cfg_path
+    tau_value = cfg.get("tau")
+    if tau_value is None:
+        return float(default_half_life)
+    try:
+        tau_float = float(tau_value)
+    except (TypeError, ValueError):
+        return float(default_half_life)
+    return tau_float if np.isfinite(tau_float) and tau_float > 0.0 else float(default_half_life)
+
+
+from src.process.common import (
+    attach_group_quantile_bin_column,
+    attach_quantile_bin_column,
+    attach_response_right_column,
+    display_regressor_name,
+    p_right_label,
+    prepare_simple_regressor_curve,
+    summarize_grouped_panel,
+    to_pandas_df,
+)
+
+PRED_COL = "pR"
+RESPONSE_MODE = "mcdr_3class"
+BASELINE = 1.0 / 3.0
+
+
+def prepare_predictions_df(df_pred: pl.DataFrame, *, cfg) -> pl.DataFrame:
+    """Prepare a canonical MCDR trial-level predictions dataframe."""
+    df = df_pred.clone() if isinstance(df_pred, pl.DataFrame) else pl.from_pandas(df_pred)
+
+    if "correct_bool" not in df.columns:
+        if "performance" in df.columns:
+            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
+        else:
+            raise ValueError("No encuentro 'performance' ni 'correct_bool' en df.")
+
+    for col in ["pL", "pC", "pR"]:
+        if col not in df.columns:
+            raise ValueError(f"Falta la columna '{col}' en df (predicciones por trial).")
+    if "response" not in df.columns:
+        raise ValueError("Falta la columna 'response' (0/1/2) en df.")
+
+    if "p_model_correct" not in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("stimulus") == 0)
+            .then(pl.col("pL"))
+            .when(pl.col("stimulus") == 1)
+            .then(pl.col("pC"))
+            .when(pl.col("stimulus") == 2)
+            .then(pl.col("pR"))
+            .otherwise(None)
+            .alias("p_model_correct")
+        )
+
+    if "stimd_c" not in df.columns:
+        if "stimd_n" in df.columns:
+            df = df.with_columns(pl.col("stimd_n").replace(cfg["encoding"]["stimd"], default=None).alias("stimd_c"))
+        else:
+            raise ValueError("Falta 'stimd_c' y no existe 'stimd_n' para mapear.")
+
+    if "ttype_c" not in df.columns:
+        if "ttype_n" in df.columns:
+            df = df.with_columns(pl.col("ttype_n").replace(cfg["encoding"]["ttype"], default=None).alias("ttype_c"))
+        else:
+            raise ValueError("Falta 'ttype_c' y no existe 'ttype_n' para mapear.")
+
+    return df
+
+
+def prepare_right_by_regressor_simple(
+    trial_df,
+    *,
+    regressor_col: str,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+):
+    return prepare_simple_regressor_curve(
+        trial_df,
+        regressor_col=regressor_col,
+        pred_col=PRED_COL,
+        response_mode=RESPONSE_MODE,
+        baseline=BASELINE,
+        ylabel=p_right_label(),
+        xlabel=xlabel,
+        n_bins=n_bins,
+    )
+
+
+def prepare_binned_accuracy_figure(
+    trial_df,
+    *,
+    regressor_col: str,
+    cfg,
+) -> tuple[list[dict] | None, str | None]:
+    df_pd = to_pandas_df(trial_df)
+    if regressor_col not in df_pd.columns:
+        return None, None
+
+    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=4)
+    if df_pd is None:
+        return None, None
+    reg_bin_labels = bin_centers["_reg_bin"].tolist()
+    if df_pd.empty:
+        return None, None
+
+    panels: list[dict] = []
+
+    panels.append(
+        {
+            "summary": summarize_grouped_panel(
+                df_pd,
+                line_group_col="_reg_bin",
+                x_col="ttype_c",
+                subject_col="subject",
+                data_col="correct_bool",
+                model_col="p_model_correct",
+                line_order=reg_bin_labels,
+                x_order=list(cfg["plots"]["ttype"]["order"]),
+            ),
+            "meta": {
+                "xlabel":"Trial difficulty",
+                "ylabel":"Accuracy",
+                "legend_title":display_regressor_name(regressor_col),
+                "baseline":BASELINE,
+                "x_order":list(cfg["plots"]["ttype"]["order"]),
+                "x_tick_labels":list(cfg["plots"]["ttype"]["labels"]),
+                "categorical_x":True,
+                },
+        }
+    )
+
+    panels.append(
+        {
+            "summary": summarize_grouped_panel(
+                df_pd,
+                line_group_col="_reg_bin",
+                x_col="stimd_c",
+                subject_col="subject",
+                data_col="correct_bool",
+                model_col="p_model_correct",
+                line_order=reg_bin_labels,
+                x_order=list(cfg["plots"]["stimd"]["order"]),
+                base_filter=df_pd["ttype_c"] == "DS",
+            ),
+            "meta": {
+                "xlabel":"Stimulus type",
+                "ylabel":"Accuracy",
+                "legend_title":display_regressor_name(regressor_col),
+                "baseline":BASELINE,
+                "x_order":list(cfg["plots"]["stimd"]["order"]),
+                "x_tick_labels":list(cfg["plots"]["stimd"]["labels"]),
+                "categorical_x":True,
+            },
+        }
+    )
+
+    panels.append(
+        {
+            "summary": summarize_grouped_panel(
+                df_pd,
+                line_group_col="_reg_bin",
+                x_col="ttype_c",
+                subject_col="subject",
+                data_col="correct_bool",
+                model_col="p_model_correct",
+                line_order=reg_bin_labels,
+                x_order=list(cfg["plots"]["delay"]["order"]),
+                base_filter=df_pd["stimd_c"] == "SS",
+            ),
+            "meta": {
+                "xlabel":"Delay type",
+                "ylabel":"Accuracy",
+                "legend_title":display_regressor_name(regressor_col),
+                "baseline":BASELINE,
+                "x_order":list(cfg["plots"]["delay"]["order"]),
+                "x_tick_labels":list(cfg["plots"]["delay"]["labels"]),
+                "categorical_x":True,
+            },
+        }
+    )
+
+    return panels, display_regressor_name(regressor_col)
+
+
+def prepare_categorical_performance_df(trial_df) -> pl.DataFrame:
+    df = trial_df if isinstance(trial_df, pl.DataFrame) else pl.from_pandas(trial_df)
+    if "p_model_correct_marginal" in df.columns:
+        if "p_model_correct" in df.columns:
+            df = df.drop("p_model_correct")
+        df = df.rename({"p_model_correct_marginal": "p_model_correct"})
+    return df
+
+
+def prepare_cat_panel_payload(
+    trial_df,
+    *,
+    group_col: str,
+    order: list,
+) -> dict | None:
+    df = trial_df if isinstance(trial_df, pl.DataFrame) else pl.from_pandas(trial_df)
+    df_pd = df.filter(pl.col(group_col).is_in(order)).to_pandas()
+    if df_pd.empty:
+        return None
+
+    subj = (
+        df_pd.groupby([group_col, "subject"], observed=True)
+        .agg(correct_mean=("correct_bool", "mean"), model_mean=("p_model_correct", "mean"))
+        .reset_index()
+    )
+    if subj.empty:
+        return None
+
+    grouped = (
+        subj.groupby(group_col, observed=True)
+        .agg(
+            md=("correct_mean", "mean"),
+            sd=("correct_mean", "std"),
+            nd=("correct_mean", "count"),
+            mm=("model_mean", "mean"),
+            sm=("model_mean", "std"),
+            nm=("model_mean", "count"),
+        )
+        .reset_index()
+    )
+    rows = grouped.set_index(group_col).to_dict("index")
+    cats = [cat for cat in order if cat in rows]
+    if not cats:
+        return None
+    return {
+        "cats": cats,
+        "md": np.array([rows[cat]["md"] for cat in cats], dtype=float),
+        "sd": np.nan_to_num(np.array([rows[cat]["sd"] for cat in cats], dtype=float)),
+        "nd": np.array([max(rows[cat]["nd"], 1) for cat in cats], dtype=float),
+        "mm": np.array([rows[cat]["mm"] for cat in cats], dtype=float),
+        "sm": np.nan_to_num(np.array([rows[cat]["sm"] for cat in cats], dtype=float)),
+        "nm": np.array([max(rows[cat]["nm"], 1) for cat in cats], dtype=float),
+        "n_subjects": int(subj["subject"].nunique()),
+    }
+
+
+def prepare_state_panel_payload(
+    trial_df,
+    *,
+    group_col: str,
+    order: list,
+) -> dict | None:
+    df = trial_df if isinstance(trial_df, pl.DataFrame) else pl.from_pandas(trial_df)
+    df_pd = df.filter(pl.col(group_col).is_in(order)).to_pandas()
+    if df_pd.empty:
+        return None
+
+    subj = (
+        df_pd.groupby([group_col, "subject"], observed=True)
+        .agg(acc=("correct_bool", "mean"), model=("p_model_correct", "mean"))
+        .reset_index()
+    )
+    if subj.empty:
+        return None
+
+    agg = (
+        subj.groupby(group_col, observed=True)
+        .agg(md=("acc", "mean"), sd=("acc", "std"), mm=("model", "mean"), sm=("model", "std"))
+        .reset_index()
+    )
+    rows = agg.set_index(group_col).to_dict("index")
+    cats = [cat for cat in order if cat in rows]
+    if not cats:
+        return None
+    return {
+        "cats": cats,
+        "xpos": np.array([order.index(cat) for cat in cats], dtype=float),
+        "md": np.array([rows[cat]["md"] for cat in cats], dtype=float),
+        "sd": np.nan_to_num(np.array([rows[cat]["sd"] for cat in cats], dtype=float)),
+        "mm": np.array([rows[cat]["mm"] for cat in cats], dtype=float),
+        "sm": np.nan_to_num(np.array([rows[cat]["sm"] for cat in cats], dtype=float)),
+        "n_subjects": int(subj["subject"].nunique()),
+    }
+
+
+def prepare_delay_or_stim_1d_payload(trial_df, *, subject, n_bins: int, which: str) -> dict | None:
+    df = to_pandas_df(trial_df)
+    df_delay = df[df["stimd_c"] == "SS"]
+    df_stim = df.copy()
+
+    if subject is not None:
+        df_delay = df_delay[df_delay["subject"] == subject].copy()
+        df_stim = df_stim[df_stim["subject"] == subject].copy()
+
+    needed_cols = ["delay_d", "correct_bool", "p_model_correct", "subject", "stim_d"]
+    df_delay = df_delay.dropna(subset=needed_cols)
+    df_stim = df_stim.dropna(subset=needed_cols)
+
+    if which == "delay":
+        data = df_delay
+        x_col = "delay_d"
+        meta = {"xlabel": "Delay duration", "title_suffix": "Delay", "band_floor": BASELINE, "palette": "Purples_r"}
+    elif which == "stim":
+        data = df_stim
+        x_col = "stim_d"
+        meta = {"xlabel": "Stimulus duration", "title_suffix": "Stimulus", "band_floor": BASELINE, "palette": "Oranges"}
+    else:
+        raise ValueError("which must be 'delay' or 'stim'")
+
+    if data.empty:
+        return None
+
+    data, centers = attach_quantile_bin_column(
+        data,
+        value_col=x_col,
+        bin_col="x_bin",
+        max_bins=n_bins,
+        center_col="center",
+        center_agg="median",
+    )
+    if data is None:
+        return None
+    subj = (
+        data.groupby(["x_bin", "subject"], observed=True)
+        .agg(data_acc=("correct_bool", "mean"), model_acc=("p_model_correct", "mean"))
+        .reset_index()
+        .merge(centers, on="x_bin", how="left")
+    )
+    plot_df = subj.melt(
+        id_vars=["x_bin", "subject", "center"],
+        value_vars=["data_acc", "model_acc"],
+        var_name="kind",
+        value_name="acc",
+    )
+    plot_df["kind"] = plot_df["kind"].map({"data_acc": "Data", "model_acc": "Model"})
+    return {"plot_df": plot_df, "meta": meta}
+
+
+def prepare_categorical_strat_by_side_payload(
+    trial_df,
+    *,
+    df_silent=None,
+    cond_col: str = "stimd_c",
+    cond_order=None,
+    cond_labels=None,
+) -> dict:
+    df = to_pandas_df(trial_df)
+    df["x_c"] = df["x_c"].astype("string").str.strip().str.upper()
+
+    if cond_order is None:
+        cond_order = sorted(df[cond_col].dropna().unique())
+    if cond_labels is None:
+        cond_labels = cond_order
+
+    summary = (
+        df.groupby([cond_col, "x_c"], observed=True)
+        .agg(
+            data_mean=("correct_bool", "mean"),
+            model_mean=("p_model_correct", "mean"),
+            n=("correct_bool", "size"),
+        )
+        .reset_index()
+    )
+    summary["data_sem"] = np.sqrt(summary["data_mean"] * (1.0 - summary["data_mean"]) / summary["n"].clip(lower=1))
+    summary["x_pos"] = summary[cond_col].map({cond: idx for idx, cond in enumerate(cond_order)})
+
+    p_silent = None
+    if df_silent is not None:
+        p_silent = {"L": df_silent["pL_mean"], "C": df_silent["pC_mean"], "R": df_silent["pR_mean"]}
+
+    return {
+        "summary": summary,
+        "p_silent": p_silent,
+        "meta": {"cond_order": cond_order, "cond_labels": cond_labels, "baseline": BASELINE},
+    }
+
+
+def prepare_delay_binned_1d_payload(trial_df, *, subject=None, n_bins: int = 7) -> dict | None:
+    df = to_pandas_df(trial_df)
+    df_delay = df[df["stimd_c"] == "SS"]
+    df_stim = df[df["ttype_c"] == "DS"].copy()
+
+    if subject is not None:
+        df_delay = df_delay[df_delay["subject"] == subject].copy()
+        df_stim = df_stim[df_stim["subject"] == subject].copy()
+
+    needed_cols = ["delay_d", "correct_bool", "p_model_correct", "subject", "stim_d"]
+    df_delay = df_delay.dropna(subset=needed_cols)
+    df_stim = df_stim.dropna(subset=needed_cols)
+    if df_delay.empty or df_stim.empty:
+        return None
+
+    df_delay = attach_group_quantile_bin_column(
+        df_delay,
+        value_col="delay_d",
+        group_cols=["ttype_c"],
+        bin_col="delay_bin",
+        max_bins=n_bins,
+    )
+    if df_delay is None:
+        return None
+    centers_delay = (
+        df_delay.groupby(["ttype_c", "delay_bin"], observed=True)["delay_d"].median().rename("center").reset_index()
+    )
+    subj_delay = (
+        df_delay.groupby(["ttype_c", "delay_bin", "subject"], observed=True)
+        .agg(data_acc=("correct_bool", "mean"), model_acc=("p_model_correct", "mean"))
+        .reset_index()
+        .merge(centers_delay, on=["ttype_c", "delay_bin"], how="left")
+    )
+
+    df_stim = attach_group_quantile_bin_column(
+        df_stim,
+        value_col="stim_d",
+        group_cols=["stimd_c"],
+        bin_col="stim_bin",
+        max_bins=n_bins,
+    )
+    if df_stim is None:
+        return None
+    centers_stim = (
+        df_stim.groupby(["stimd_c", "stim_bin"], observed=True)["stim_d"].median().rename("center").reset_index()
+    )
+    subj_stim = (
+        df_stim.groupby(["stimd_c", "stim_bin", "subject"], observed=True)
+        .agg(data_acc=("correct_bool", "mean"), model_acc=("p_model_correct", "mean"))
+        .reset_index()
+        .merge(centers_stim, on=["stimd_c", "stim_bin"], how="left")
+    )
+
+    plot_delay = subj_delay.melt(
+        id_vars=["delay_bin", "subject", "ttype_c", "center"],
+        value_vars=["data_acc", "model_acc"],
+        var_name="kind",
+        value_name="acc",
+    )
+    plot_delay["kind"] = plot_delay["kind"].map({"data_acc": "Data", "model_acc": "Model"})
+
+    plot_stim = subj_stim.melt(
+        id_vars=["stim_bin", "subject", "center", "stimd_c"],
+        value_vars=["data_acc", "model_acc"],
+        var_name="kind",
+        value_name="acc",
+    )
+    plot_stim["kind"] = plot_stim["kind"].map({"data_acc": "Data", "model_acc": "Model"})
+
+    return {"plot_delay": plot_delay, "plot_stim": plot_stim}
+
+
+def prepare_right_by_regressor(
+    trial_df,
+    *,
+    regressor_col: str,
+    cfg,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+):
+    df_pd = to_pandas_df(trial_df)
+    required = {regressor_col, "response", PRED_COL, "subject", "ttype_c", "stimd_c"}
+    if not required.issubset(df_pd.columns):
+        return None, None
+
+    df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
+    df_pd[PRED_COL] = pd.to_numeric(df_pd[PRED_COL], errors="coerce")
+    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
+
+    df_pd = df_pd[
+        np.isfinite(df_pd[regressor_col])
+        & np.isfinite(df_pd[PRED_COL])
+        & np.isfinite(df_pd["_response_right"])
+    ].copy()
+    if df_pd.empty:
+        return None, None
+
+    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=n_bins)
+    if df_pd is None:
+        return None, None
+    bin_order = bin_centers["_reg_bin"].tolist()
+
+    delay_order = list(cfg["plots"]["delay"]["order"])
+
+    summary = summarize_grouped_panel(
+        df_pd,
+        line_group_col="ttype_c",
+        x_col="_reg_bin",
+        subject_col="subject",
+        data_col="_response_right",
+        model_col=PRED_COL,
+        line_order=delay_order,
+        x_order=bin_order,
+        base_filter=df_pd["stimd_c"] == "SS",
+    )
+    if summary.empty:
+        return None, None
+
+    summary = summary.merge(bin_centers, on="_reg_bin", how="left")
+
+    meta = {
+        "xlabel": xlabel or display_regressor_name(regressor_col),
+        "ylabel": p_right_label(),
+        "legend_title": "Delay type",
+        "baseline": BASELINE,
+        "line_order": delay_order,
+        "x_order": bin_order,
+        "x_tick_labels": [f"{bin_center:.2f}" for bin_center in bin_centers["x_center"]],
+        "categorical_x": True,
+    }
+    return summary, meta
 
 @_register(["mcdr"])
 class MCDRAdapter(TaskAdapter):
@@ -216,9 +921,14 @@ class MCDRAdapter(TaskAdapter):
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
         """Return the MCDR trial dataframe with all derived regressors."""
         df_sub = df_sub.sort(self.sort_col)
+        subject = str(df_sub["subject"][0]) if "subject" in df_sub.columns and df_sub.height else None
+        action_half_life = _resolve_choice_action_half_life(
+            subject=subject,
+            default_half_life=float(tau),
+        )
         session_order = df_sub["session"].unique(maintain_order=True).to_list()
         session_to_idx = {session_name: idx for idx, session_name in enumerate(session_order)}
-        max_sessions = _max_subject_sessions()
+        max_sessions = len(session_order)
         session_idx_expr = pl.col("session").replace_strict(session_to_idx).cast(pl.Int32)
         df_sub = df_sub.with_columns(
             [
@@ -303,9 +1013,9 @@ class MCDRAdapter(TaskAdapter):
                 ((pl.col("onset") < pl.col("timepoint_4")) & (pl.col("offset") > pl.col("timepoint_3")) & (pl.col("x_c") == "C")).cast(pl.Float32).alias("stim4C"),
                 ((pl.col("onset") < pl.col("timepoint_4")) & (pl.col("offset") > pl.col("timepoint_3")) & (pl.col("x_c") == "R")).cast(pl.Float32).alias("stim4R"),
                 pl.col("performance").shift(1).fill_null(0).cast(pl.Float32).over(self.session_col).alias("previous_outcome"),
-                pl.col("response").shift(1).fill_null(0.0).eq(0).cast(pl.Float32).ewm_mean(half_life=tau, adjust=False).over(self.session_col).alias("A_L"),
-                pl.col("response").shift(1).fill_null(0.0).eq(1).cast(pl.Float32).ewm_mean(half_life=tau, adjust=False).over(self.session_col).alias("A_C"),
-                pl.col("response").shift(1).fill_null(0.0).eq(2).cast(pl.Float32).ewm_mean(half_life=tau, adjust=False).over(self.session_col).alias("A_R"),
+                pl.col("response").shift(1).fill_null(0.0).eq(0).cast(pl.Float32).ewm_mean(half_life=action_half_life, adjust=False).over(self.session_col).alias("A_L"),
+                pl.col("response").shift(1).fill_null(0.0).eq(1).cast(pl.Float32).ewm_mean(half_life=action_half_life, adjust=False).over(self.session_col).alias("A_C"),
+                pl.col("response").shift(1).fill_null(0.0).eq(2).cast(pl.Float32).ewm_mean(half_life=action_half_life, adjust=False).over(self.session_col).alias("A_R"),
                 (1 / (pl.col("timepoint_3") - pl.col("timepoint_4"))).cast(pl.Float32).alias("speed3"),
                 (1 / (pl.col("timepoint_3") - pl.col("timepoint_2"))).cast(pl.Float32).alias("speed2"),
                 (1 / (pl.col("timepoint_2") - pl.col("timepoint_1"))).cast(pl.Float32).alias("speed1"),
@@ -389,8 +1099,13 @@ class MCDRAdapter(TaskAdapter):
     # ── column defaults ─────────────────────────────────────────────────────
 
     def default_emission_cols(self, df=None) -> List[str]:
-        del df
-        return list(EMISSION_COLS)
+        cols = [
+            "bias",
+        ]
+        if df is not None:
+            cols.extend(self.stim_hot_cols(df))
+            cols.extend(self.choice_lag_cols(df))
+        return list(dict.fromkeys(cols))
 
     def default_transition_cols(self) -> List[str]:
         return list(TRANSITION_COLS)
@@ -399,7 +1114,7 @@ class MCDRAdapter(TaskAdapter):
         available_cols = list(EMISSION_COLS)
         if df is not None:
             available_cols.extend(self.bias_hot_cols(df))
-            available_cols.extend(self.choice_lag_cols(df))
+            available_cols.extend(_choice_lag_cols(list(df.columns)) or _choice_lag_names())
             available_cols.extend(self.stim_hot_cols(df))
         return list(dict.fromkeys(available_cols))
 
@@ -425,12 +1140,12 @@ class MCDRAdapter(TaskAdapter):
         return _infer_bias_hot_cols_from_df(df)
 
     def choice_lag_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        """Return explicit previous-choice lag columns."""
+        """Return reference-coded previous-choice lag columns."""
         if df is not None:
-            existing = _choice_lag_cols(list(df.columns))
+            existing = _reference_coded_choice_lag_cols(list(df.columns))
             if existing:
                 return existing
-        return _choice_lag_names()
+        return _choice_lag_names(include_reference=False)
 
     def stim_hot_cols(self, df: pl.DataFrame | None = None) -> List[str]:
         """Return stimulus-window one-hot columns."""
@@ -438,6 +1153,12 @@ class MCDRAdapter(TaskAdapter):
             return list(_STIM_HOT_COLS)
         existing = _stim_hot_cols(list(df.columns))
         return existing if existing else list(_STIM_HOT_COLS)
+
+    def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
+        return _build_emission_groups(list(available_cols))
+
+    def build_transition_groups(self, available_cols: List[str]) -> list[dict]:
+        return _build_selector_groups(list(available_cols), _TRANSITION_GROUPS)
 
     @property
     def choice_labels(self) -> list[str]:

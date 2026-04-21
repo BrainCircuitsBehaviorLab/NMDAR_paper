@@ -7,7 +7,7 @@ adapter_paths = ["./src/process"]
 plot_paths = ["./src/plots"]
 
 [plot-saver]
-format = "pdf"
+format = "png"
 default_label = "Save"
 save_all_label = "Save all model plots"
 

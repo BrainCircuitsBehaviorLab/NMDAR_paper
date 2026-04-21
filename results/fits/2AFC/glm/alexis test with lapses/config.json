@@ -7,9 +7,9 @@
         "at_choice_param"
     ],
     "num_classes": 3,
-    "lapse_mode": "history",
-    "lapse_max": 1.0,
-    "n_restarts": 5,
+    "lapse_mode": "none",
+    "lapse_max": 0.2,
+    "n_restarts": 1,
     "restart_noise_scale": 0.05,
     "seed": 0,
     "model_id": "alexis test with lapses"

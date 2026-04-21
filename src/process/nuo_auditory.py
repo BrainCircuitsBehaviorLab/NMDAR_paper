@@ -15,6 +15,23 @@ from glmhmmt.tasks.fitted_regressors import (
 )
 from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
 
+try:
+    from glmhmmt.tasks import build_selector_groups as _build_selector_groups
+except ImportError:
+    def _build_selector_groups(available_cols: list[str], registry: list[dict]) -> list[dict]:
+        available = set(available_cols)
+        registered: set[str] = set()
+        result: list[dict] = []
+        for group in registry:
+            filtered = {k: v for k, v in group["members"].items() if v in available}
+            if filtered:
+                result.append({**group, "members": filtered})
+                registered.update(filtered.values())
+        for col in available_cols:
+            if col not in registered:
+                result.append({"key": col, "label": col, "members": {"N": col}})
+        return result
+
 _NUM_STIM_BINS = 9
 _NUM_CHOICE_LAGS = 10
 _STIM_BIN_PREFIX = "stim_bin_"
@@ -89,6 +106,20 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "cumulative_reward": r"$\mathrm{CumReward}$",
 }
 
+_EMISSION_GROUPS: list[dict] = [
+    {"key": "bias", "label": "bias", "members": {"N": "bias"}},
+    {"key": "stim_vals", "label": "stim vals", "members": {"N": "stim_vals"}},
+    {"key": "stim_param", "label": "stim param", "members": {"N": "stim_param"}},
+    {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
+    {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
+    {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
+    {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
+    {"key": "prev_choice", "label": "prev choice", "members": {"N": "prev_choice"}},
+    {"key": "prev_reward", "label": "prev reward", "members": {"N": "prev_reward"}},
+    {"key": "cumulative_reward", "label": "cumulative reward", "members": {"N": "cumulative_reward"}},
+    {"key": "prev_abs_stim", "label": "prev abs stim", "members": {"N": "prev_abs_stim"}},
+]
+
 
 def _validated_half_life(tau: float) -> float:
     """Return a positive half-life for Polars EWMA features."""
@@ -126,6 +157,50 @@ def _stim_param_weight_map() -> dict[str, float]:
         return mean_feature_weights_from_fit(_STIM_PARAM_SPEC)
     except (FileNotFoundError, ValueError):
         return {}
+
+
+def _build_emission_groups(available_cols: list[str]) -> list[dict]:
+    available = set(available_cols)
+    result: list[dict] = []
+    registered: set[str] = set()
+
+    def add_scalar(group: dict) -> None:
+        filtered = {k: v for k, v in group["members"].items() if v in available}
+        if filtered:
+            result.append({**group, "members": filtered})
+            registered.update(filtered.values())
+
+    stim_bin_cols = [col for col in available_cols if col in _STIM_BIN_COLS]
+    choice_lag_cols = [col for col in available_cols if col in _CHOICE_LAG_COLS]
+    for group in _EMISSION_GROUPS:
+        add_scalar(group)
+        if group["key"] == "stim_param" and stim_bin_cols:
+            result.append(
+                {
+                    "key": "stim_hot",
+                    "label": "stim_hot",
+                    "members": {},
+                    "toggle_members": list(stim_bin_cols),
+                    "hide_members": True,
+                }
+            )
+            registered.update(stim_bin_cols)
+        if group["key"] == "at_choice" and choice_lag_cols:
+            result.append(
+                {
+                    "key": "at_choice_lag",
+                    "label": "choice_lag",
+                    "members": {},
+                    "toggle_members": list(choice_lag_cols),
+                    "hide_members": True,
+                }
+            )
+            registered.update(choice_lag_cols)
+
+    remaining = [col for col in available_cols if col not in registered]
+    if remaining:
+        result.extend(_build_selector_groups(remaining, []))
+    return result
 
 
 @_register(["nuo_auditory", "auditory_2afc", "nuo_auditive"])
@@ -346,6 +421,13 @@ class NuoAuditoryAdapter(TaskAdapter):
 
     def available_transition_cols(self) -> List[str]:
         return list(TRANSITION_COLS)
+
+    def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
+        return _build_emission_groups(list(available_cols))
+
+    def build_transition_groups(self, available_cols: List[str]) -> list[dict]:
+        del available_cols
+        return []
 
     def resolve_design_names(
         self,

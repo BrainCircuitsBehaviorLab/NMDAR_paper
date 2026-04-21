@@ -10,6 +10,7 @@ import numpy as np
 import polars as pl
 import pandas as pd
 
+from ._choice_tau import compute_choice_ewma, load_subject_choice_half_life
 from glmhmmt.cli.alexis_functions import get_action_trace
 from glmhmmt.runtime import get_data_dir
 from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
@@ -19,11 +20,28 @@ from glmhmmt.tasks.fitted_regressors import (
     weighted_sum_regressor,
 )
 
+try:
+    from glmhmmt.tasks import build_selector_groups as _build_selector_groups
+except ImportError:
+    def _build_selector_groups(available_cols: list[str], registry: list[dict]) -> list[dict]:
+        available = set(available_cols)
+        registered: set[str] = set()
+        result: list[dict] = []
+        for group in registry:
+            filtered = {k: v for k, v in group["members"].items() if v in available}
+            if filtered:
+                result.append({**group, "members": filtered})
+                registered.update(filtered.values())
+        for col in available_cols:
+            if col not in registered:
+                result.append({"key": col, "label": col, "members": {"N": col}})
+        return result
+
 _DELAY_HOT_COL_PREFIX = "delay_"
 _BIAS_HOT_COL_PREFIX = "bias_"
 _CHOICE_LAG_COL_PREFIX = "choice_lag_"
 _NUM_CHOICE_LAGS = 15
-_RAW_PARAM_MODEL_ID = "one hot sessions delays lags"
+_RAW_PARAM_MODEL_ID = "one hot"
 EMISSION_COLS: list[str] = [
     "bias",
     "bias_param",
@@ -31,6 +49,8 @@ EMISSION_COLS: list[str] = [
     "delay",
     "delay_param",
     "stim_x_delay",
+    "stim_x_delay_hot",
+    "stim_x_delay_param",
     "at_choice",
     "choice_lag_param",
     "at_error",
@@ -72,6 +92,14 @@ _DELAY_PARAM_SPEC = FittedWeightRegressorSpec(
     arrays_suffix="glm_arrays.npz",
     source_feature_prefixes=(_DELAY_HOT_COL_PREFIX,),
 )
+_STIM_X_DELAY_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="stim_x_delay_param",
+    fit_task="2AFC_delay",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=("stim_x_delay_hot_",),
+)
 _CHOICE_LAG_PARAM_SPEC = FittedWeightRegressorSpec(
     target_name="choice_lag_param",
     fit_task="2AFC_delay",
@@ -104,6 +132,29 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "WM": r"$\mathrm{WM}$",
     "RL": r"$\mathrm{RL}$",
 }
+
+_EMISSION_GROUPS: list[dict] = [
+    {"key": "bias", "label": "bias", "members": {"N": "bias"}},
+    {"key": "bias_param", "label": "bias param", "members": {"N": "bias_param"}},
+    {"key": "stim", "label": "stim", "members": {"N": "stim"}},
+    {"key": "delay", "label": "delay", "members": {"N": "delay"}},
+    {"key": "delay_param", "label": "delay param", "members": {"N": "delay_param"}},
+    {"key": "stim_x_delay", "label": "stim×delay", "members": {"N": "stim_x_delay"}},
+    {"key": "stim_x_delay_hot", "label": "stim×delay one-hot", "members": {"N": "stim_x_delay_hot"}},
+    {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
+    {"key": "choice_lag_param", "label": "choice lag param", "members": {"N": "choice_lag_param"}},
+    {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
+    {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
+    {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
+    {"key": "prev_choice", "label": "prev choice", "members": {"N": "prev_choice"}},
+    {"key": "wsls", "label": "WSLS", "members": {"N": "wsls"}},
+    {"key": "prev_reward", "label": "prev reward", "members": {"N": "prev_reward"}},
+    {"key": "cumulative_reward", "label": "cumulative reward", "members": {"N": "cumulative_reward"}},
+    {"key": "prev_abs_stim", "label": "prev abs stim", "members": {"N": "prev_abs_stim"}},
+    {"key": "after_correct", "label": "after correct", "members": {"N": "after_correct"}},
+    {"key": "repeat", "label": "repeat", "members": {"N": "repeat"}},
+    {"key": "repeat_choice_side", "label": "repeat side", "members": {"N": "repeat_choice_side"}},
+]
 
 
 def _safe_weighted_sum_regressor(
@@ -166,6 +217,11 @@ def _choice_lag_sort_key(name: str) -> tuple[int, str]:
     suffix = name.removeprefix(_CHOICE_LAG_COL_PREFIX)
     return (int(suffix), name) if suffix.isdigit() else (10**9, name)
 
+def _stim_x_delay_hot_sort_key(name: str) -> tuple[float, str]:
+    suffix = name.removeprefix("stim_x_delay_hot_")
+    parsed = _parse_delay_level_token(suffix)
+    return (parsed, name) if parsed is not None else (float("inf"), name)
+
 
 def _delay_hot_cols(columns: list[str]) -> list[str]:
     return sorted(
@@ -202,6 +258,17 @@ def _choice_lag_cols(columns: list[str]) -> list[str]:
         key=_choice_lag_sort_key,
     )
 
+def _stim_x_delay_hot_cols(columns: list[str]) -> list[str]:
+    return sorted(
+        [
+            col
+            for col in columns
+            if col.startswith("stim_x_delay_hot_")
+            and _parse_delay_level_token(col.removeprefix("stim_x_delay_hot_")) is not None
+        ],
+        key=_stim_x_delay_hot_sort_key,
+    )   
+
 
 def _infer_delay_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     columns = list(df.columns)
@@ -214,6 +281,78 @@ def _infer_delay_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     delay_series = df[delay_col].drop_nulls() if isinstance(df, pl.DataFrame) else df[delay_col].dropna()
     delay_levels = sorted({float(v) for v in delay_series.to_list()})
     return [f"{_DELAY_HOT_COL_PREFIX}{_delay_level_token(delay_value)}" for delay_value in delay_levels]
+
+
+@lru_cache(maxsize=1)
+def _all_delay_levels() -> tuple[float, ...]:
+    dataset_path = get_data_dir() / "tiffany.parquet"
+    df = pl.read_parquet(dataset_path)
+    if "drug" in df.columns:
+        df = df.filter(pl.col("drug") == "Rest")
+    if "delays" not in df.columns:
+        return tuple()
+    delay_vals = sorted({float(v) for v in df["delays"].drop_nulls().to_list()})
+    return tuple(delay_vals)
+
+
+def _build_emission_groups(available_cols: list[str]) -> list[dict]:
+    available = set(available_cols)
+    result: list[dict] = []
+    registered: set[str] = set()
+
+    def add_scalar(group: dict) -> None:
+        filtered = {k: v for k, v in group["members"].items() if v in available}
+        if filtered:
+            result.append({**group, "members": filtered})
+            registered.update(filtered.values())
+
+    def add_hidden_family(*, key: str, label: str, family_cols: list[str]) -> None:
+        if not family_cols:
+            return
+        result.append(
+            {
+                "key": key,
+                "label": label,
+                "members": {},
+                "toggle_members": list(family_cols),
+                "hide_members": True,
+            }
+        )
+        registered.update(family_cols)
+
+    delay_hot_cols = _delay_hot_cols(available_cols)
+    bias_hot_cols = _bias_hot_cols(available_cols)
+    choice_lag_cols = _choice_lag_cols(available_cols)
+    stim_x_delay_hot_cols = _stim_x_delay_hot_cols(available_cols)
+
+    for group in _EMISSION_GROUPS:
+        key = group["key"]
+        if key == "bias":
+            add_scalar(group)
+            add_hidden_family(key="bias_hot", label="bias_hot", family_cols=bias_hot_cols)
+            continue
+        if key == "delay_param":
+            add_scalar(group)
+            add_hidden_family(key="delay_hot", label="delay_hot", family_cols=delay_hot_cols)
+            continue
+        if key == "at_choice":
+            add_scalar(group)
+            add_hidden_family(key="at_choice_lag", label="choice_lag", family_cols=choice_lag_cols)
+            continue
+        if key == "stim_x_delay":
+            add_scalar(group)
+            add_hidden_family(
+                key="stim_x_delay_one_hot",
+                label="stim×delay one-hot",
+                family_cols=stim_x_delay_hot_cols,
+            )
+            continue
+        add_scalar(group)
+
+    remaining = [col for col in available_cols if col not in registered]
+    if remaining:
+        result.extend(_build_selector_groups(remaining, []))
+    return result
 
 
 def _max_sessions_from_df(df: pl.DataFrame | pd.DataFrame) -> int:
@@ -309,6 +448,457 @@ def _signed_choice(series: pd.Series) -> pd.Series:
         dtype=np.float32,
     )
 
+from src.process.common import (
+    attach_quantile_bin_column,
+    attach_response_right_column,
+    attach_signed_delay_columns,
+    display_regressor_name,
+    mean_glm_feature_curve as _mean_glm_feature_curve,
+    mean_glm_ild_curve as _mean_glm_ild_curve,
+    p_right_label,
+    prepare_simple_regressor_curve,
+    summarize_grouped_panel,
+    subject_glm_feature_curves as _subject_glm_feature_curves,
+    subject_glm_ild_curves as _subject_glm_ild_curves,
+    to_pandas_df,
+)
+
+PRED_COL = "p_pred"
+RESPONSE_MODE = "pm1_or_prob"
+BASELINE = 0.5
+
+SIGNED_DELAY_ORDER = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
+SIGNED_DELAY_LABELS = ["0", "-1", "-3", "-10", "10", "3", "1", "0"]
+
+
+def format_delay_tick(value: float) -> str:
+    value = 0.0 if np.isclose(float(value), 0.1) else float(value)
+    return str(int(value)) if float(value).is_integer() else f"{value:g}"
+
+
+def delay_ticks_from_df(df: pd.DataFrame, *, delay_col: str = "delay") -> tuple[list[float], list[str]]:
+    if delay_col not in df.columns:
+        return [], []
+    ticks = sorted(pd.to_numeric(df[delay_col], errors="coerce").dropna().astype(float).unique())
+    return ticks, [format_delay_tick(value) for value in ticks]
+
+
+def signed_delay_label(value: str) -> str:
+    if value in {"0L", "0R"}:
+        return "0"
+    return format_delay_tick(float(value))
+
+
+def signed_delay_order_and_labels(df: pd.DataFrame) -> tuple[list[str], list[str]]:
+    values = [str(value) for value in df["_signed_delay_cat"].dropna().unique()]
+    preferred = [value for value in SIGNED_DELAY_ORDER if value in set(values)]
+    extras = sorted(
+        (value for value in values if value not in set(preferred)),
+        key=lambda value: float(value) if value not in {"0L", "0R"} else 0.0,
+    )
+    order = preferred + extras
+    return order, [signed_delay_label(value) for value in order]
+
+
+def _correct_prob_expr(pl_module):
+    stim = pl_module.col("stimulus").cast(pl_module.Float64)
+    return (
+        pl_module.when(stim.is_in([0.0, 1.0]))
+        .then(pl_module.when(stim == 0.0).then(pl_module.col("pL")).otherwise(pl_module.col("pR")))
+        .when(stim.is_in([-1.0, 1.0]))
+        .then(pl_module.when(stim < 0.0).then(pl_module.col("pL")).otherwise(pl_module.col("pR")))
+        .otherwise(None)
+    )
+
+
+def _correct_prob_pandas(df: pd.DataFrame) -> pd.Series:
+    stim = pd.to_numeric(df["stimulus"], errors="coerce")
+    out = pd.Series(np.nan, index=df.index, dtype=float)
+
+    binary_mask = stim.isin([0.0, 1.0])
+    signed_mask = stim.isin([-1.0, 1.0])
+
+    out.loc[binary_mask & (stim == 0.0)] = pd.to_numeric(df.loc[binary_mask & (stim == 0.0), "pL"], errors="coerce")
+    out.loc[binary_mask & (stim == 1.0)] = pd.to_numeric(df.loc[binary_mask & (stim == 1.0), "pR"], errors="coerce")
+    out.loc[signed_mask & (stim < 0.0)] = pd.to_numeric(df.loc[signed_mask & (stim < 0.0), "pL"], errors="coerce")
+    out.loc[signed_mask & (stim > 0.0)] = pd.to_numeric(df.loc[signed_mask & (stim > 0.0), "pR"], errors="coerce")
+    return out
+
+
+def prepare_predictions_df(df_pred):
+    """Prepare a canonical 2AFC-delay trial predictions dataframe."""
+    if isinstance(df_pred, pl.DataFrame):
+        df = df_pred.clone()
+        required = {"stimulus", "response", "performance"}
+        missing = sorted(required.difference(df.columns))
+        if missing:
+            raise ValueError(f"Missing required 2AFC-delay columns: {missing}")
+
+        if "correct_bool" not in df.columns:
+            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
+        if "pL" not in df.columns or "pR" not in df.columns:
+            raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
+
+        df = df.with_columns(
+            pl.col("pR").alias("p_pred"),
+            _correct_prob_expr(pl).alias("p_model_correct"),
+        )
+        if "delays" in df.columns:
+            return df.with_columns(pl.col("delays").cast(pl.Float64).alias("delay"))
+        if "delay_raw" in df.columns:
+            return df.with_columns(pl.col("delay_raw").cast(pl.Float64).alias("delay"))
+        if "delay" in df.columns:
+            return df.with_columns(pl.col("delay").cast(pl.Float64).alias("delay"))
+        return df
+
+    df = df_pred.copy()
+    required = {"stimulus", "response", "performance"}
+    missing = sorted(required.difference(df.columns))
+    if missing:
+        raise ValueError(f"Missing required 2AFC-delay columns: {missing}")
+
+    if "correct_bool" not in df.columns:
+        df["correct_bool"] = df["performance"].astype(bool)
+    if "pL" not in df.columns or "pR" not in df.columns:
+        raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
+
+    df["p_pred"] = df["pR"]
+    df["p_model_correct"] = _correct_prob_pandas(df)
+    if "delays" in df.columns:
+        df["delay"] = pd.to_numeric(df["delays"], errors="coerce")
+    elif "delay_raw" in df.columns:
+        df["delay"] = pd.to_numeric(df["delay_raw"], errors="coerce")
+    elif "delay" in df.columns:
+        df["delay"] = pd.to_numeric(df["delay"], errors="coerce")
+    return df
+
+
+def prepare_delay_accuracy_summary(
+    trial_df,
+    *,
+    delay_col: str = "delay",
+    weight_col: str | None = None,
+    model_col: str = "p_model_correct",
+) -> tuple[pd.DataFrame, dict]:
+    df_pd = to_pandas_df(trial_df)
+    if delay_col not in df_pd.columns:
+        return pd.DataFrame(), {}
+
+    delay_values = pd.to_numeric(df_pd[delay_col], errors="coerce")
+    rows: list[dict[str, float]] = []
+    for delay_value in sorted(delay_values.dropna().unique()):
+        group = df_pd[delay_values == delay_value].copy()
+        if group.empty:
+            continue
+        weights = (
+            np.ones(len(group), dtype=float)
+            if weight_col is None
+            else pd.to_numeric(group[weight_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        )
+        weight_sum = float(weights.sum())
+        if weight_sum <= 0:
+            continue
+        correct = pd.to_numeric(group["correct_bool"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        model_vals = pd.to_numeric(group[model_col], errors="coerce").fillna(np.nan).to_numpy(dtype=float)
+        rows.append(
+            {
+                "delay": float(delay_value),
+                "data_acc": float(np.average(correct, weights=weights)),
+                "model_acc": float(np.average(model_vals, weights=weights)),
+            }
+        )
+
+    summary = pd.DataFrame(rows).sort_values("delay").reset_index(drop=True)
+    xticks, tick_labels = delay_ticks_from_df(df_pd, delay_col=delay_col)
+    return summary, {
+        "xlabel": "Delay",
+        "ylabel": "Accuracy",
+        "baseline": BASELINE,
+        "xticks": xticks,
+        "x_tick_labels": tick_labels,
+    }
+
+
+def mean_glm_ild_curve(arrays_store, subjects, X_cols, *, ild_max, state_k=None):
+    return _mean_glm_ild_curve(
+        arrays_store,
+        subjects,
+        X_cols,
+        ild_max=ild_max,
+        state_k=state_k,
+        stim_param_weight_map=_stim_param_weight_map,
+        right_logit_sign=1.0,
+    )
+
+
+def subject_glm_ild_curves(arrays_store, subjects, X_cols, *, ild_max, state_k=None):
+    return _subject_glm_ild_curves(
+        arrays_store,
+        subjects,
+        X_cols,
+        ild_max=ild_max,
+        state_k=state_k,
+        stim_param_weight_map=_stim_param_weight_map,
+        right_logit_sign=1.0,
+    )
+
+
+def mean_glm_feature_curve(
+    arrays_store,
+    subjects,
+    X_cols,
+    *,
+    feature_name,
+    grid_min,
+    grid_max,
+    state_k=None,
+    n_grid: int = 300,
+):
+    return _mean_glm_feature_curve(
+        arrays_store,
+        subjects,
+        X_cols,
+        feature_name=feature_name,
+        grid_min=grid_min,
+        grid_max=grid_max,
+        state_k=state_k,
+        n_grid=n_grid,
+        right_logit_sign=1.0,
+    )
+
+
+def subject_glm_feature_curves(
+    arrays_store,
+    subjects,
+    X_cols,
+    *,
+    feature_name,
+    grid_min,
+    grid_max,
+    state_k=None,
+    n_grid: int = 300,
+):
+    return _subject_glm_feature_curves(
+        arrays_store,
+        subjects,
+        X_cols,
+        feature_name=feature_name,
+        grid_min=grid_min,
+        grid_max=grid_max,
+        state_k=state_k,
+        n_grid=n_grid,
+        right_logit_sign=1.0,
+    )
+
+
+def prepare_right_by_regressor_simple(
+    trial_df,
+    *,
+    regressor_col: str,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+):
+    return prepare_simple_regressor_curve(
+        trial_df,
+        regressor_col=regressor_col,
+        pred_col=PRED_COL,
+        response_mode=RESPONSE_MODE,
+        baseline=BASELINE,
+        ylabel=p_right_label(),
+        xlabel=xlabel,
+        n_bins=n_bins,
+    )
+
+
+def prepare_binned_accuracy_figure(
+    trial_df,
+    *,
+    regressor_col: str,
+) -> tuple[list[dict] | None, str | None]:
+    df_pd = to_pandas_df(trial_df)
+    if regressor_col not in df_pd.columns:
+        return None, None
+
+    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=4)
+    if df_pd is None:
+        return None, None
+    reg_bin_labels = bin_centers["_reg_bin"].tolist()
+
+    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
+    df_pd = attach_signed_delay_columns(df_pd)
+    if df_pd.empty:
+        return None, None
+
+    conds = sorted(df_pd["condition"].dropna().unique()) if "condition" in df_pd.columns else []
+    exps = sorted(df_pd["experiment"].dropna().unique()) if "experiment" in df_pd.columns else []
+    delay_ticks, delay_tick_labels = delay_ticks_from_df(df_pd)
+
+    panels: list[dict] = []
+
+    panels.append(
+        {
+            "summary": summarize_grouped_panel(
+                df_pd,
+                line_group_col="_reg_bin",
+                x_col="delay",
+                subject_col="subject",
+                data_col="_response_right",
+                model_col=PRED_COL,
+                line_order=reg_bin_labels,
+            ),
+            "meta": {
+                "xlabel": "Delay",
+                "ylabel": p_right_label(),
+                "legend_title": display_regressor_name(regressor_col),
+                "baseline": BASELINE,
+                "xticks": delay_ticks,
+                "x_tick_labels": delay_tick_labels,
+            },
+        }
+    )
+
+    if "_signed_delay_cat" in df_pd.columns and df_pd["_signed_delay_cat"].notna().any():
+        x_order, x_tick_labels = signed_delay_order_and_labels(df_pd)
+        panels.append(
+            {
+                "summary": summarize_grouped_panel(
+                    df_pd,
+                    line_group_col="_reg_bin",
+                    x_col="_signed_delay_cat",
+                    subject_col="subject",
+                    data_col="_response_right",
+                    model_col=PRED_COL,
+                    line_order=reg_bin_labels,
+                    x_order=x_order,
+                ),
+                "meta": {
+                    "xlabel": "Signed delay",
+                    "ylabel": p_right_label(),
+                    "legend_title": display_regressor_name(regressor_col),
+                    "baseline": BASELINE,
+                    "x_order": x_order,
+                    "x_tick_labels": x_tick_labels,
+                    "categorical_x": True,
+                },
+            }
+        )
+
+    for cond in conds:
+        panels.append(
+            {
+                "summary": summarize_grouped_panel(
+                    df_pd,
+                    line_group_col="_reg_bin",
+                    x_col="delay",
+                    subject_col="subject",
+                    data_col="_response_right",
+                    model_col=PRED_COL,
+                    line_order=reg_bin_labels,
+                    subgroup_col="condition",
+                    subgroup_value=cond,
+                ),
+                "meta": {
+                    "xlabel": "Delay",
+                    "ylabel": p_right_label(),
+                    "legend_title": display_regressor_name(regressor_col),
+                    "baseline": BASELINE,
+                    "xticks": delay_ticks,
+                    "x_tick_labels": delay_tick_labels,
+                },
+            }
+        )
+
+    for exp in exps:
+        panels.append(
+            {
+                "summary": summarize_grouped_panel(
+                    df_pd,
+                    line_group_col="_reg_bin",
+                    x_col="delay",
+                    subject_col="subject",
+                    data_col="_response_right",
+                    model_col=PRED_COL,
+                    line_order=reg_bin_labels,
+                    subgroup_col="experiment",
+                    subgroup_value=exp,
+                ),
+                "meta": {
+                    "xlabel": "Delay",
+                    "ylabel": p_right_label(),
+                    "legend_title": display_regressor_name(regressor_col),
+                    "baseline": BASELINE,
+                    "xticks": delay_ticks,
+                    "x_tick_labels": delay_tick_labels,
+                },
+            }
+        )
+
+    return panels, display_regressor_name(regressor_col)
+
+
+def prepare_right_by_regressor(
+    trial_df,
+    *,
+    regressor_col: str,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+):
+    df_pd = to_pandas_df(trial_df)
+    required = {regressor_col, "response", PRED_COL, "subject"}
+    if not required.issubset(df_pd.columns):
+        return None, None
+
+    df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
+    df_pd[PRED_COL] = pd.to_numeric(df_pd[PRED_COL], errors="coerce")
+    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
+    df_pd = attach_signed_delay_columns(df_pd)
+
+    df_pd = df_pd[
+        np.isfinite(df_pd[regressor_col])
+        & np.isfinite(df_pd[PRED_COL])
+        & np.isfinite(df_pd["_response_right"])
+    ].copy()
+    if df_pd.empty:
+        return None, None
+
+    df_pd = df_pd[df_pd["_signed_delay_cat"].notna()].copy()
+    if df_pd.empty:
+        return None, None
+
+    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=n_bins)
+    if df_pd is None:
+        return None, None
+    bin_order = bin_centers["_reg_bin"].tolist()
+
+    delay_order, delay_labels = signed_delay_order_and_labels(df_pd)
+
+    summary = summarize_grouped_panel(
+        df_pd,
+        line_group_col="_signed_delay_cat",
+        x_col="_reg_bin",
+        subject_col="subject",
+        data_col="_response_right",
+        model_col=PRED_COL,
+        line_order=delay_order,
+        x_order=bin_order,
+    )
+    if summary.empty:
+        return None, None
+
+    summary = summary.merge(bin_centers, on="_reg_bin", how="left")
+
+    meta = {
+        "xlabel": xlabel or display_regressor_name(regressor_col),
+        "ylabel": p_right_label(),
+        "legend_title": "Signed delay",
+        "baseline": BASELINE,
+        "line_order": delay_order,
+        "line_labels": delay_labels,
+        "legend_outside": True,
+    }
+    return summary, meta
+
+
 
 @_register(["two_afc_delay", "2afc_delay", "2AFC_delay"])
 class TwoAFCDelayAdapter(TaskAdapter):
@@ -340,18 +930,23 @@ class TwoAFCDelayAdapter(TaskAdapter):
         df_sub: pl.DataFrame,
         tau: float = 50.0,
     ) -> pl.DataFrame:
-        del tau
-
         df_pd = df_sub.to_pandas() if hasattr(df_sub, "to_pandas") else df_sub.copy()
         df_pd = df_pd.sort_values(["session", "trial"]).reset_index(drop=True)
         if df_pd.empty:
             return pl.from_pandas(df_pd)
-        delay_levels = sorted(
-            {
-                float(v)
-                for v in pd.to_numeric(df_pd["delays"], errors="coerce").dropna().tolist()
-            }
+        subject_half_life = load_subject_choice_half_life(
+            task_key=self.task_key,
+            fit_model_id=_RAW_PARAM_MODEL_ID,
+            subject=str(df_pd["subject"].iloc[0]) if "subject" in df_pd.columns and len(df_pd) else None,
         )
+        delay_levels = list(_all_delay_levels())
+        if not delay_levels:
+            delay_levels = sorted(
+                {
+                    float(v)
+                    for v in pd.to_numeric(df_pd["delays"], errors="coerce").dropna().tolist()
+                }
+            )
         max_sessions = _max_subject_sessions()
         session_order = list(dict.fromkeys(df_pd["session"].tolist()))
         session_to_idx = {session_name: idx for idx, session_name in enumerate(session_order)}
@@ -388,6 +983,16 @@ class TwoAFCDelayAdapter(TaskAdapter):
                 ).astype(np.float32)
                 for delay_value in delay_levels
             }
+            stimx_delay_hot_cols = {
+                f"stim_x_delay_hot_{_delay_level_token(delay_value)}": (
+                    part["stim"].to_numpy(dtype=np.float32) * np.where(
+                        part["delay_raw"] == np.float32(delay_value),
+                        1.0,
+                        0.0,
+                    ).astype(np.float32)
+                ).astype(np.float32)
+                for delay_value in delay_levels
+            }
             choice_lag_df = pd.DataFrame(
                 {
                     lag_col: part["choice_signed"].shift(lag_idx).fillna(0.0).astype(np.float32)
@@ -404,6 +1009,12 @@ class TwoAFCDelayAdapter(TaskAdapter):
                 }
             )
             at_choice, at_error, at_correct, reward_trace = get_action_trace(trace_input)
+            if subject_half_life is not None:
+                prev_signed_choice = part["choice_signed"].shift(1).fillna(0.0).astype(np.float32)
+                at_choice = compute_choice_ewma(
+                    prev_signed_choice.to_numpy(dtype=np.float32),
+                    half_life=subject_half_life,
+                )
             part["at_choice"] = np.asarray(at_choice, dtype=np.float32)
             part["at_error"] = np.asarray(at_error, dtype=np.float32)
             part["at_correct"] = np.asarray(at_correct, dtype=np.float32)
@@ -435,6 +1046,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
                     part,
                     bias_hot,
                     pd.DataFrame(delay_hot_cols, index=part.index),
+                    pd.DataFrame(stimx_delay_hot_cols, index=part.index),
                     choice_lag_df,
                 ],
                 axis=1,
@@ -449,26 +1061,41 @@ class TwoAFCDelayAdapter(TaskAdapter):
             delay_z = ((delay_raw - delay_mean) / delay_std).astype(np.float32)
         else:
             delay_z = pd.Series(np.zeros(len(feature_df), dtype=np.float32), index=feature_df.index)
-        feature_df["delay"] = delay_z
-        feature_df["stim_x_delay"] = (feature_df["stim"].astype(np.float32) * feature_df["delay"].astype(np.float32))
         bias_param = _safe_weighted_sum_regressor(feature_df, _BIAS_PARAM_SPEC)
         delay_param = _safe_weighted_sum_regressor(feature_df, _DELAY_PARAM_SPEC)
+        stim_x_delay_param = _safe_weighted_sum_regressor(feature_df, _STIM_X_DELAY_PARAM_SPEC)
         choice_lag_param = _safe_weighted_sum_regressor(feature_df, _CHOICE_LAG_PARAM_SPEC)
-        feature_df["bias_param"] = (
-            np.asarray(bias_param, dtype=np.float32)
-            if bias_param is not None
-            else np.zeros(len(feature_df), dtype=np.float32)
+        delay_np = np.asarray(delay_z, dtype=np.float32)
+        derived_cols = pd.DataFrame(
+            {
+                "delay": delay_np,
+                "stim_x_delay": (
+                    feature_df["stim"].to_numpy(dtype=np.float32) * delay_np
+                ).astype(np.float32),
+                "bias_param": (
+                    np.asarray(bias_param, dtype=np.float32)
+                    if bias_param is not None
+                    else np.zeros(len(feature_df), dtype=np.float32)
+                ),
+                "delay_param": (
+                    np.asarray(delay_param, dtype=np.float32)
+                    if delay_param is not None
+                    else np.zeros(len(feature_df), dtype=np.float32)
+                ),
+                "stim_x_delay_param": (
+                    np.asarray(stim_x_delay_param, dtype=np.float32)
+                    if stim_x_delay_param is not None
+                    else np.zeros(len(feature_df), dtype=np.float32)
+                ),
+                "choice_lag_param": (
+                    np.asarray(choice_lag_param, dtype=np.float32)
+                    if choice_lag_param is not None
+                    else np.zeros(len(feature_df), dtype=np.float32)
+                ),
+            },
+            index=feature_df.index,
         )
-        feature_df["delay_param"] = (
-            np.asarray(delay_param, dtype=np.float32)
-            if delay_param is not None
-            else np.zeros(len(feature_df), dtype=np.float32)
-        )
-        feature_df["choice_lag_param"] = (
-            np.asarray(choice_lag_param, dtype=np.float32)
-            if choice_lag_param is not None
-            else np.zeros(len(feature_df), dtype=np.float32)
-        )
+        feature_df = pd.concat([feature_df, derived_cols], axis=1)
         return pl.from_pandas(feature_df)
 
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
@@ -480,7 +1107,18 @@ class TwoAFCDelayAdapter(TaskAdapter):
         emission_cols: List[str] | None,
     ) -> list[str]:
         requested = emission_cols if emission_cols is not None else self.default_emission_cols(feature_df)
-        return list(requested)
+        expanded: list[str] = []
+        family_aliases = {
+            "bias_hot": self.bias_hot_cols(feature_df),
+            "delay_hot": self.delay_hot_cols(feature_df),
+            "choice_lag": self.choice_lag_cols(feature_df),
+            "at_choice_lag": self.choice_lag_cols(feature_df),
+            "stim_x_delay_hot": self.stim_x_delay_hot_cols(feature_df),
+            "stim_x_delay_one_hot": self.stim_x_delay_hot_cols(feature_df),
+        }
+        for col in requested:
+            expanded.extend(family_aliases.get(col, [col]))
+        return list(dict.fromkeys(expanded))
 
     def load_subject(
         self,
@@ -538,8 +1176,31 @@ class TwoAFCDelayAdapter(TaskAdapter):
         return feature_df["stim"].cast(pl.Float64)
 
     def default_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        del df
-        return list(EMISSION_COLS)
+        if df is None:
+            delay_hot_cols = [
+                f"{_DELAY_HOT_COL_PREFIX}{_delay_level_token(delay_value)}"
+                for delay_value in _all_delay_levels()
+            ]
+            stim_x_delay_hot_cols = [
+                f"stim_x_delay_hot_{_delay_level_token(delay_value)}"
+                for delay_value in _all_delay_levels()
+            ]
+            bias_hot_cols = [f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(_max_subject_sessions())]
+            choice_lag_cols = _choice_lag_names()
+        else:
+            delay_hot_cols = self.delay_hot_cols(df)
+            stim_x_delay_hot_cols = self.stim_x_delay_hot_cols(df)
+            bias_hot_cols = self.bias_hot_cols(df)
+            choice_lag_cols = self.choice_lag_cols(df)
+
+        default_cols = [
+            *bias_hot_cols,
+            *choice_lag_cols,
+            "stim",
+            *delay_hot_cols,
+            *stim_x_delay_hot_cols,
+        ]
+        return list(dict.fromkeys(default_cols))
 
     def default_transition_cols(self) -> List[str]:
         return list(TRANSITION_COLS)
@@ -549,6 +1210,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
         if df is not None:
             available_cols.extend(self.sf_cols(df))
             available_cols.extend(self.delay_hot_cols(df))
+            available_cols.extend(self.stim_x_delay_hot_cols(df))
             available_cols.extend(self.bias_hot_cols(df))
             available_cols.extend(self.choice_lag_cols(df))
         return list(dict.fromkeys(available_cols))
@@ -564,8 +1226,22 @@ class TwoAFCDelayAdapter(TaskAdapter):
     ) -> Dict[str, List[str]]:
         requested_ecols = list(emission_cols) if emission_cols is not None else self.default_emission_cols(df)
         requested_ucols = list(transition_cols) if transition_cols is not None else self.default_transition_cols()
+        expanded_ecols: list[str] = []
+        if df is not None:
+            family_aliases = {
+                "bias_hot": self.bias_hot_cols(df),
+                "delay_hot": self.delay_hot_cols(df),
+                "choice_lag": self.choice_lag_cols(df),
+                "at_choice_lag": self.choice_lag_cols(df),
+                "stim_x_delay_hot": self.stim_x_delay_hot_cols(df),
+                "stim_x_delay_one_hot": self.stim_x_delay_hot_cols(df),
+            }
+            for col in requested_ecols:
+                expanded_ecols.extend(family_aliases.get(col, [col]))
+        else:
+            expanded_ecols = list(requested_ecols)
         allowed_ecols = set(self.available_emission_cols(df))
-        bad_e = [c for c in requested_ecols if c not in allowed_ecols]
+        bad_e = [c for c in expanded_ecols if c not in allowed_ecols]
         bad_u = [c for c in requested_ucols if c not in TRANSITION_COLS]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
@@ -573,11 +1249,21 @@ class TwoAFCDelayAdapter(TaskAdapter):
             raise ValueError(
                 f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}"
             )
-        return {"X_cols": list(requested_ecols), "U_cols": list(requested_ucols)}
+        return {"X_cols": list(dict.fromkeys(expanded_ecols)), "U_cols": list(requested_ucols)}
 
     def delay_hot_cols(self, df: pl.DataFrame) -> List[str]:
         """Return delay one-hot columns."""
         return _infer_delay_hot_cols_from_df(df)
+
+    def stim_x_delay_hot_cols(self, df: pl.DataFrame) -> List[str]:
+        """Return stimulus×delay one-hot columns."""
+        existing = _stim_x_delay_hot_cols(list(df.columns))
+        if existing:
+            return existing
+        return [
+            f"stim_x_delay_hot_{col.removeprefix(_DELAY_HOT_COL_PREFIX)}"
+            for col in self.delay_hot_cols(df)
+        ]
 
     def bias_hot_cols(self, df: pl.DataFrame) -> List[str]:
         """Return session one-hot bias columns."""
@@ -590,6 +1276,13 @@ class TwoAFCDelayAdapter(TaskAdapter):
             if existing:
                 return existing
         return _choice_lag_names()
+
+    def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
+        return _build_emission_groups(list(available_cols))
+
+    def build_transition_groups(self, available_cols: List[str]) -> list[dict]:
+        del available_cols
+        return []
 
     @property
     def choice_labels(self) -> list[str]:

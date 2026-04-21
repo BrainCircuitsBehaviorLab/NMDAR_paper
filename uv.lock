@@ -595,7 +595,7 @@ wheels = [
 
 [[package]]
 name = "glmhmmt"
-version = "0.1.17"
+version = "0.1.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
@@ -622,9 +622,9 @@ dependencies = [
     { name = "traitlets" },
     { name = "wigglystuff" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/54/400c0c458a7b505ecd8959bbe58108b9c66e628e4dd7041d67c8ea8790ca/glmhmmt-0.1.17.tar.gz", hash = "sha256:3142bece30a15704618c2219cb380bc8ebe6fd172485acbda171500e27b8284e", size = 141548, upload-time = "2026-04-16T14:01:23.702Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4a/ed/b8c9d9e9155b82655aad2fe2c2ac9c91cb7cee240f7f713b4ffe8b9d3f53/glmhmmt-0.1.20.tar.gz", hash = "sha256:99fbd355e8f47e99c47c6338d57ad584690186ae093c82b6565b6691e49ce1c3", size = 146060, upload-time = "2026-04-20T07:48:56.493Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/5c/9b74987bc4d537236a2fec0131872d10df091d4932d5238cbaf49812e07b/glmhmmt-0.1.17-py3-none-any.whl", hash = "sha256:4a1c34cc611868517f9c8825d14265ea0295bbeca5415c345646e8755865e5ca", size = 163482, upload-time = "2026-04-16T14:01:21.967Z" },
+    { url = "https://files.pythonhosted.org/packages/da/ec/041558b1353da4d0c3a7622e97d8b9d8d3191f2222be4f21e3ad2abfadf0/glmhmmt-0.1.20-py3-none-any.whl", hash = "sha256:fbcfc8924cfd22dd61bfe36bac1fe2494f6a87a00952b085bc80e8166488a499", size = 168957, upload-time = "2026-04-20T07:48:54.875Z" },
 ]
 
 [[package]]
@@ -1087,7 +1087,7 @@ wheels = [
 
 [[package]]
 name = "marimo"
-version = "0.23.1"
+version = "0.23.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1109,9 +1109,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/95/b7bb0fd8f00fc7b567a46eb6230492d0c0f53a622bd3c16fa142b54eef81/marimo-0.23.1.tar.gz", hash = "sha256:c1c1ed859cfac45f4bb54fe882fc6941ac22b3b4b7a4505285e6139e0321f886", size = 38270839, upload-time = "2026-04-10T23:14:04.103Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/7f/8490043913942e48e8f21b88ad49fe736c2a236ff2a393c8ae67724105f2/marimo-0.23.2.tar.gz", hash = "sha256:25d810b4864d534c1cf33eb3020320e8ef7319e9809b3fb6ae5644135f5a660a", size = 38383208, upload-time = "2026-04-20T21:49:06.137Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/b4/53ca91d287b52ae1806ce947659a4357472cd4ab1f54ae5638cff8cc8a25/marimo-0.23.1-py3-none-any.whl", hash = "sha256:fb2546fdd669fcba5cf3b1aaaa8fd84196c292935bc2dce457cf8077ae2e8608", size = 38696007, upload-time = "2026-04-10T23:14:00.126Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/23/c4d34eb5da111b0f31d2feeddf7ee619ce4883999dbf360ed781b327dc0f/marimo-0.23.2-py3-none-any.whl", hash = "sha256:b1fbf5684fbb20d987d9ce6f569fd32789693ff4fd59a5678a0598b680cc41ba", size = 38801200, upload-time = "2026-04-20T21:48:58.165Z" },
 ]
 
 [[package]]
@@ -1304,8 +1304,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bottleneck", specifier = ">=1.6.0" },
-    { name = "glmhmmt", specifier = "==0.1.17" },
-    { name = "marimo", specifier = "==0.23.1" },
+    { name = "glmhmmt", specifier = "==0.1.20" },
+    { name = "marimo", specifier = "==0.23.2" },
     { name = "marimo-toml-editor", specifier = ">=0.1.1" },
     { name = "numexpr", specifier = ">=2.14.1" },
     { name = "plot-saver", specifier = "==0.1.5" },
