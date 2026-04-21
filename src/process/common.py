@@ -56,7 +56,41 @@ def add_choice_lag_summary_regressor(
     return df_pd
 
 
-def assign_quantile_bins(values, *, max_bins: int = 4):
+REPEAT_EVIDENCE_TAIL_QUANTILES = (
+    0.0,
+    0.0025,
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.10,
+    0.15,
+    0.20,
+    0.30,
+    0.40,
+    0.50,
+    0.60,
+    0.70,
+    0.80,
+    0.85,
+    0.90,
+    0.925,
+    0.95,
+    0.975,
+    0.99,
+    0.995,
+    0.9975,
+    1.0,
+)
+
+
+def assign_quantile_bins(
+    values,
+    *,
+    max_bins: int = 4,
+    quantiles: Optional[Sequence[float]] = None,
+):
     numeric = pd.to_numeric(values, errors="coerce")
     valid_mask = numeric.notna() & np.isfinite(numeric)
     labels = pd.Series(pd.NA, index=values.index, dtype="object")
@@ -68,8 +102,17 @@ def assign_quantile_bins(values, *, max_bins: int = 4):
     if n_unique < 2:
         return labels, []
 
-    n_bins = min(max_bins, n_unique)
-    qcut = pd.qcut(numeric[valid_mask], q=n_bins, duplicates="drop")
+    if quantiles is None:
+        q_spec = min(max_bins, n_unique)
+    else:
+        quantile_grid = np.asarray(quantiles, dtype=float)
+        quantile_grid = quantile_grid[np.isfinite(quantile_grid)]
+        quantile_grid = np.clip(quantile_grid, 0.0, 1.0)
+        q_spec = np.unique(np.concatenate(([0.0], quantile_grid, [1.0])))
+        if q_spec.size < 2:
+            return labels, []
+
+    qcut = pd.qcut(numeric[valid_mask], q=q_spec, duplicates="drop")
     resolved_labels = [f"Q{idx + 1}" for idx in range(len(qcut.cat.categories))]
     labels.loc[valid_mask] = (
         qcut.cat.rename_categories(resolved_labels).astype(str).to_numpy()
@@ -125,6 +168,258 @@ def attach_response_right_column(
         raise ValueError(f"Unknown response_mode={response_mode}")
 
     return df
+
+
+STIM_EVIDENCE_CANDIDATES = (
+    "stim_x_delay_param",
+    "stim_x_delay_one_hot_sum",
+    "stim_x_delay",
+    "stim_vals",
+    "stim_param",
+    "stimd_n_z",
+    "stim_d",
+    "ild_norm",
+    "total_evidence_strength",
+    "ILD",
+)
+
+ACTION_TRACE_CANDIDATES = (
+    "at_choice",
+    "at_choice_param",
+    "choice_lag_one_hot_sum",
+    "choice_lag_param",
+    "A_R",
+    "A_L",
+)
+
+
+def _first_available(columns: Sequence[str], candidates: Sequence[str]) -> str | None:
+    available = set(columns)
+    return next((col for col in candidates if col in available), None)
+
+
+def _first_usable_numeric_col(df: pd.DataFrame, candidates: Sequence[str]) -> str | None:
+    for col in candidates:
+        if col not in df.columns:
+            continue
+        values = pd.to_numeric(df[col], errors="coerce")
+        finite = values[np.isfinite(values)]
+        if len(finite) > 0 and float(finite.max() - finite.min()) > 0:
+            return col
+    return None
+
+
+def _stim_x_delay_hot_cols(columns: Sequence[str]) -> list[str]:
+    return sorted([col for col in columns if str(col).startswith("stim_x_delay_hot_")])
+
+
+def _attach_stim_x_delay_one_hot_sum(df: pd.DataFrame) -> pd.DataFrame:
+    hot_cols = _stim_x_delay_hot_cols(df.columns)
+    if not hot_cols or "stim_x_delay_one_hot_sum" in df.columns:
+        return df
+    out = df.copy()
+    out["stim_x_delay_one_hot_sum"] = (
+        out[hot_cols]
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0.0)
+        .sum(axis=1)
+    )
+    return out
+
+
+def _gaussian_kernel_1d(sigma_bins: float) -> np.ndarray:
+    radius = max(1, int(np.ceil(4.0 * sigma_bins)))
+    x = np.arange(-radius, radius + 1, dtype=float)
+    kernel = np.exp(-(x**2) / (2.0 * sigma_bins**2))
+    return kernel / kernel.sum()
+
+
+def _smooth_2d(values: np.ndarray, *, sigma_bins: float) -> np.ndarray:
+    if sigma_bins <= 0:
+        return values
+    kernel = _gaussian_kernel_1d(sigma_bins)
+
+    def _same_length_convolve(row: np.ndarray) -> np.ndarray:
+        convolved = np.convolve(row, kernel, mode="same")
+        if convolved.shape[0] == row.shape[0]:
+            return convolved
+        start = (convolved.shape[0] - row.shape[0]) // 2
+        return convolved[start : start + row.shape[0]]
+
+    out = np.apply_along_axis(_same_length_convolve, 0, values)
+    out = np.apply_along_axis(_same_length_convolve, 1, out)
+    return out
+
+
+def _fill_nan_grid(values: np.ndarray) -> np.ndarray:
+    if np.isfinite(values).all():
+        return values
+    filled = pd.DataFrame(values).interpolate(
+        axis=0,
+        limit_direction="both",
+    ).interpolate(
+        axis=1,
+        limit_direction="both",
+    )
+    return filled.to_numpy(dtype=float)
+
+
+def integration_map_2d(
+    x,
+    y,
+    values,
+    *,
+    bnd: float | None = None,
+    dx: float | None = None,
+    n_bins: int = 64,
+    sigma: float | None = None,
+    fill_empty: bool = True,
+    default_sigma_dx: float = 2.0,
+    x_edges=None,
+    y_edges=None,
+) -> dict | None:
+    """Return a smoothed 2D map of mean values over x/y bins."""
+    x = pd.to_numeric(pd.Series(x), errors="coerce").to_numpy(dtype=float)
+    y = pd.to_numeric(pd.Series(y), errors="coerce").to_numpy(dtype=float)
+    values = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(dtype=float)
+
+    mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(values)
+    if int(mask.sum()) < 10:
+        return None
+
+    x = x[mask]
+    y = y[mask]
+    values = values[mask]
+
+    if bnd is None and (x_edges is None or y_edges is None):
+        bnd = float(np.nanpercentile(np.abs(np.concatenate([x, y])), 98.0))
+    if bnd is not None and (not np.isfinite(bnd) or bnd <= 0):
+        return None
+
+    if dx is None and (x_edges is None or y_edges is None):
+        dx = (2.0 * bnd) / float(n_bins)
+    if dx is not None and (not np.isfinite(dx) or dx <= 0):
+        return None
+
+    if x_edges is None:
+        x_edges = np.arange(-bnd, bnd + dx, dx, dtype=float)
+    else:
+        x_edges = np.asarray(x_edges, dtype=float)
+    if y_edges is None:
+        y_edges = np.arange(-bnd, bnd + dx, dx, dtype=float)
+    else:
+        y_edges = np.asarray(y_edges, dtype=float)
+    if x_edges.size < 3 or y_edges.size < 3:
+        return None
+
+    weighted_sum, x_edges, y_edges = np.histogram2d(x, y, bins=(x_edges, y_edges), weights=values)
+    counts, _, _ = np.histogram2d(x, y, bins=(x_edges, y_edges))
+
+    x_step = float(np.nanmedian(np.diff(x_edges)))
+    y_step = float(np.nanmedian(np.diff(y_edges)))
+    smooth_step = min(x_step, y_step)
+
+    if sigma is None:
+        sigma = float(default_sigma_dx) * smooth_step
+    sigma_bins = float(sigma) / smooth_step if smooth_step > 0 else 0.0
+
+    weighted_sum = _smooth_2d(weighted_sum, sigma_bins=sigma_bins)
+    counts = _smooth_2d(counts, sigma_bins=sigma_bins)
+
+    mean_map = np.divide(
+        weighted_sum,
+        counts,
+        out=np.full_like(weighted_sum, np.nan, dtype=float),
+        where=counts > 1e-9,
+    )
+    if fill_empty:
+        mean_map = _fill_nan_grid(mean_map)
+
+    return {
+        "map": mean_map,
+        "n_datapoints": counts,
+        "x_edges": x_edges,
+        "y_edges": y_edges,
+        "x_centers": (x_edges[:-1] + x_edges[1:]) / 2.0,
+        "y_centers": (y_edges[:-1] + y_edges[1:]) / 2.0,
+        "dx": dx,
+        "bnd": bnd,
+        "sigma": sigma,
+        "sigma_bins": sigma_bins,
+    }
+
+
+def prepare_right_integration_maps(
+    plot_df,
+    *,
+    response_mode: str,
+    pred_col: str | None = None,
+    x_col: str | None = None,
+    y_col: str | None = None,
+    value_col: str | None = None,
+    include_model: bool = True,
+    bnd: float | None = None,
+    dx: float | None = None,
+    n_bins: int = 64,
+    sigma: float | None = None,
+    fill_empty: bool = True,
+    default_sigma_dx: float = 2.0,
+    x_edges=None,
+    y_edges=None,
+    xticks: list[float] | None = None,
+    x_tick_labels: list[str] | None = None,
+) -> tuple[list[dict], dict]:
+    df_pd = to_pandas_df(plot_df)
+    if df_pd.empty:
+        return [], {}
+    df_pd = _attach_stim_x_delay_one_hot_sum(df_pd)
+
+    x_col = x_col or _first_usable_numeric_col(df_pd, STIM_EVIDENCE_CANDIDATES)
+    y_col = y_col or _first_available(df_pd.columns, ACTION_TRACE_CANDIDATES)
+    if x_col is None or y_col is None or "response" not in df_pd.columns:
+        return [], {}
+
+    df_pd = attach_response_right_column(df_pd, response_mode=response_mode)
+
+    value_specs: list[tuple[str, str]] = []
+    if value_col is not None:
+        if value_col in df_pd.columns:
+            value_specs.append((value_col, value_col))
+    else:
+        value_specs.append(("_response_right", "Data"))
+        if include_model:
+            model_col = pred_col if pred_col in df_pd.columns else _first_available(df_pd.columns, ("p_pred", "pR"))
+            if model_col is not None:
+                value_specs.append((model_col, "Model"))
+
+    panels = []
+    for selected_col, label in value_specs:
+        result = integration_map_2d(
+            df_pd[x_col],
+            df_pd[y_col],
+            df_pd[selected_col],
+            bnd=bnd,
+            dx=dx,
+            n_bins=n_bins,
+            sigma=sigma,
+            fill_empty=fill_empty,
+            default_sigma_dx=default_sigma_dx,
+            x_edges=x_edges,
+            y_edges=y_edges,
+        )
+        if result is not None:
+            panels.append({"label": label, **result})
+
+    meta = {
+        "xlabel": display_regressor_name(x_col),
+        "ylabel": display_regressor_name(y_col),
+        "zlabel": p_right_label(),
+        "x_col": x_col,
+        "y_col": y_col,
+        "xticks": xticks,
+        "x_tick_labels": x_tick_labels,
+    }
+    return panels, meta
 
 
 def attach_signed_delay_columns(df_pd: pd.DataFrame) -> pd.DataFrame:
@@ -200,10 +495,15 @@ def attach_quantile_bin_column(
     value_col: str,
     bin_col: str = "_reg_bin",
     max_bins: int = 10,
+    quantiles: Optional[Sequence[float]] = None,
     center_col: str = "x_center",
     center_agg: str = "mean",
 ) -> tuple[pd.DataFrame | None, pd.DataFrame]:
-    bin_values, _ = assign_quantile_bins(df[value_col], max_bins=max_bins)
+    bin_values, _ = assign_quantile_bins(
+        df[value_col],
+        max_bins=max_bins,
+        quantiles=quantiles,
+    )
     if bin_values.dropna().nunique() < 2:
         return None, pd.DataFrame()
 
@@ -378,7 +678,12 @@ def prepare_simple_regressor_curve(
     if df_pd.empty:
         return None, {}
 
-    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=n_bins)
+    df_pd, bin_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col=regressor_col,
+        max_bins=n_bins,
+        quantiles=None,
+    )
     if df_pd is None:
         return None, {}
     bin_order = bin_centers["_reg_bin"].tolist()
@@ -568,6 +873,7 @@ def prepare_evidence_curve(
     xlabel: str,
     ylabel: str,
     n_bins: int = 10,
+    quantiles: Optional[Sequence[float]] = None,
 ) -> tuple[pd.DataFrame | None, dict]:
     df = df_pd.copy()
     df[evidence_col] = pd.to_numeric(df[evidence_col], errors="coerce")
@@ -587,6 +893,7 @@ def prepare_evidence_curve(
         value_col=evidence_col,
         bin_col="_bin",
         max_bins=n_bins,
+        quantiles=quantiles,
     )
     if df is None:
         return None, {}

@@ -492,7 +492,12 @@ def prepare_binned_accuracy_figure(
     if regressor_col not in df_pd.columns:
         return None, None
 
-    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=4)
+    df_pd, bin_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col=regressor_col,
+        max_bins=4,
+        quantiles=None,
+    )
     if df_pd is None:
         return None, None
     reg_bin_labels = bin_centers["_reg_bin"].tolist()
@@ -504,6 +509,24 @@ def prepare_binned_accuracy_figure(
     conds = sorted(df_pd["condition"].dropna().unique()) if "condition" in df_pd.columns else []
     exps = sorted(df_pd["experiment"].dropna().unique()) if "experiment" in df_pd.columns else []
     ild_ticks = sorted(pd.to_numeric(df_pd["ILD"], errors="coerce").dropna().unique()) if "ILD" in df_pd.columns else []
+
+    # Build sparse tick labels: show labels only at -70, -8, 0, +8, +70
+    if ild_ticks:
+        allowed = {-70.0, -8.0, 0.0, 8.0, 70.0}
+        ild_tick_labels: list[str] = []
+        for t in ild_ticks:
+            val = float(t)
+            if any(np.isclose(val, a) for a in allowed):
+                if np.isclose(val, 0.0):
+                    ild_tick_labels.append("0")
+                elif val > 0:
+                    ild_tick_labels.append(f"+{int(round(val))}")
+                else:
+                    ild_tick_labels.append(str(int(round(val))))
+            else:
+                ild_tick_labels.append("")
+    else:
+        ild_tick_labels = []
 
     panels: list[dict] = []
 
@@ -524,6 +547,7 @@ def prepare_binned_accuracy_figure(
                 "legend_title": display_regressor_name(regressor_col),
                 "baseline": BASELINE,
                 "xticks": ild_ticks,
+                "x_tick_labels": ild_tick_labels,
             }
         }
     )
@@ -548,6 +572,7 @@ def prepare_binned_accuracy_figure(
                     "legend_title": display_regressor_name(regressor_col),
                     "baseline": BASELINE,
                     "xticks": ild_ticks,
+                    "x_tick_labels": ild_tick_labels,
                 },
             }
         )
@@ -572,6 +597,7 @@ def prepare_binned_accuracy_figure(
                     "legend_title": display_regressor_name(regressor_col),
                     "baseline": BASELINE,
                     "xticks": ild_ticks,
+                    "x_tick_labels": ild_tick_labels,
                 },
             }
         )
@@ -605,7 +631,12 @@ def prepare_right_by_regressor(
     if df_pd.empty:
         return None, None
 
-    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=n_bins)
+    df_pd, bin_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col=regressor_col,
+        max_bins=n_bins,
+        quantiles=None,
+    )
     if df_pd is None:
         return None, None
     bin_order = bin_centers["_reg_bin"].tolist()

@@ -65,6 +65,7 @@ def _():
         fit_main,
         generate_model_id,
         get_adapter,
+        load_fit_arrays,
         make_plot_saver,
         mo,
         np,
@@ -96,9 +97,6 @@ def _(get_adapter, model_cfg):
     df_all = adapter.read_dataset()
     df_all = adapter.subject_filter(df_all)
     plots = adapter.get_plots()
-
-
-
     return adapter, df_all, plots, task_name
 
 
@@ -283,8 +281,17 @@ def _(
     return
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _(
+    adapter,
+    df_all,
+    load_fit_arrays,
+    mo,
+    model_cfg,
+    paths,
+    selected_model_id,
+    task_name,
+):
     def _normalize_glm_arrays(arrays: dict) -> dict:
         # ── Backward-compatibility: old fit_glm.py saved W_R at index 0.
         # New convention stores W_L (negative stim weight) at index 0.
@@ -308,14 +315,12 @@ app._unparsable_cell(
         adapter=adapter,
         df_all=df_all,
         subjects=list(model_cfg.subjects),
-        emission_cols=list(model_cfg.emission_cols),a
+        emission_cols=list(model_cfg.emission_cols),
         postprocess_array=_normalize_glm_arrays,
     )
 
     mo.md(f"Loaded {len(arrays_store)} subjects from `{selected_model_id}`")
-    """,
-    name="_"
-)
+    return (arrays_store,)
 
 
 @app.cell
@@ -927,7 +932,7 @@ def _(
             mo.vstack(
                 [
                     _fig_stim_hot,
-                    save_plot(_fig_stim_hot, "stim one-hot", stem="stim_one_hot2"),
+                    save_plot(_fig_stim_hot, "stim one-hot", stem="stim_one_hot"),
                 ],
                 align="center",
             )
@@ -1255,6 +1260,42 @@ def _(
             ),
         ],
         align="center"
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    ui_integration_map_smooth = mo.ui.checkbox(value=True, label="Smooth map")
+    return (ui_integration_map_smooth,)
+
+
+@app.cell
+def _(mo, plot_df_all, plots, save_plot, ui_integration_map_smooth):
+    mo.stop(
+        not hasattr(plots, "plot_right_integration_map"),
+        mo.md("No p(right) integration map helper is available for this task."),
+    )
+    _fig_integration_map = plots.plot_right_integration_map(
+        plot_df_all,
+        smooth=ui_integration_map_smooth.value,
+    )
+    mo.stop(
+        _fig_integration_map is None,
+        mo.md("No p(right) integration map available for the selected task/features."),
+    )
+
+    mo.vstack(
+        [
+            ui_integration_map_smooth,
+            _fig_integration_map,
+            save_plot(
+                _fig_integration_map,
+                "p(right) integration map",
+                stem="right_integration_map",
+            ),
+        ],
+        align="center",
     )
     return
 

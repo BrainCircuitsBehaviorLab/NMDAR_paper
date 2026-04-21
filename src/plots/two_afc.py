@@ -1668,8 +1668,10 @@ from src.process.common import (
     prepare_psych_panel_payload,
     prepare_psych_state_panel_payload,
     prepare_regressor_state_panel_payload,
+    prepare_right_integration_maps,
     quantile_bin_spec,
     rank_ordered_arrays_store,
+    REPEAT_EVIDENCE_TAIL_QUANTILES,
     ranked_state_labels,
     resolve_ild_max,
 )
@@ -1679,6 +1681,7 @@ from src.plots.common import (
     centered_numeric_group_palette,
     make_single_panel_figure,
     plot_grouped_summary,
+    plot_integration_map_panels,
     plot_simple_summary,
 )
 
@@ -1745,7 +1748,7 @@ def plot_binned_accuracy_figure(
         )
         if ax.legend_ is not None:
             ax.legend_.remove()
-
+        ax.axvline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
     add_shared_figure_legend(fig, source_ax=axes[-1], title=legend_title)
     fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
     return fig
@@ -1783,6 +1786,42 @@ def plot_right_by_regressor(
     if title:
         ax.set_title(title)
     return fig
+
+
+def plot_right_integration_map(
+    plot_df,
+    *,
+    x_col: str | None = None,
+    y_col: str | None = None,
+    value_col: str | None = None,
+    include_model: bool = True,
+    bnd: float | None = None,
+    dx: float | None = None,
+    n_bins: int = 64,
+    sigma: float | None = None,
+    smooth: bool = True,
+):
+    _n_bins = n_bins if smooth or n_bins != 64 else 32
+    panels, meta = prepare_right_integration_maps(
+        plot_df,
+        response_mode=process.RESPONSE_MODE,
+        pred_col=process.PRED_COL,
+        x_col=x_col,
+        y_col=y_col,
+        value_col=value_col,
+        include_model=include_model,
+        bnd=bnd,
+        dx=dx,
+        n_bins=_n_bins,
+        sigma=sigma,
+        fill_empty=smooth,
+        default_sigma_dx=2.0 if smooth else 1.25,
+    )
+    return plot_integration_map_panels(
+        panels,
+        meta=meta,
+        interpolation="bicubic" if smooth else None,
+    )
 
 
 def plot_accuracy_by_total_evidence(
@@ -1834,8 +1873,35 @@ def plot_repeat_by_repeat_evidence(
         baseline=float(baseline),
         xlabel="Fitted evidence for repeating choice",
         ylabel="P(Repeat)",
+        quantiles=REPEAT_EVIDENCE_TAIL_QUANTILES,
     )
-    return plot_simple_summary(summary, meta=meta)
+    # Overlay theoretical pure logistic function (zero lapse)
+    try:
+        x = summary["x_center"].to_numpy(dtype=float)
+        if x.size >= 2:
+            x_min, x_max = float(np.nanmin(x)), float(np.nanmax(x))
+            pad = max(1.0, (x_max - x_min) * 0.2)
+            x_dense = np.linspace(x_min - pad, x_max + pad, 400)
+            model_dense = 1.0 / (1.0 + np.exp(-x_dense))
+        else:
+            x_dense = None
+            model_dense = None
+        # Use model asymptotes (binned model endpoints) for lapse estimates
+        left_model = float(summary["model_mean"].iloc[0])
+        right_model = float(summary["model_mean"].iloc[-1])
+        lapse_to_alternate = 1.0 - right_model
+        lapse_to_repeat = left_model
+        title = f"lapse to repeat: {lapse_to_repeat:.2f}, lapse to alternate: {lapse_to_alternate:.2f}"
+    except Exception:
+        x_dense = None
+        model_dense = None
+        title = None
+
+    fig = plot_simple_summary(summary, meta=meta, title=title)
+    if fig is not None and x_dense is not None and model_dense is not None:
+        ax = fig.axes[0]
+        ax.plot(x_dense, model_dense, color="black", linewidth=1.0, linestyle=(0, (3, 1)), alpha=0.9, zorder=1)
+    return fig
 
 
 __all__ = [
@@ -1844,6 +1910,7 @@ __all__ = [
     "plot_accuracy_by_total_evidence",
     "plot_binned_accuracy_figure",
     "plot_repeat_by_repeat_evidence",
+    "plot_right_integration_map",
     "plot_right_by_regressor",
     "plot_right_by_regressor_simple",
 ]

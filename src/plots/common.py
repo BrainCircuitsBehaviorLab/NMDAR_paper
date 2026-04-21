@@ -277,8 +277,93 @@ def plot_grouped_summary(
     ax.legend(**legend_kwargs)
 
 
+def plot_integration_map_panels(
+    panels: list[dict],
+    *,
+    meta: dict,
+    contour_levels: tuple[float, ...] = (0.2, 0.35, 0.5, 0.65, 0.8),
+    cmap: str = "rocket",
+    interpolation: str | None = "bicubic",
+):
+    if not panels:
+        return None
+
+    n_panels = len(panels)
+    fig, axes = plt.subplots(
+        1,
+        n_panels,
+        figsize=(4.4 * n_panels, 4.0),
+        constrained_layout=True,
+        sharex=True,
+        sharey=True,
+    )
+    axes = np.atleast_1d(axes)
+
+    mesh = None
+    for ax, panel in zip(axes, panels, strict=False):
+        z = panel["map"]
+        cmap_obj = plt.get_cmap(cmap).copy()
+        cmap_obj.set_bad(alpha=0.0)
+        if interpolation is None:
+            mesh = ax.pcolormesh(
+                panel["x_edges"],
+                panel["y_edges"],
+                z.T,
+                cmap=cmap_obj,
+                vmin=0.0,
+                vmax=1.0,
+                shading="auto",
+            )
+        else:
+            mesh = ax.imshow(
+                np.ma.masked_invalid(z.T),
+                extent=(
+                    float(panel["x_edges"][0]),
+                    float(panel["x_edges"][-1]),
+                    float(panel["y_edges"][0]),
+                    float(panel["y_edges"][-1]),
+                ),
+                origin="lower",
+                aspect="auto",
+                interpolation=interpolation,
+                cmap=cmap_obj,
+                vmin=0.0,
+                vmax=1.0,
+            )
+        finite = np.isfinite(z)
+        if finite.any():
+            lo = float(np.nanmin(z))
+            hi = float(np.nanmax(z))
+            levels = [level for level in contour_levels if lo < level < hi]
+            if levels:
+                lws = [2.0 if np.isclose(l, 0.5) else 0.95 for l in levels]
+                contours = ax.contour(
+                    panel["x_centers"],
+                    panel["y_centers"],
+                    z.T,
+                    levels=levels,
+                    colors="white",
+                    linewidths=lws,
+                    alpha=0.95,
+                )
+        # ax.axvline(0.0, color="white", lw=0.8, ls="--", alpha=0.65)
+        # ax.axhline(0.0, color="white", lw=0.8, ls="--", alpha=0.65)
+        ax.set_title(panel["label"])
+        ax.set_xlabel(meta["xlabel"])
+        if meta.get("xticks") is not None:
+            ax.set_xticks(meta["xticks"], labels=meta.get("x_tick_labels"))
+        ax.set_box_aspect(1)
+        sns.despine(ax=ax)
+
+    axes[0].set_ylabel(meta["ylabel"])
+    if mesh is not None:
+        fig.colorbar(mesh, ax=axes, label=meta["zlabel"], shrink=0.86)
+    return fig
+
+
 __all__ = [
     "custom_boxplot",
+    "plot_integration_map_panels",
     "plot_transition_matrix",
     "plot_transition_matrix_by_subject",
     "plot_weights_boxplot",

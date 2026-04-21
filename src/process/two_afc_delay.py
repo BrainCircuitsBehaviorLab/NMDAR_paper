@@ -719,7 +719,12 @@ def prepare_binned_accuracy_figure(
     if regressor_col not in df_pd.columns:
         return None, None
 
-    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=4)
+    df_pd, bin_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col=regressor_col,
+        max_bins=4,
+        quantiles=None,
+    )
     if df_pd is None:
         return None, None
     reg_bin_labels = bin_centers["_reg_bin"].tolist()
@@ -865,7 +870,12 @@ def prepare_right_by_regressor(
     if df_pd.empty:
         return None, None
 
-    df_pd, bin_centers = attach_quantile_bin_column(df_pd, value_col=regressor_col, max_bins=n_bins)
+    df_pd, bin_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col=regressor_col,
+        max_bins=n_bins,
+        quantiles=None,
+    )
     if df_pd is None:
         return None, None
     bin_order = bin_centers["_reg_bin"].tolist()
