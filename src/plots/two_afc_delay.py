@@ -41,8 +41,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 from src.process.two_afc_delay import EMISSION_REGRESSOR_LABELS
 from glmhmmt.plots import (
-    plot_transition_matrix as _plot_transition_matrix_simple,
-    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
     plot_weights_boxplot as _plot_weights_boxplot_simple,
 )
 from glmhmmt.postprocess import (
@@ -63,6 +61,7 @@ from glmhmmt.model_plots import (
     plot_model_comparison_diffs as _plot_model_comparison_diffs,
     plot_occupancy as _plot_occupancy,
     plot_occupancy_boxplot as _plot_occupancy_boxplot,
+    plot_posterior_probs as _plot_posterior_probs,
     plot_change_triggered_posteriors_by_subject as _plot_change_triggered_posteriors_by_subject,
     plot_change_triggered_posteriors_summary as _plot_change_triggered_posteriors_summary,
     plot_session_deepdive as _plot_session_deepdive,
@@ -72,10 +71,21 @@ from glmhmmt.model_plots import (
     plot_state_dwell_times_by_subject as _plot_state_dwell_times_by_subject,
     plot_state_dwell_times_summary as _plot_state_dwell_times_summary,
     plot_state_occupancy as _plot_state_occupancy,
+    plot_state_occupancy_overall as _plot_state_occupancy_overall,
+    plot_state_occupancy_overall_by_subject as _plot_state_occupancy_overall_by_subject,
     plot_state_occupancy_overall_boxplot as _plot_state_occupancy_overall_boxplot,
+    plot_state_occupancy_overall_summary as _plot_state_occupancy_overall_summary,
     plot_state_posterior_count_kde as _plot_state_posterior_count_kde,
+    plot_state_session_occupancy as _plot_state_session_occupancy,
+    plot_state_session_occupancy_by_subject as _plot_state_session_occupancy_by_subject,
+    plot_state_session_occupancy_summary as _plot_state_session_occupancy_summary,
+    plot_state_switches as _plot_state_switches,
+    plot_state_switches_by_subject as _plot_state_switches_by_subject,
+    plot_state_switches_summary as _plot_state_switches_summary,
     plot_trans_mat as _plot_trans_mat,
     plot_trans_mat_boxplots as _plot_trans_mat_boxplots,
+    plot_transition_matrix as _plot_transition_matrix_simple,
+    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
     plot_transition_weights,
 )
 from glmhmmt.views import get_state_color, get_state_palette
@@ -276,34 +286,28 @@ plot_model_comparison_diffs = _plot_model_comparison_diffs
 
 
 def plot_transition_matrix_by_subject(
-    arrays_store: dict,
-    state_labels: dict,
-    K: int,
-    subjects: list,
+    matrices,
+    subject_ids,
+    tick_labels_by_subject,
+    **kwargs,
 ):
     return _plot_transition_matrix_by_subject_simple(
-        **build_transition_matrix_by_subject_payload(
-            arrays_store=arrays_store,
-            state_labels=state_labels,
-            K=K,
-            subjects=subjects,
-        )
+        matrices=matrices,
+        subject_ids=subject_ids,
+        tick_labels_by_subject=tick_labels_by_subject,
+        **kwargs,
     )
 
 
 def plot_transition_matrix(
-    arrays_store: dict,
-    state_labels: dict,
-    K: int,
-    subjects: list,
+    matrix,
+    tick_labels,
+    **kwargs,
 ):
     return _plot_transition_matrix_simple(
-        **build_transition_matrix_payload(
-            arrays_store=arrays_store,
-            state_labels=state_labels,
-            K=K,
-            subjects=subjects,
-        )
+        matrix=matrix,
+        tick_labels=tick_labels,
+        **kwargs,
     )
 
 
@@ -745,46 +749,43 @@ def _regressor_state_panel(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DataFrame preparation  (mirrors plots.prepare_predictions_df)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def prepare_predictions_df(df_pred):
-    """Backward-compatible facade for task processing."""
-    return process.prepare_predictions_df(df_pred)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # High-level API used by the task plot facade
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _weights_feature_order(weights_df) -> list[str]:
+    features = weights_df["feature"].unique()
+    if hasattr(features, "to_list"):
+        features = features.to_list()
+    return _two_afc_feature_order([str(feature) for feature in features])
+
+
 def plot_emission_weights_by_subject(
-    views: dict,
-    K: int,
-    save_path=None,
+    weights_df,
+    *,
+    K: int | None = None,
 ) -> plt.Figure:
-    feature_order = _two_afc_feature_order(next(iter(views.values())).feat_names if views else [])
+    feature_order = _weights_feature_order(weights_df)
     return _plot_binary_emission_weights_by_subject(
-        views,
-        K,
+        weights_df,
+        K=K,
         weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
         abs_features=("bias",),
         feature_labeler=_feature_label,
-        save_path=save_path,
     )
 
 
 def plot_emission_weights_summary(
-    views: dict,
-    K: int,
+    weights_df,
+    *,
+    K: int | None = None,
 ) -> plt.Figure:
-    feature_order = _two_afc_feature_order(next(iter(views.values())).feat_names if views else [])
+    feature_order = _weights_feature_order(weights_df)
     return _plot_binary_emission_weights_summary(
-        views,
-        K,
+        weights_df,
+        K=K,
         weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
@@ -794,13 +795,14 @@ def plot_emission_weights_summary(
 
 
 def plot_emission_weights_summary_lineplot(
-    views: dict,
-    K: int,
+    weights_df,
+    *,
+    K: int | None = None,
 ) -> plt.Figure:
-    feature_order = _two_afc_feature_order(next(iter(views.values())).feat_names if views else [])
+    feature_order = _weights_feature_order(weights_df)
     return _plot_binary_emission_weights_summary_lineplot(
-        views,
-        K,
+        weights_df,
+        K=K,
         weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
@@ -810,13 +812,14 @@ def plot_emission_weights_summary_lineplot(
 
 
 def plot_emission_weights_summary_boxplot(
-    views: dict,
-    K: int,
+    weights_df,
+    *,
+    K: int | None = None,
 ) -> plt.Figure:
-    feature_order = _two_afc_feature_order(next(iter(views.values())).feat_names if views else [])
+    feature_order = _weights_feature_order(weights_df)
     return _plot_binary_emission_weights_summary_boxplot(
-        views,
-        K,
+        weights_df,
+        K=K,
         weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
@@ -838,243 +841,103 @@ def plot_lapse_rates_boxplot(
 
 
 def plot_emission_weights(
-    views: dict,
-    K: int,
-    save_path=None,
+    weights_df,
+    *,
+    K: int | None = None,
 ) -> Tuple[plt.Figure, plt.Figure]:
-    feature_order = _two_afc_feature_order(next(iter(views.values())).feat_names if views else [])
+    feature_order = _weights_feature_order(weights_df)
     return _plot_binary_emission_weights(
-        views,
-        K,
+        weights_df,
+        K=K,
         weight_sign=_EMISSION_WEIGHT_SIGN,
         state_label_order=("Disengaged",),
         feature_order=feature_order,
         abs_features=("bias",),
         feature_labeler=_feature_label,
-        save_path=save_path,
     )
 
 def plot_posterior_probs(
-    views: dict,
-    K: int,
-    t0: int = 0,
-    t1: int = 199,
+    posterior_df,
+    *,
+    subject: str | None = None,
 ) -> plt.Figure:
-    """Stacked-area posterior state probability plot.
-
-    Mirrors plots.plot_posterior_probs.
-
-    Returns
-    -------
-    fig
-    """
-    _selected = list(views.keys())
-    if not _selected:
-        fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, "No data", ha="center", va="center")
-        return fig
-
-    colors = _state_colors(K)
-    fig, axes = plt.subplots(len(_selected), 1, figsize=(14, 3 * len(_selected)), squeeze=False)
-
-    for i, subj in enumerate(_selected):
-        ax = axes[i, 0]
-        P = np.asarray(views[subj].smoothed_probs)
-        P_sub = P[t0 : min(t1, len(P))]
-        T_sub = P_sub.shape[0]
-
-        ax.stackplot(np.arange(T_sub), P_sub.T, colors=colors[:K], alpha=0.8)
-        slbls = views[subj].state_name_by_idx
-        legend_patches = [plt.matplotlib.patches.Patch(color=colors[k], label=slbls.get(k, f"S{k}")) for k in range(K)]
-        ax.legend(handles=legend_patches, frameon=False, bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
-        ax.set_xlim(0, T_sub)
-        ax.set_ylim(0, 1)
-        ax.set_ylabel("P(state)")
-        ax.set_title(f"Subject {subj}")
-
-    axes[-1, 0].set_xlabel("Trial")
-    fig.tight_layout()
-    fig.subplots_adjust(right=0.85)
-    sns.despine(fig=fig)
-    return fig
+    return _plot_posterior_probs(posterior_df, subject=subject)
 
 
-def plot_state_accuracy(
-    views: dict,
-    trial_df,
-    thresh: float = 0.5,
-    performance_col: str = "correct_bool",
-    **kwargs,
-) -> Tuple[plt.Figure, pd.DataFrame]:
-    return _plot_state_accuracy(
-        views,
-        trial_df,
-        thresh=thresh,
-        performance_col=performance_col,
-        **kwargs,
-    )
+def plot_state_accuracy(payload: dict) -> Tuple[plt.Figure, pd.DataFrame]:
+    return _plot_state_accuracy(payload)
 
 
-def plot_session_trajectories(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_session_trajectories(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        **kwargs,
-    )
+def plot_session_trajectories(payload: dict) -> plt.Figure:
+    return _plot_session_trajectories(payload)
 
 
-def plot_state_posterior_count_kde(
-    views: dict,
-    thresh: float | None = None,
-    bins: int = 40,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_posterior_count_kde(
-        views,
-        thresh=thresh,
-        bins=bins,
-        **kwargs,
-    )
+def plot_state_posterior_count_kde(payload: dict) -> plt.Figure:
+    return _plot_state_posterior_count_kde(payload)
 
 
-def plot_change_triggered_posteriors_summary(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    switch_posterior_threshold: float | None = None,
-    window: int = 15,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_change_triggered_posteriors_summary(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        switch_posterior_threshold=switch_posterior_threshold,
-        window=window,
-        **kwargs,
-    )
+def plot_change_triggered_posteriors_summary(payload: dict) -> plt.Figure:
+    return _plot_change_triggered_posteriors_summary(payload)
 
 
-def plot_change_triggered_posteriors_by_subject(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    switch_posterior_threshold: float | None = None,
-    window: int = 15,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_change_triggered_posteriors_by_subject(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        switch_posterior_threshold=switch_posterior_threshold,
-        window=window,
-        **kwargs,
-    )
+def plot_change_triggered_posteriors_by_subject(payload: dict) -> plt.Figure:
+    return _plot_change_triggered_posteriors_by_subject(payload)
 
 
-def plot_state_occupancy(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_occupancy(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        **kwargs,
-    )
+def plot_state_occupancy(payload: dict) -> plt.Figure:
+    return _plot_state_occupancy(payload)
 
 
-def plot_state_occupancy_overall_boxplot(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_occupancy_overall_boxplot(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        **kwargs,
-    )
+def plot_state_occupancy_overall(payload: dict) -> plt.Figure:
+    return _plot_state_occupancy_overall(payload)
 
 
-def plot_state_dwell_times_by_subject(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    max_dwell: int | None = None,
-    ci_level: float = 0.68,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_dwell_times_by_subject(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        max_dwell=max_dwell,
-        ci_level=ci_level,
-        **kwargs,
-    )
+def plot_state_occupancy_overall_summary(payload: dict) -> plt.Figure:
+    return _plot_state_occupancy_overall_summary(payload)
 
 
-def plot_state_dwell_times_summary(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    max_dwell: int | None = None,
-    ci_level: float = 0.68,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_dwell_times_summary(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        max_dwell=max_dwell,
-        ci_level=ci_level,
-        **kwargs,
-    )
+def plot_state_occupancy_overall_by_subject(payload: dict) -> plt.Figure:
+    return _plot_state_occupancy_overall_by_subject(payload)
 
 
-def plot_state_dwell_times(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    max_dwell: int | None = None,
-    ci_level: float = 0.68,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_dwell_times(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        max_dwell=max_dwell,
-        ci_level=ci_level,
-        **kwargs,
-    )
+def plot_state_session_occupancy(payload: dict) -> plt.Figure:
+    return _plot_state_session_occupancy(payload)
+
+
+def plot_state_session_occupancy_summary(payload: dict) -> plt.Figure:
+    return _plot_state_session_occupancy_summary(payload)
+
+
+def plot_state_session_occupancy_by_subject(payload: dict) -> plt.Figure:
+    return _plot_state_session_occupancy_by_subject(payload)
+
+
+def plot_state_switches(payload: dict) -> plt.Figure:
+    return _plot_state_switches(payload)
+
+
+def plot_state_switches_summary(payload: dict) -> plt.Figure:
+    return _plot_state_switches_summary(payload)
+
+
+def plot_state_switches_by_subject(payload: dict) -> plt.Figure:
+    return _plot_state_switches_by_subject(payload)
+
+
+def plot_state_occupancy_overall_boxplot(payload: dict) -> plt.Figure:
+    return _plot_state_occupancy_overall_boxplot(payload)
+
+
+def plot_state_dwell_times_by_subject(payload: dict) -> plt.Figure:
+    return _plot_state_dwell_times_by_subject(payload)
+
+
+def plot_state_dwell_times_summary(payload: dict) -> plt.Figure:
+    return _plot_state_dwell_times_summary(payload)
+
+
+def plot_state_dwell_times(payload: dict) -> plt.Figure:
+    return _plot_state_dwell_times(payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1083,27 +946,9 @@ def plot_state_dwell_times(
 
 
 def plot_session_deepdive(
-    views: dict,
-    trial_df,
-    subj: str,
-    sess,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    switch_posterior_threshold: float | None = None,
-    **kwargs,
+    payload: dict,
 ) -> plt.Figure:
-    return _plot_session_deepdive(
-        views,
-        trial_df,
-        subj,
-        sess,
-        session_col=session_col,
-        sort_col=sort_col,
-        switch_posterior_threshold=switch_posterior_threshold,
-        performance_col="correct_bool",
-        response_col="response",
-        **kwargs,
-    )
+    return _plot_session_deepdive(payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1562,6 +1407,7 @@ from src.plots.common import (
     centered_numeric_group_palette,
     make_single_panel_figure,
     plot_grouped_summary,
+    plot_empirical_accuracy_curve,
     plot_integration_map_panels,
     plot_simple_summary,
 )
@@ -1587,6 +1433,21 @@ _attach_rank_state_model_cols = attach_rank_state_model_cols
 
 SIGNED_DELAY_ORDER = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
 SIGNED_DELAY_LABELS = ["0", "-1", "-3", "-10", "10", "3", "1", "0"]
+
+
+def plot_accuracy_by_delay(plot_df):
+    df_pd = to_pandas_df(plot_df)
+    
+    return plot_empirical_accuracy_curve(
+        df_pd,
+        x_col="delays",
+        invert_x=False,
+        accuracy_col="hit",
+        xlabel="Delay",
+        title="2AFC delay",
+        baseline=0.5,
+        color="#1f77b4",
+    )
 
 
 def plot_right_by_regressor_simple(
@@ -1704,7 +1565,7 @@ def plot_right_integration_map(
     sigma: float | None = None,
     smooth: bool = True,
 ):
-    _n_bins = n_bins if smooth or n_bins != 64 else 32
+    _n_bins = n_bins
     _plot_df = plot_df
     _x_col = x_col
     _x_edges = None
@@ -1736,7 +1597,7 @@ def plot_right_integration_map(
         n_bins=_n_bins,
         sigma=sigma,
         fill_empty=smooth,
-        default_sigma_dx=2.0 if smooth else 1.25,
+        default_sigma_dx=5.0,
         x_edges=_x_edges,
         xticks=_xticks,
         x_tick_labels=_x_tick_labels,
@@ -1746,7 +1607,7 @@ def plot_right_integration_map(
     return plot_integration_map_panels(
         panels,
         meta=meta,
-        interpolation="bicubic" if smooth else None,
+        interpolation=None,
     )
 
 
@@ -1833,6 +1694,7 @@ def plot_repeat_by_repeat_evidence(
 __all__ = [
     "display_regressor_name",
     "pick_choice_history_regressor",
+    "plot_accuracy_by_delay",
     "plot_accuracy_by_total_evidence",
     "plot_binned_accuracy_figure",
     "plot_repeat_by_repeat_evidence",

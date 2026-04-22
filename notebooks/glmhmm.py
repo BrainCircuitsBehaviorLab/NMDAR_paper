@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.22.0"
+__generated_with = "0.23.2"
 app = marimo.App(width="full")
 
 
@@ -39,12 +39,32 @@ def _():
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import build_views
     from glmhmmt.postprocess import (
+        build_change_triggered_posteriors_payload,
+        build_session_deepdive_payload,
+        build_session_trajectories_payload,
+        build_state_accuracy_payload,
+        build_state_dwell_times_payload,
+        build_state_occupancy_payload,
+        build_state_posterior_count_payload,
         build_trial_df,
         build_emission_weights_df,
         build_weights_boxplot_payload,
+        build_transition_matrix_by_subject_payload,
+        build_transition_matrix_payload,
     )
     from glmhmmt.plots import plot_weights_boxplot
-    from glmhmmt.runtime import configure_paths, get_runtime_paths
+    from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
+    from src.process import MCDR as process_mcdr
+    from src.process import two_afc as process_two_afc
+    from src.process import two_afc_delay as process_two_afc_delay
+
+    def prepare_predictions_df(task_name, df):
+        if task_name == "MCDR":
+            return process_mcdr.prepare_predictions_df(df, cfg=load_app_config())
+        if task_name == "2AFC_delay":
+            return process_two_afc_delay.prepare_predictions_df(df)
+        return process_two_afc.prepare_predictions_df(df)
+
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
     paths = get_runtime_paths()
@@ -54,12 +74,21 @@ def _():
         ModelManagerWidget,
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
+        build_change_triggered_posteriors_payload,
         build_editor_payload,
         build_emission_weights_df,
-        build_weights_boxplot_payload,
+        build_session_deepdive_payload,
+        build_session_trajectories_payload,
+        build_state_accuracy_payload,
+        build_state_dwell_times_payload,
+        build_state_occupancy_payload,
+        build_state_posterior_count_payload,
+        build_transition_matrix_by_subject_payload,
+        build_transition_matrix_payload,
         build_trial_and_weights_df,
         build_trial_df,
         build_views,
+        build_weights_boxplot_payload,
         fit_main,
         get_adapter,
         load_fit_arrays,
@@ -70,6 +99,7 @@ def _():
         pl,
         plot_weights_boxplot,
         plt,
+        prepare_predictions_df,
         resolve_selected_model_id,
         select_subject_behavior_df,
         sns,
@@ -178,9 +208,9 @@ def _(
     return save_plot, selected_model_id
 
 
-app._unparsable_cell(
-    r"""
-    "mo.vstack(
+@app.cell
+def _(current_hash, mo, save_plot, ui_model_manager):
+    mo.vstack(
         [
             ui_model_manager,
             save_plot.save_all_widget(label="Save all model plots"),
@@ -188,9 +218,7 @@ app._unparsable_cell(
         ],
         align="center",
     )
-    """,
-    name="_"
-)
+    return
 
 
 @app.cell
@@ -405,15 +433,15 @@ def _(
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
     _save_path = paths.RESULTS / "plots/GLMHMM/emissions_coefs.png"
     _views_sel = {s: views[s] for s in selected}
+    _weights_df = build_emission_weights_df(_views_sel)
     _fig_by_subject = plots.plot_emission_weights_by_subject(
-        views=_views_sel,
+        _weights_df,
         K=K,
-        save_path=_save_path,
     )
 
-    _subject_figs, _summary_figs = plots.plot_emission_weights(views=_views_sel, K=K)
+    _subject_figs, _summary_figs = plots.plot_emission_weights(_weights_df, K=K)
     _summary_figs = plot_weights_boxplot(
-        **build_weights_boxplot_payload(build_emission_weights_df(_views_sel))
+        **build_weights_boxplot_payload(_weights_df)
     )
     mo.vstack([
                # _subject_figs,
@@ -437,21 +465,33 @@ def _(mo):
 
 
 @app.cell
-def _(K, arrays_store, mo, plots, save_plot, selected, state_labels):
+def _(
+    K,
+    arrays_store,
+    build_transition_matrix_by_subject_payload,
+    build_transition_matrix_payload,
+    mo,
+    plots,
+    save_plot,
+    selected,
+    state_labels,
+):
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-    _fig_by_subject = plots.plot_transition_matrix_by_subject(
+    _by_subject_payload = build_transition_matrix_by_subject_payload(
         arrays_store=arrays_store,
         state_labels=state_labels,
         K=K,
         subjects=selected,
     )
+    _fig_by_subject = plots.plot_transition_matrix_by_subject(**_by_subject_payload)
 
-    _fig_summary = plots.plot_transition_matrix(
+    _summary_payload = build_transition_matrix_payload(
         arrays_store=arrays_store,
         state_labels=state_labels,
         K=K,
         subjects=selected,
     )
+    _fig_summary = plots.plot_transition_matrix(**_summary_payload)
     mo.vstack([_fig_summary, save_plot(_fig_summary, f"Mean Transition Matrix", stem=f"mean_transition_matrix",),], align="center")
     return
 
@@ -465,22 +505,32 @@ def _(mo):
 
 
 @app.cell
-def _(mo, plots, save_plot, selected, trial_df, views):
+def _(
+    build_state_dwell_times_payload,
+    mo,
+    pl,
+    plots,
+    save_plot,
+    selected,
+    task_name,
+    trial_df,
+    views,
+):
     _views_sel = {s: views[s] for s in selected}
     mo.stop(not _views_sel, mo.md("No fitted arrays found — run the fit first."))
-    _fig_dwell_summary = plots.plot_state_dwell_times_summary(
-        views=_views_sel,
-        trial_df=trial_df,
+    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
+    _dwell_payload = build_state_dwell_times_payload(
+        _trial_df_sel,
         session_col="session",
         sort_col="trial_idx",
-        ci_level=0.68,
+        views=_views_sel,
+        max_dwell=90 if str(task_name).lower().startswith("2afc") else None,
+    )
+    _fig_dwell_summary = plots.plot_state_dwell_times_summary(
+        _dwell_payload,
     )
     _fig_dwell_by_subject = plots.plot_state_dwell_times_by_subject(
-        views=_views_sel,
-        trial_df=trial_df,
-        session_col="session",
-        sort_col="trial_idx",
-        ci_level=0.68,
+        _dwell_payload,
     )
     mo.vstack(
         [
@@ -576,8 +626,10 @@ def _(
     mo,
     pl,
     plots,
+    prepare_predictions_df,
     save_plot,
     selected,
+    task_name,
     trial_df,
     ui_psychometric_background,
     ui_psychometric_regressor,
@@ -594,7 +646,7 @@ def _(
 
     mo.stop(_trial_df_sel.height == 0, mo.md("No subjects with matching data lengths."))
 
-    _plot_df_all = plots.prepare_predictions_df(_trial_df_sel)
+    _plot_df_all = prepare_predictions_df(task_name, _trial_df_sel)
     _perf_kwargs = {"views": _views_sel} if is_2afc else {}
     _fig_all, _ = plots.plot_categorical_performance_all(
         _plot_df_all,
@@ -609,7 +661,7 @@ def _(
         _fig_all._suptitle.set_text("")
     _fig_all.tight_layout()
 
-    _plot_df_state = plots.prepare_predictions_df(_trial_df_sel)
+    _plot_df_state = prepare_predictions_df(task_name, _trial_df_sel)
     _fig_state, _ = plots.plot_categorical_performance_by_state(
         df=_plot_df_state,
         views=_views_sel,
@@ -914,7 +966,9 @@ def _(
     mo,
     np,
     plots,
+    prepare_predictions_df,
     save_plot,
+    task_name,
     ui_editor_subject,
     ui_psychometric_background,
     ui_psychometric_regressor,
@@ -947,7 +1001,7 @@ def _(
         stored_class_indices=list(coef_editor_stored_class_indices),
         stored_reference_class_idx=int(coef_editor_stored_reference_class_idx),
     )
-    _plot_df_tweaked = plots.prepare_predictions_df(_trial_df_tweaked)
+    _plot_df_tweaked = prepare_predictions_df(task_name, _trial_df_tweaked)
 
     _title = f"{_subj} — tweaked {coef_state_label}"
     _fig_all_tweaked, _ = plots.plot_categorical_performance_all(
@@ -1099,20 +1153,30 @@ def _(mo):
 
 
 @app.cell
-def _(THRESH_ui, adapter, mo, plots, save_plot, selected, trial_df, views):
+def _(
+    adapter,
+    build_state_accuracy_payload,
+    build_state_posterior_count_payload,
+    mo,
+    pl,
+    plots,
+    save_plot,
+    selected,
+    trial_df,
+):
     mo.stop(not selected, mo.md("No fitted subjects available."))
+    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
 
     _fig_acc, _tbl = plots.plot_state_accuracy(
-        views={s: views[s] for s in selected},
-        trial_df=trial_df,
-        thresh=THRESH_ui.amount,
-        session_col=adapter.session_col,
-        sort_col=adapter.sort_col,
+        build_state_accuracy_payload(
+            _trial_df_sel,
+            performance_col="correct_bool",
+            chance_level=1.0 / adapter.num_classes,
+        )
     )
 
     _fig_post = plots.plot_state_posterior_count_kde(
-        views={s: views[s] for s in selected},
-        thresh=THRESH_ui.amount,
+        build_state_posterior_count_payload(_trial_df_sel),
     )
 
     mo.vstack([
@@ -1155,13 +1219,15 @@ def _(df_all, mo):
 
 
 @app.cell
-def _(mo, plots, selected, trial_df, views):
+def _(build_session_trajectories_payload, mo, pl, plots, selected, trial_df):
     mo.stop(not selected, mo.md("Select subjects above to view session trajectories."))
+    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
     _fig_traj = plots.plot_session_trajectories(
-        views={s: views[s] for s in selected},
-        trial_df=trial_df,
-        session_col="session",
-        sort_col="trial_idx",
+        build_session_trajectories_payload(
+            _trial_df_sel,
+            session_col="session",
+            sort_col="trial_idx",
+        )
     )
     mo.vstack([
         # mo.md(f"### c. Average state-probability trajectories within a session  (K={K})"),
@@ -1180,26 +1246,89 @@ def _(mo):
 
 
 @app.cell
-def _(THRESH_ui, mo, plots, save_plot, selected, trial_df, views):
+def _(
+    build_state_occupancy_payload,
+    mo,
+    pl,
+    plots,
+    save_plot,
+    selected,
+    trial_df,
+):
     mo.stop(not selected, mo.md("Select subjects above."))
-    _fig_occ = plots.plot_state_occupancy(
-        views={s: views[s] for s in selected},
-        trial_df=trial_df,
+    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
+    _occupancy_payload = build_state_occupancy_payload(
+        _trial_df_sel,
         session_col="session",
         sort_col="trial_idx",
-        switch_posterior_threshold=THRESH_ui.amount,
     )
-    mo.vstack([
-        _fig_occ,
-        save_plot(
-            _fig_occ,
-            "fractional occupancy overview",
-            stem="state_occupancy",
-            location=(0, 0),
-        ),
-        mo.md(
-            f"changes between confident MAP assignments with posterior ≥ {THRESH_ui}."
-        ),
+    _fig_occ_overall_summary = plots.plot_state_occupancy_overall_summary(_occupancy_payload)
+    _fig_occ_overall_by_subject = plots.plot_state_occupancy_overall_by_subject(_occupancy_payload)
+    _fig_occ_sessions_summary = plots.plot_state_session_occupancy_summary(_occupancy_payload)
+    _fig_occ_sessions_by_subject = plots.plot_state_session_occupancy_by_subject(_occupancy_payload)
+    _fig_occ_switches_summary = plots.plot_state_switches_summary(_occupancy_payload)
+    _fig_occ_switches_by_subject = plots.plot_state_switches_by_subject(_occupancy_payload)
+    mo.hstack([
+        mo.vstack([
+            mo.vstack([
+                _fig_occ_overall_summary,
+                save_plot(
+                    _fig_occ_overall_summary,
+                    "fractional occupancy overall summary",
+                    stem="state_occupancy_overall_summary",
+                    location=(0, 0),
+                ),
+            ], align="center"),
+        #     mo.vstack([
+        #         _fig_occ_overall_by_subject,
+        #         save_plot(
+        #             _fig_occ_overall_by_subject,
+        #             "fractional occupancy overall by subject",
+        #             stem="state_occupancy_overall_by_subject",
+        #             location=(0, 0),
+        #         ),
+        #     ], align="center"),
+        ], align="center"),
+        mo.vstack([
+            mo.vstack([
+                _fig_occ_sessions_summary,
+                save_plot(
+                    _fig_occ_sessions_summary,
+                    "fractional occupancy by session summary",
+                    stem="state_session_occupancy_summary",
+                    location=(0, 0),
+                ),
+            ], align="center"),
+            # mo.vstack([
+            #     _fig_occ_sessions_by_subject,
+            #     save_plot(
+            #         _fig_occ_sessions_by_subject,
+            #         "fractional occupancy by session and subject",
+            #         stem="state_session_occupancy_by_subject",
+            #         location=(0, 0),
+            #     ),
+            # ], align="center"),
+        ], align="center"),
+        mo.vstack([
+            mo.vstack([
+                _fig_occ_switches_summary,
+                save_plot(
+                    _fig_occ_switches_summary,
+                    "state switches summary",
+                    stem="state_switches_summary",
+                    location=(0, 0),
+                ),
+            ], align="center"),
+            # mo.vstack([
+            #     _fig_occ_switches_by_subject,
+            #     save_plot(
+            #         _fig_occ_switches_by_subject,
+            #         "state switches by subject",
+            #         stem="state_switches_by_subject",
+            #         location=(0, 0),
+            #     ),
+            # ], align="center"),
+        ], align="center"),
     ], align="center")
     return
 
@@ -1213,23 +1342,29 @@ def _(mo):
 
 
 @app.cell
-def _(THRESH_ui, mo, plots, save_plot, selected, trial_df, views):
+def _(
+    THRESH_ui,
+    build_change_triggered_posteriors_payload,
+    mo,
+    pl,
+    plots,
+    save_plot,
+    selected,
+    trial_df,
+):
     mo.stop(not selected, mo.md("Select subjects above."))
-    _fig_change_summary = plots.plot_change_triggered_posteriors_summary(
-        views=views,
-        trial_df=trial_df,
+    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
+    _change_payload = build_change_triggered_posteriors_payload(
+        _trial_df_sel,
         session_col="session",
         sort_col="trial_idx",
         switch_posterior_threshold=THRESH_ui.amount,
-        window=25
+    )
+    _fig_change_summary = plots.plot_change_triggered_posteriors_summary(
+        _change_payload,
     )
     _fig_change_by_subject = plots.plot_change_triggered_posteriors_by_subject(
-        views=views,
-        trial_df=trial_df,
-        session_col="session",
-        sort_col="trial_idx",
-        switch_posterior_threshold=THRESH_ui.amount,
-        window=25
+        _change_payload,
     )
     mo.vstack([
         mo.md(
@@ -1241,12 +1376,12 @@ def _(THRESH_ui, mo, plots, save_plot, selected, trial_df, views):
             "change-triggered posteriors summary",
             stem="change_triggered_posteriors_summary",
         ),
-        _fig_change_by_subject,
-        save_plot(
-            _fig_change_by_subject,
-            "change-triggered posteriors by subject",
-            stem="change_triggered_posteriors_by_subject",
-        ),
+        # _fig_change_by_subject,
+        # save_plot(
+        #     _fig_change_by_subject,
+        #     "change-triggered posteriors by subject",
+        #     stem="change_triggered_posteriors_by_subject",
+        # ),
     ], align="center")
     return
 
@@ -1308,7 +1443,8 @@ def _(mo):
 
 @app.cell
 def _(
-    THRESH_ui,
+    adapter,
+    build_session_deepdive_payload,
     mo,
     plots,
     save_plot,
@@ -1325,17 +1461,19 @@ def _(
         mo.md("No fitted arrays for this subject — run the fit first."),
     )
 
-    _sess = ui_session_id.value
+    _sess = int(ui_session_id.value) if str(ui_session_id.value).isdigit() else ui_session_id.value
     _fig = plots.plot_session_deepdive(
-        views={_subj: views[_subj]},
-        trial_df=trial_df,
-        subj=_subj,
-        sess=_sess,
-        session_col="session",
-        sort_col="trial",
-        switch_posterior_threshold=THRESH_ui.amount,
-        engaged_window=int(ui_engaged_window.value),
-        engaged_trace_mode=ui_engaged_trace_mode.value,
+        build_session_deepdive_payload(
+            trial_df,
+            subject=_subj,
+            session=_sess,
+            session_col="session",
+            sort_col="trial",
+            engaged_window=ui_engaged_window.value,
+            engaged_trace_mode=ui_engaged_trace_mode.value,
+            chance_level=1.0 / adapter.num_classes,
+            num_classes=adapter.num_classes,
+        )
     )
     mo.vstack([
         mo.hstack([ui_session_subj, ui_session_id, ui_engaged_window, ui_engaged_trace_mode]),
@@ -1512,6 +1650,7 @@ def _(
     paths,
     pl,
     plots,
+    prepare_predictions_df,
     selected_model_id,
     ssm_run_btn,
     task_name,
@@ -1707,7 +1846,7 @@ def _(
     ssm_psych_fig_custom = None
     ssm_psych_fig_ssm = None
     if trial_df_custom_sel.height > 0 and trial_df_ssm.height > 0:
-        plot_df_custom = plots.prepare_predictions_df(trial_df_custom_sel)
+        plot_df_custom = prepare_predictions_df(task_name, trial_df_custom_sel)
         ssm_psych_fig_custom, _ = plots.plot_categorical_performance_all(
             plot_df_custom,
             f"Dynamax glmhmm K={K}",
@@ -1719,7 +1858,7 @@ def _(
         if ssm_psych_fig_custom._suptitle is not None:
             ssm_psych_fig_custom._suptitle.set_text("")
         ssm_psych_fig_custom.tight_layout()
-        plot_df_ssm = plots.prepare_predictions_df(trial_df_ssm)
+        plot_df_ssm = prepare_predictions_df(task_name, trial_df_ssm)
         ssm_psych_fig_ssm, _ = plots.plot_categorical_performance_all(
             plot_df_ssm,
             f"SSM glmhmm K={K}",

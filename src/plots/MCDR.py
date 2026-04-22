@@ -20,10 +20,6 @@ import polars as pl
 import seaborn as sns
 from scipy.stats import t
 
-from glmhmmt.plots import (
-    plot_transition_matrix as _plot_transition_matrix_simple,
-    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
-)
 from glmhmmt.postprocess import (
     build_transition_matrix_by_subject_payload,
     build_transition_matrix_payload,
@@ -47,8 +43,19 @@ from glmhmmt.model_plots import (
     plot_state_dwell_times,
     plot_state_posterior_count_kde,
     plot_state_occupancy,
+    plot_state_occupancy_overall,
+    plot_state_occupancy_overall_by_subject,
     plot_state_occupancy_overall_boxplot,
+    plot_state_occupancy_overall_summary,
+    plot_state_session_occupancy,
+    plot_state_session_occupancy_by_subject,
+    plot_state_session_occupancy_summary,
+    plot_state_switches,
+    plot_state_switches_by_subject,
+    plot_state_switches_summary,
     plot_tau_sweep,
+    plot_transition_matrix as _plot_transition_matrix_simple,
+    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
     plot_transition_weights,
 )
 
@@ -58,248 +65,73 @@ cfg = load_app_config()
 CI_BAND_ERR_KWS = {"edgecolor": "none", "linewidth": 0}
 
 
-def _empty_plot(message: str = "No data") -> plt.Figure:
-    """Return a minimal placeholder figure for empty selections."""
-    fig, ax = plt.subplots()
-    ax.text(0.5, 0.5, message, ha="center", va="center")
-    ax.axis("off")
-    return fig
-
-
 def plot_transition_matrix(
-    arrays_store: dict,
-    state_labels: dict,
-    K: int,
-    subjects: list,
+    matrix,
+    tick_labels,
+    **kwargs,
 ):
     return _plot_transition_matrix_simple(
-        **build_transition_matrix_payload(
-            arrays_store=arrays_store,
-            state_labels=state_labels,
-            K=K,
-            subjects=subjects,
-        )
+        matrix=matrix,
+        tick_labels=tick_labels,
+        **kwargs,
     )
 
 
 def plot_transition_matrix_by_subject(
-    arrays_store: dict,
-    state_labels: dict,
-    K: int,
-    subjects: list,
+    matrices,
+    subject_ids,
+    tick_labels_by_subject,
+    **kwargs,
 ):
     return _plot_transition_matrix_by_subject_simple(
-        **build_transition_matrix_by_subject_payload(
-            arrays_store=arrays_store,
-            state_labels=state_labels,
-            K=K,
-            subjects=subjects,
-        )
+        matrices=matrices,
+        subject_ids=subject_ids,
+        tick_labels_by_subject=tick_labels_by_subject,
+        **kwargs,
     )
-
-
-def _resolve_emission_plot_inputs(
-    *,
-    views: Optional[dict] = None,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-) -> tuple[dict, dict, dict, list[str]]:
-    """Normalize either `views` or legacy arrays inputs for emission plots."""
-    if views is not None:
-        arrays_from_views: dict = {}
-        labels_from_views: dict = {}
-        feat_names: list[str] = []
-
-        for subj, view in views.items():
-            if view is None or getattr(view, "emission_weights", None) is None:
-                continue
-            arrays_from_views[subj] = {
-                "emission_weights": np.asarray(view.emission_weights),
-                "X_cols": list(getattr(view, "feat_names", []) or []),
-            }
-            labels_from_views[subj] = {int(k): lbl for k, lbl in view.state_name_by_idx.items()}
-            if not feat_names:
-                feat_names = list(getattr(view, "feat_names", []) or [])
-
-        return arrays_from_views, labels_from_views, {"X_cols": feat_names}, list(arrays_from_views.keys())
-
-    if arrays_store is None:
-        raise ValueError("Provide either `views` or `arrays_store` for emission plots.")
-    if state_labels is None:
-        raise ValueError("`state_labels` is required when `views` is not provided.")
-    if names is None:
-        raise ValueError("`names` is required when `views` is not provided.")
-
-    resolved_subjects = list(subjects) if subjects is not None else list(arrays_store.keys())
-    return arrays_store, state_labels, names, resolved_subjects
-
-
-def _infer_emission_K(
-    *,
-    views: Optional[dict] = None,
-    arrays_store: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-) -> int:
-    """Infer K from views or the first available emission-weight array."""
-    if views:
-        first_view = next(iter(views.values()), None)
-        if first_view is not None:
-            return int(first_view.K)
-
-    if arrays_store:
-        candidate_subjects = list(subjects) if subjects is not None else list(arrays_store.keys())
-        for subj in candidate_subjects:
-            subj_arrays = arrays_store.get(subj, {})
-            weights = subj_arrays.get("emission_weights")
-            if weights is not None:
-                return int(np.asarray(weights).shape[0])
-
-    raise ValueError("Could not infer `K` for emission plots; pass it explicitly.")
 
 
 def plot_emission_weights_by_subject(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
+    weights_df,
     *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
+    K: int | None = None,
 ) -> plt.Figure:
-    """Per-subject emission bars with either `views` or legacy arrays inputs."""
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
     return _plot_emission_weights_by_subject_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
         K=K,
-        subjects=subjects,
-        save_path=save_path,
+        weights_df=weights_df,
     )
 
 
 def plot_emission_weights_summary(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
+    weights_df,
     *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
+    K: int | None = None,
 ) -> plt.Figure:
-    """Notebook-friendly high-level emission summary, aligned with 2AFC API."""
-    _ = save_path
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
-    fig_summary, fig_detail = _plot_emission_weights_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
+    return _plot_emission_weights_generic(
+        weights_df,
         K=K,
-        subjects=subjects,
-    )
-    plt.close(fig_detail)
-    return fig_summary
+    )[1]
 
 
 def plot_emission_weights_summary_lineplot(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
+    weights_df,
     *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
+    K: int | None = None,
 ) -> plt.Figure:
-    _ = save_path
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
     return _plot_emission_weights_summary_lineplot_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
+        weights_df,
         K=K,
-        subjects=subjects,
     )
 
 
 def plot_emission_weights_summary_boxplot(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
+    weights_df,
     *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
+    K: int | None = None,
 ) -> plt.Figure:
-    _ = save_path
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
     return _plot_emission_weights_summary_boxplot_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
+        weights_df,
         K=K,
-        subjects=subjects,
     )
 
 
@@ -309,7 +141,7 @@ def plot_lapse_rates_boxplot(
 ) -> plt.Figure:
     _ = K
     if not views:
-        return _empty_plot("No fitted lapses")
+        raise ValueError("views is required for lapse-rate plots.")
     return _plot_lapse_rates_boxplot(
         views,
         choice_labels=("Left", "Center", "Right"),
@@ -318,38 +150,13 @@ def plot_lapse_rates_boxplot(
 
 
 def plot_emission_weights(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
+    weights_df,
     *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
+    K: int | None = None,
 ):
-    """Emission summaries with `views` support and backward-compatible kwargs."""
-    _ = save_path
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot(), _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
     return _plot_emission_weights_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
+        weights_df,
         K=K,
-        subjects=subjects,
     )
 
 
@@ -366,10 +173,6 @@ def get_plot_path(subfolder: str, fname: str, model_name: str) -> Path:
     out_dir = Path("results") / "plots" / model_name / subfolder
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir / fname
-
-
-def prepare_predictions_df(df_pred: pl.DataFrame) -> pl.DataFrame:
-    return process.prepare_predictions_df(df_pred, cfg=cfg)
 
 
 def plot_cat_panel(ax, df, group_col, order, title, xlabel, ylabel=None, palette=None, labels=None):
@@ -842,9 +645,31 @@ from src.plots.common import (
     add_shared_figure_legend,
     make_single_panel_figure,
     plot_grouped_summary,
+    plot_empirical_accuracy_curve,
     plot_integration_map_panels,
     plot_simple_summary,
 )
+
+
+def plot_accuracy_by_difficulty(df):
+    df_pd = df.to_pandas().copy() if hasattr(df, "to_pandas") else pd.DataFrame(df).copy()
+    if "ttype_c" not in df_pd.columns and "ttype_n" in df_pd.columns:
+        ttype_map = {float(key): value for key, value in cfg["encoding"]["ttype"].items()}
+        df_pd["ttype_c"] = pd.to_numeric(df_pd["ttype_n"], errors="coerce").map(ttype_map)
+
+    accuracy_col = "correct_bool" if "correct_bool" in df_pd.columns else "performance"
+    return plot_empirical_accuracy_curve(
+        df_pd,
+        x_col="ttype_c",
+        accuracy_col=accuracy_col,
+        invert_x=False,
+        x_order=cfg["plots"]["ttype"]["order"],
+        x_tick_labels=cfg["plots"]["ttype"]["labels"],
+        xlabel="Trial difficulty",
+        title="MCDR",
+        baseline=1 / 3,
+        color="#7B3F98",
+    )
 
 
 def plot_right_by_regressor_simple(
@@ -947,7 +772,7 @@ def plot_right_integration_map(
     sigma: float | None = None,
     smooth: bool = True,
 ):
-    _n_bins = n_bins if smooth or n_bins != 64 else 32
+    _n_bins = n_bins
     panels, meta = prepare_right_integration_maps(
         plot_df,
         response_mode=process.RESPONSE_MODE,
@@ -961,12 +786,12 @@ def plot_right_integration_map(
         n_bins=_n_bins,
         sigma=sigma,
         fill_empty=smooth,
-        default_sigma_dx=2.0 if smooth else 1.25,
+        default_sigma_dx=5.0,
     )
     return plot_integration_map_panels(
         panels,
         meta=meta,
-        interpolation="bicubic" if smooth else None,
+        interpolation=None,
     )
 
 
@@ -1053,6 +878,7 @@ def plot_repeat_by_repeat_evidence(
 __all__ = [
     "display_regressor_name",
     "pick_choice_history_regressor",
+    "plot_accuracy_by_difficulty",
     "plot_accuracy_by_total_evidence",
     "plot_binned_accuracy_figure",
     "plot_repeat_by_repeat_evidence",

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 import seaborn as sns
+import pandas as pd
 
 from glmhmmt.plots import (
     custom_boxplot,
@@ -80,9 +82,126 @@ def plot_transition_matrix_by_subject(
 
 
 def make_single_panel_figure(*, extra_right_legend: bool = False):
-    fig, ax = plt.subplots(figsize=(4.0, 4.0), constrained_layout=True)
-    ax.set_box_aspect(1)
+    fig, ax = plt.subplots(figsize=(3.0, 3.0), constrained_layout=True)
+    # ax.set_box_aspect(1)
     return fig, ax
+
+
+def plot_empirical_accuracy_curve(
+    df_like,
+    *,
+    x_col: str,
+    accuracy_col: str,
+    subject_col: str = "subject",
+    x_order: list | None = None,
+    x_tick_labels: list | None = None,
+    xlabel: str,
+    title: str,
+    baseline: float,
+    color: str = "#2b7bba",
+    invert_x: bool = False,
+):
+    if isinstance(df_like, pd.DataFrame):
+        df = df_like.copy()
+    elif hasattr(df_like, "to_pandas"):
+        df = df_like.to_pandas().copy()
+    else:
+        df = pd.DataFrame(df_like).copy()
+
+    if x_col not in df.columns:
+        raise ValueError(f"Missing x column {x_col!r}.")
+    if accuracy_col not in df.columns:
+        raise ValueError(f"Missing accuracy column {accuracy_col!r}.")
+
+    df["_accuracy"] = pd.to_numeric(df[accuracy_col], errors="coerce")
+    df = df[df[x_col].notna() & df["_accuracy"].notna()].copy()
+    if df.empty:
+        fig, ax = make_single_panel_figure()
+        ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
+        ax.axis("off")
+        return fig
+
+    if subject_col in df.columns:
+        subject_summary = (
+            df.groupby([subject_col, x_col], observed=True)["_accuracy"]
+            .mean()
+            .reset_index(name="subject_accuracy")
+        )
+        summary = (
+            subject_summary.groupby(x_col, observed=True)["subject_accuracy"]
+            .agg(mean="mean", std="std", n="count")
+            .reset_index()
+        )
+    else:
+        summary = (
+            df.groupby(x_col, observed=True)["_accuracy"]
+            .agg(mean="mean", std="std", n="count")
+            .reset_index()
+        )
+
+    if x_order is not None:
+        summary = summary[summary[x_col].isin(x_order)].copy()
+        if summary.empty:
+            fig, ax = make_single_panel_figure()
+            ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
+            ax.axis("off")
+            return fig
+        summary[x_col] = pd.Categorical(summary[x_col], categories=x_order, ordered=True)
+        summary = summary.sort_values(x_col)
+        x = np.arange(len(summary), dtype=float)
+        if x_tick_labels is None:
+            tick_labels = [str(value) for value in summary[x_col]]
+        else:
+            label_map = dict(zip(x_order, x_tick_labels, strict=False))
+            tick_labels = [label_map.get(value, str(value)) for value in summary[x_col]]
+    else:
+        summary["_x_numeric"] = pd.to_numeric(summary[x_col], errors="coerce")
+        summary = summary.dropna(subset=["_x_numeric"]).sort_values("_x_numeric")
+        if summary.empty:
+            fig, ax = make_single_panel_figure()
+            ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
+            ax.axis("off")
+            return fig
+        x = summary["_x_numeric"].to_numpy(dtype=float)
+        tick_labels = []
+        for val in x:
+            if np.isclose(val, 0.1):
+                tick_labels.append("0")
+            else:
+                tick_labels.append(f"{val:g}")
+
+    summary["sem"] = summary["std"].fillna(0.0) / np.sqrt(summary["n"].clip(lower=1))
+
+    fig, ax = make_single_panel_figure()
+    if invert_x:
+        ax.invert_xaxis()
+    ax.errorbar(
+        x,
+        summary["mean"].to_numpy(dtype=float),
+        yerr=summary["sem"].to_numpy(dtype=float),
+        fmt="o-",
+        color=color,
+        ecolor=color,
+        elinewidth=1.0,
+        linewidth=2.0,
+        markersize=4,
+        capsize=0,
+    )
+    
+    ax.axhline(baseline, color="gray", lw=0.8, ls="--", alpha=0.5)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Accuracy")
+    ax.set_ylim(0.0, 1.0)
+    ax.set_yticks([0.0, baseline, 1.0])
+    ax.yaxis.set_major_formatter(
+        FuncFormatter(lambda y, _: f"{y:.2f}".rstrip("0").rstrip("."))
+    )
+    ax.set_xticks(x, labels=tick_labels)
+    ax.axhspan(0.0, baseline, color="gray", alpha=0.08, zorder=0)
+    
+    sns.despine(ax=ax)
+    return fig
 
 
 def add_shared_figure_legend(
@@ -281,12 +400,24 @@ def plot_integration_map_panels(
     panels: list[dict],
     *,
     meta: dict,
-    contour_levels: tuple[float, ...] = (0.2, 0.35, 0.5, 0.65, 0.8),
-    cmap: str = "rocket",
-    interpolation: str | None = "bicubic",
+    contour_levels: tuple[float, ...] = (0.15, 0.3, 0.5, 0.7, 0.85),
+    colours=None,
+    cmap: str | None = None,
+    interpolation: str | None = None,
+    data_points_cutoff: float = 20.0,
 ):
     if not panels:
         return None
+
+    _ = cmap, interpolation
+    if colours is None:
+        colours = np.array([[103, 169, 221], [241, 135, 34]], dtype=float) / 255.0
+    else:
+        colours = np.asarray(colours, dtype=float)
+        if colours.max(initial=0.0) > 1.0:
+            colours = colours / 255.0
+    if colours.shape != (2, 3):
+        raise ValueError("colours must be a 2-by-3 RGB array.")
 
     n_panels = len(panels)
     fig, axes = plt.subplots(
@@ -299,65 +430,78 @@ def plot_integration_map_panels(
     )
     axes = np.atleast_1d(axes)
 
-    mesh = None
     for ax, panel in zip(axes, panels, strict=False):
-        z = panel["map"]
-        cmap_obj = plt.get_cmap(cmap).copy()
-        cmap_obj.set_bad(alpha=0.0)
-        if interpolation is None:
-            mesh = ax.pcolormesh(
-                panel["x_edges"],
-                panel["y_edges"],
-                z.T,
-                cmap=cmap_obj,
-                vmin=0.0,
-                vmax=1.0,
-                shading="auto",
-            )
+        z = np.asarray(panel["map"], dtype=float)
+        z_for_colour = np.nan_to_num(z, nan=0.0)
+        rgb = colours[0] + z_for_colour[..., None] * (colours[1] - colours[0])
+        intensity = np.minimum(
+            np.nan_to_num(np.asarray(panel["n_datapoints"], dtype=float), nan=0.0)
+            / float(data_points_cutoff),
+            1.0,
+        )
+        rgb = 1.0 - (1.0 - rgb) * intensity[..., None]
+
+        x_centers = np.asarray(panel["x_centers"], dtype=float)
+        y_centers = np.asarray(panel["y_centers"], dtype=float)
+        if x_centers.size == 0 or y_centers.size == 0:
+            ax.set_axis_off()
+            continue
+
+        if x_centers.size == 1:
+            x_extent = (float(panel["x_edges"][0]), float(panel["x_edges"][-1]))
         else:
-            mesh = ax.imshow(
-                np.ma.masked_invalid(z.T),
-                extent=(
-                    float(panel["x_edges"][0]),
-                    float(panel["x_edges"][-1]),
-                    float(panel["y_edges"][0]),
-                    float(panel["y_edges"][-1]),
-                ),
-                origin="lower",
-                aspect="auto",
-                interpolation=interpolation,
-                cmap=cmap_obj,
-                vmin=0.0,
-                vmax=1.0,
-            )
-        finite = np.isfinite(z)
+            x_extent = (float(x_centers[0]), float(x_centers[-1]))
+        if y_centers.size == 1:
+            y_extent = (float(panel["y_edges"][0]), float(panel["y_edges"][-1]))
+        else:
+            y_extent = (float(y_centers[0]), float(y_centers[-1]))
+
+        ax.imshow(
+            np.transpose(rgb, (1, 0, 2)),
+            extent=(x_extent[0], x_extent[1], y_extent[0], y_extent[1]),
+            origin="lower",
+            aspect="auto",
+            interpolation="nearest",
+        )
+
+        z_for_contour = np.nan_to_num(z, nan=0.0)
+        finite = np.isfinite(z_for_contour)
         if finite.any():
-            lo = float(np.nanmin(z))
-            hi = float(np.nanmax(z))
-            levels = [level for level in contour_levels if lo < level < hi]
-            if levels:
-                lws = [2.0 if np.isclose(l, 0.5) else 0.95 for l in levels]
-                contours = ax.contour(
-                    panel["x_centers"],
-                    panel["y_centers"],
-                    z.T,
-                    levels=levels,
-                    colors="white",
-                    linewidths=lws,
-                    alpha=0.95,
+            lo = float(np.nanmin(z_for_contour))
+            hi = float(np.nanmax(z_for_contour))
+            levels = list(contour_levels)
+            mid_idx = int(round((len(levels) + 1) / 2.0)) - 1
+            thick_level = levels[mid_idx] if 0 <= mid_idx < len(levels) else None
+            thin_levels = [
+                level
+                for idx, level in enumerate(levels)
+                if idx != mid_idx and lo < level < hi
+            ]
+            if thin_levels:
+                ax.contour(
+                    x_centers,
+                    y_centers,
+                    z_for_contour.T,
+                    levels=thin_levels,
+                    colors="black",
+                    linewidths=0.5,
                 )
-        # ax.axvline(0.0, color="white", lw=0.8, ls="--", alpha=0.65)
-        # ax.axhline(0.0, color="white", lw=0.8, ls="--", alpha=0.65)
+            if thick_level is not None and lo < thick_level < hi:
+                ax.contour(
+                    x_centers,
+                    y_centers,
+                    z_for_contour.T,
+                    levels=[thick_level],
+                    colors="black",
+                    linewidths=1.0,
+                )
         ax.set_title(panel["label"])
         ax.set_xlabel(meta["xlabel"])
         if meta.get("xticks") is not None:
             ax.set_xticks(meta["xticks"], labels=meta.get("x_tick_labels"))
         ax.set_box_aspect(1)
-        sns.despine(ax=ax)
 
     axes[0].set_ylabel(meta["ylabel"])
-    if mesh is not None:
-        fig.colorbar(mesh, ax=axes, label=meta["zlabel"], shrink=0.86)
     return fig
 
 

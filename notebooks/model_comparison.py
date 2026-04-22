@@ -20,7 +20,7 @@ def _():
         model_aliases_for_kind,
     )
     from glmhmmt.tasks import get_adapter, get_task_options
-    from glmhmmt.postprocess import build_trial_df
+    from glmhmmt.postprocess import build_emission_weights_df, build_trial_df
     from glmhmmt.views import build_views
     from matplotlib.lines import Line2D
     from glmhmmt.plots_common import custom_boxplot
@@ -28,6 +28,7 @@ def _():
     sns.set_style("white")
     return (
         Line2D,
+        build_emission_weights_df,
         build_trial_df,
         build_views,
         custom_boxplot,
@@ -1461,17 +1462,13 @@ def _(
     pairwise_names_b,
     pairwise_views_a,
     pairwise_views_b,
+    build_emission_weights_df,
 ):
     def _emission_summary(_adapter, _views, _arrays_store, _names):
         _plots = _adapter.get_plots()
-        if _adapter.num_classes == 2:
-            return _plots.plot_emission_weights_summary(views=_views, K=pairwise_K)
         return _plots.plot_emission_weights_summary(
-            arrays_store=_arrays_store,
-            state_labels={s: v.state_name_by_idx for s, v in _views.items()},
-            names=_names,
+            build_emission_weights_df(_views),
             K=pairwise_K,
-            subjects=pairwise_common_subjects,
         )
 
     try:
@@ -1988,6 +1985,7 @@ def _(
     ui_viz_K,
     ui_viz_alias,
     ui_viz_model,
+    build_emission_weights_df,
 ):
     mo.stop(
         not ui_viz_alias.value,
@@ -2014,19 +2012,10 @@ def _(
     _plots = _adapter_viz.get_plots()
 
     try:
-        if _adapter_viz.num_classes == 2:
-            _fig_ag, _fig_cls = _plots.plot_emission_weights(
-                views=_views,
-                K=_K,
-            )
-        else:
-            _fig_ag, _fig_cls = _plots.plot_emission_weights(
-                arrays_store=_arrays_store,
-                state_labels={s: v.state_name_by_idx for s, v in _views.items()},
-                names=_names,
-                K=_K,
-                subjects=list(_views.keys()),
-            )
+        _fig_ag, _fig_cls = _plots.plot_emission_weights(
+            build_emission_weights_df(_views),
+            K=_K,
+        )
         _viz_output = mo.vstack([
             mo.md(f"**{_kind}  K={_K}**  —  {ui_viz_alias.value}"),
             _fig_ag,

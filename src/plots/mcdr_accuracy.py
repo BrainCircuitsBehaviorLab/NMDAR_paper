@@ -20,7 +20,7 @@ from glmhmmt.postprocess import (
     build_transition_matrix_by_subject_payload,
     build_transition_matrix_payload,
 )
-from glmhmmt.model_plots import (
+from glmhmmt.model_plotting.legacy import (
     _state_color,
     plot_posterior_probs,
     plot_change_triggered_posteriors_by_subject,

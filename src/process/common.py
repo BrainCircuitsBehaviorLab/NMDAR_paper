@@ -228,26 +228,36 @@ def _attach_stim_x_delay_one_hot_sum(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _gaussian_kernel_1d(sigma_bins: float) -> np.ndarray:
-    radius = max(1, int(np.ceil(4.0 * sigma_bins)))
-    x = np.arange(-radius, radius + 1, dtype=float)
-    kernel = np.exp(-(x**2) / (2.0 * sigma_bins**2))
-    return kernel / kernel.sum()
-
-
-def _smooth_2d(values: np.ndarray, *, sigma_bins: float) -> np.ndarray:
     if sigma_bins <= 0:
-        return values
-    kernel = _gaussian_kernel_1d(sigma_bins)
+        return np.ones(1, dtype=float)
+    n_conv_bins = 4.0 * float(sigma_bins)
+    x = np.arange(-n_conv_bins, n_conv_bins + 1.0, 1.0, dtype=float)
+    return np.exp(-(x**2) / (2.0 * sigma_bins**2))
 
-    def _same_length_convolve(row: np.ndarray) -> np.ndarray:
+
+def _smooth_2d(
+    values: np.ndarray,
+    *,
+    sigma_x_bins: float,
+    sigma_y_bins: float,
+) -> np.ndarray:
+    if sigma_x_bins <= 0 and sigma_y_bins <= 0:
+        return values
+
+    def _same_length_convolve(row: np.ndarray, kernel: np.ndarray) -> np.ndarray:
         convolved = np.convolve(row, kernel, mode="same")
         if convolved.shape[0] == row.shape[0]:
             return convolved
         start = (convolved.shape[0] - row.shape[0]) // 2
         return convolved[start : start + row.shape[0]]
 
-    out = np.apply_along_axis(_same_length_convolve, 0, values)
-    out = np.apply_along_axis(_same_length_convolve, 1, out)
+    out = values
+    if sigma_x_bins > 0:
+        kernel_x = _gaussian_kernel_1d(sigma_x_bins)
+        out = np.apply_along_axis(_same_length_convolve, 0, out, kernel_x)
+    if sigma_y_bins > 0:
+        kernel_y = _gaussian_kernel_1d(sigma_y_bins)
+        out = np.apply_along_axis(_same_length_convolve, 1, out, kernel_y)
     return out
 
 
@@ -278,7 +288,7 @@ def integration_map_2d(
     x_edges=None,
     y_edges=None,
 ) -> dict | None:
-    """Return a smoothed 2D map of mean values over x/y bins."""
+    """Return a MATLAB-style smoothed 2D integration map over x/y bins."""
     x = pd.to_numeric(pd.Series(x), errors="coerce").to_numpy(dtype=float)
     y = pd.to_numeric(pd.Series(y), errors="coerce").to_numpy(dtype=float)
     values = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(dtype=float)
@@ -292,7 +302,7 @@ def integration_map_2d(
     values = values[mask]
 
     if bnd is None and (x_edges is None or y_edges is None):
-        bnd = float(np.nanpercentile(np.abs(np.concatenate([x, y])), 98.0))
+        bnd = float(np.nanmax(np.abs(np.concatenate([x, y]))))
     if bnd is not None and (not np.isfinite(bnd) or bnd <= 0):
         return None
 
@@ -312,19 +322,62 @@ def integration_map_2d(
     if x_edges.size < 3 or y_edges.size < 3:
         return None
 
-    weighted_sum, x_edges, y_edges = np.histogram2d(x, y, bins=(x_edges, y_edges), weights=values)
-    counts, _, _ = np.histogram2d(x, y, bins=(x_edges, y_edges))
-
     x_step = float(np.nanmedian(np.diff(x_edges)))
     y_step = float(np.nanmedian(np.diff(y_edges)))
-    smooth_step = min(x_step, y_step)
+    if x_step <= 0 or y_step <= 0:
+        return None
 
     if sigma is None:
-        sigma = float(default_sigma_dx) * smooth_step
-    sigma_bins = float(sigma) / smooth_step if smooth_step > 0 else 0.0
+        sigma_x = float(default_sigma_dx) * x_step
+        sigma_y = float(default_sigma_dx) * y_step
+    else:
+        sigma_x = float(sigma)
+        sigma_y = float(sigma)
+    if sigma_x < 0 or sigma_y < 0:
+        return None
 
-    weighted_sum = _smooth_2d(weighted_sum, sigma_bins=sigma_bins)
-    counts = _smooth_2d(counts, sigma_bins=sigma_bins)
+    def _extended_axis(base_edges: np.ndarray, step: float, axis_sigma: float):
+        n_conv = 4.0 * axis_sigma
+        boundaries = np.arange(
+            float(base_edges[0] - n_conv),
+            float(base_edges[-1] + n_conv) + step * 0.5,
+            step,
+            dtype=float,
+        )
+        hist_edges = np.concatenate(([-np.inf], boundaries, [np.inf]))
+        centers = np.concatenate(([boundaries[0] - step / 2.0], boundaries + step / 2.0))
+        keep = (centers > base_edges[0]) & (centers < base_edges[-1])
+        return hist_edges, centers, keep
+
+    x_hist_edges, x_centers_full, x_keep = _extended_axis(x_edges, x_step, sigma_x)
+    y_hist_edges, y_centers_full, y_keep = _extended_axis(y_edges, y_step, sigma_y)
+
+    weighted_sum, _, _ = np.histogram2d(
+        x,
+        y,
+        bins=(x_hist_edges, y_hist_edges),
+        weights=values,
+    )
+    counts, _, _ = np.histogram2d(x, y, bins=(x_hist_edges, y_hist_edges))
+
+    sigma_x_bins = sigma_x / x_step if x_step > 0 else 0.0
+    sigma_y_bins = sigma_y / y_step if y_step > 0 else 0.0
+
+    weighted_sum = _smooth_2d(
+        weighted_sum,
+        sigma_x_bins=sigma_x_bins,
+        sigma_y_bins=sigma_y_bins,
+    )
+    counts = _smooth_2d(
+        counts,
+        sigma_x_bins=sigma_x_bins,
+        sigma_y_bins=sigma_y_bins,
+    )
+
+    weighted_sum = weighted_sum[np.ix_(x_keep, y_keep)]
+    counts = counts[np.ix_(x_keep, y_keep)]
+    x_centers = x_centers_full[x_keep]
+    y_centers = y_centers_full[y_keep]
 
     mean_map = np.divide(
         weighted_sum,
@@ -332,20 +385,21 @@ def integration_map_2d(
         out=np.full_like(weighted_sum, np.nan, dtype=float),
         where=counts > 1e-9,
     )
-    if fill_empty:
-        mean_map = _fill_nan_grid(mean_map)
 
     return {
         "map": mean_map,
         "n_datapoints": counts,
         "x_edges": x_edges,
         "y_edges": y_edges,
-        "x_centers": (x_edges[:-1] + x_edges[1:]) / 2.0,
-        "y_centers": (y_edges[:-1] + y_edges[1:]) / 2.0,
+        "x_centers": x_centers,
+        "y_centers": y_centers,
         "dx": dx,
         "bnd": bnd,
         "sigma": sigma,
-        "sigma_bins": sigma_bins,
+        "sigma_x": sigma_x,
+        "sigma_y": sigma_y,
+        "sigma_x_bins": sigma_x_bins,
+        "sigma_y_bins": sigma_y_bins,
     }
 
 

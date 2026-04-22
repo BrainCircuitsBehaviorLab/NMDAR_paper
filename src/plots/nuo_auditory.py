@@ -49,7 +49,7 @@ from glmhmmt.postprocess import (
     build_transition_matrix_payload,
     build_weights_boxplot_payload,
 )
-from glmhmmt.model_plots import (
+from glmhmmt.model_plotting.legacy import (
     norm_ll as _norm_ll,
     plot_binary_emission_weights as _plot_binary_emission_weights,
     plot_binary_emission_weights_by_subject as _plot_binary_emission_weights_by_subject,

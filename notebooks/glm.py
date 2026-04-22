@@ -44,9 +44,20 @@ def _():
         build_weights_boxplot_payload,
     )
     from glmhmmt.plots import plot_feature_boxplot, plot_weights_boxplot
-    from glmhmmt.runtime import configure_paths, get_runtime_paths
+    from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import get_state_color
+    from src.process import MCDR as process_mcdr
+    from src.process import two_afc as process_two_afc
+    from src.process import two_afc_delay as process_two_afc_delay
+    from src.process.common import add_choice_lag_summary_regressor
+
+    def prepare_predictions_df(task_name, df):
+        if task_name == "MCDR":
+            return process_mcdr.prepare_predictions_df(df, cfg=load_app_config())
+        if task_name == "2AFC_delay":
+            return process_two_afc_delay.prepare_predictions_df(df)
+        return process_two_afc.prepare_predictions_df(df)
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
@@ -55,6 +66,7 @@ def _():
         CoefficientEditorWidget,
         ModelCfg,
         ModelManagerWidget,
+        add_choice_lag_summary_regressor,
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
         build_editor_payload,
@@ -75,6 +87,7 @@ def _():
         plot_feature_boxplot,
         plot_weights_boxplot,
         plt,
+        prepare_predictions_df,
         resolve_selected_model_id,
         select_subject_behavior_df,
         sns,
@@ -893,7 +906,7 @@ def _(
     _mcdr_mode = ui_mcdr_one_hot_mode.value if task_name == "MCDR" else "folded"
 
     _fig_by_subject = plots.plot_emission_weights_by_subject(
-        views=views_sel,
+        _weights_df_sel,
         K=K,
     )
 
@@ -1082,7 +1095,14 @@ def _(mo, pl, selected, trial_df):
 
 
 @app.cell
-def _(adapter, plots, trial_df_sel, views_sel):
+def _(
+    adapter,
+    add_choice_lag_summary_regressor,
+    prepare_predictions_df,
+    task_name,
+    trial_df_sel,
+    views_sel,
+):
     _choice_lag_cols = []
     for _view in views_sel.values():
         for _feat in list(getattr(_view, "feat_names", []) or []):
@@ -1093,8 +1113,8 @@ def _(adapter, plots, trial_df_sel, views_sel):
     if not _choice_lag_cols:
         _choice_lag_cols = adapter.choice_lag_cols(trial_df_sel)
 
-    plot_df_all = plots.prepare_predictions_df(trial_df_sel)
-    plot_df_all = plots.add_choice_lag_summary_regressor(
+    plot_df_all = prepare_predictions_df(task_name, trial_df_sel)
+    plot_df_all = add_choice_lag_summary_regressor(
         plot_df_all,
         choice_lag_cols=_choice_lag_cols,
     )
@@ -1447,6 +1467,7 @@ def _(
     np,
     plot_right_by_regressor_simple,
     plots,
+    prepare_predictions_df,
     save_plot,
     subject,
     task_name,
@@ -1481,7 +1502,7 @@ def _(
     ]
     if not _choice_lag_cols:
         _choice_lag_cols = adapter.choice_lag_cols(_trial_df_tweaked)
-    _plot_df_tweaked = plots.prepare_predictions_df(_trial_df_tweaked)
+    _plot_df_tweaked = prepare_predictions_df(task_name, _trial_df_tweaked)
     _plot_df_tweaked = add_choice_lag_summary_regressor(
         _plot_df_tweaked,
         choice_lag_cols=_choice_lag_cols,
