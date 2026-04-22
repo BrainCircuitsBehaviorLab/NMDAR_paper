@@ -17,7 +17,7 @@ def _():
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
-    return Path, get_adapter, mo, pl, sns
+    return Path, get_adapter, make_plot_saver, mo, pl, plt, sns
 
 
 @app.cell
@@ -25,6 +25,19 @@ def _(Path):
     data_path = Path(__file__).parents[1] / "data/processed"
     data_path
     return (data_path,)
+
+
+@app.cell
+def _(Path, make_plot_saver, mo):
+    project_path = Path(__file__).resolve().parents[1]
+    save_plot = make_plot_saver(
+        mo,
+        results_dir=project_path / "results",
+        config_path=project_path / "config.toml",
+        task_name="figure1",
+        model_id="behavior",
+    )
+    return (save_plot,)
 
 
 @app.cell
@@ -52,19 +65,76 @@ def _(mo):
 
 
 @app.cell
-def _(MCDR, df_2AFC, df_2AFC_delay, df_MCDR, mo, sns, two_afc, two_afc_delay):
+def _(
+    MCDR,
+    df_2AFC,
+    df_2AFC_delay,
+    df_MCDR,
+    mo,
+    save_plot,
+    sns,
+    two_afc,
+    two_afc_delay,
+):
     sns.set_context("paper")
     MCDR_plots = MCDR.get_plots()
     two_afc_plots = two_afc.get_plots()
     two_afc_delay_plots = two_afc_delay.get_plots()
+    _figsize = (3.0, 3.0)
+    _fig_mcdr = MCDR_plots.plot_accuracy_by_difficulty(df_MCDR, figsize=_figsize, title="MCDR")
+    _fig_2afc = two_afc_plots.plot_accuracy_by_stimulus(df_2AFC, figsize=_figsize, title="2AFC")
+    _fig_delay = two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay, figsize=_figsize, title="2AFC delay")
     mo.hstack(
         [
-            MCDR_plots.plot_accuracy_by_difficulty(df_MCDR),
-            two_afc_plots.plot_accuracy_by_stimulus(df_2AFC),
-            two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay),
+            mo.vstack(
+                [
+                    _fig_mcdr,
+                    save_plot(_fig_mcdr, "MCDR accuracy", stem="mcdr_accuracy"),
+                ],
+                align="center",
+            ),
+            mo.vstack(
+                [
+                    _fig_2afc,
+                    save_plot(_fig_2afc, "2AFC accuracy", stem="two_afc_accuracy"),
+                ],
+                align="center",
+            ),
+            mo.vstack(
+                [
+                    _fig_delay,
+                    save_plot(_fig_delay, "2AFC delay accuracy", stem="two_afc_delay_accuracy"),
+                ],
+                align="center",
+            ),
         ],
         align="center",
     )
+    return MCDR_plots, two_afc_delay_plots, two_afc_plots
+
+
+@app.cell
+def _(
+    MCDR_plots,
+    df_2AFC,
+    df_2AFC_delay,
+    df_MCDR,
+    plt,
+    sns,
+    two_afc_delay_plots,
+    two_afc_plots,
+):
+    fig, axs = plt.subplot_mosaic(
+        [["mcdr", "two_afc", "delay"]],
+        figsize=(6, 2),
+        constrained_layout=True,
+        sharey=True,
+    )
+    MCDR_plots.plot_accuracy_by_difficulty(df_MCDR, ax=axs["mcdr"], title="MCDR")
+    two_afc_plots.plot_accuracy_by_stimulus(df_2AFC, ax=axs["two_afc"], title="2AFC")
+    two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay, ax=axs["delay"], title="2AFC delay")
+    sns.despine(fig=fig)
+    fig
     return
 
 

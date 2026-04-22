@@ -81,9 +81,8 @@ def plot_transition_matrix_by_subject(
     )
 
 
-def make_single_panel_figure(*, extra_right_legend: bool = False):
-    fig, ax = plt.subplots(figsize=(3.0, 3.0), constrained_layout=True)
-    # ax.set_box_aspect(1)
+def make_single_panel_figure(*, extra_right_legend: bool = False, figsize=(3.0, 3.0)):
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
     return fig, ax
 
 
@@ -94,12 +93,14 @@ def plot_empirical_accuracy_curve(
     accuracy_col: str,
     subject_col: str = "subject",
     x_order: list | None = None,
-    x_tick_labels: list | None = None,
+    x_tick_labels: list | dict | None = None,
     xlabel: str,
     title: str,
     baseline: float,
     color: str = "#2b7bba",
     invert_x: bool = False,
+    ax=None,
+    figsize=(3.0, 3.0),
 ):
     if isinstance(df_like, pd.DataFrame):
         df = df_like.copy()
@@ -116,7 +117,10 @@ def plot_empirical_accuracy_curve(
     df["_accuracy"] = pd.to_numeric(df[accuracy_col], errors="coerce")
     df = df[df[x_col].notna() & df["_accuracy"].notna()].copy()
     if df.empty:
-        fig, ax = make_single_panel_figure()
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+        else:
+            fig = ax.figure
         ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
         ax.axis("off")
         return fig
@@ -142,7 +146,10 @@ def plot_empirical_accuracy_curve(
     if x_order is not None:
         summary = summary[summary[x_col].isin(x_order)].copy()
         if summary.empty:
-            fig, ax = make_single_panel_figure()
+            if ax is None:
+                fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+            else:
+                fig = ax.figure
             ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
             ax.axis("off")
             return fig
@@ -151,6 +158,8 @@ def plot_empirical_accuracy_curve(
         x = np.arange(len(summary), dtype=float)
         if x_tick_labels is None:
             tick_labels = [str(value) for value in summary[x_col]]
+        elif isinstance(x_tick_labels, dict):
+            tick_labels = [x_tick_labels.get(value, str(value)) for value in summary[x_col]]
         else:
             label_map = dict(zip(x_order, x_tick_labels, strict=False))
             tick_labels = [label_map.get(value, str(value)) for value in summary[x_col]]
@@ -158,23 +167,31 @@ def plot_empirical_accuracy_curve(
         summary["_x_numeric"] = pd.to_numeric(summary[x_col], errors="coerce")
         summary = summary.dropna(subset=["_x_numeric"]).sort_values("_x_numeric")
         if summary.empty:
-            fig, ax = make_single_panel_figure()
+            if ax is None:
+                fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+            else:
+                fig = ax.figure
             ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
             ax.axis("off")
             return fig
         x = summary["_x_numeric"].to_numpy(dtype=float)
         tick_labels = []
         for val in x:
-            if np.isclose(val, 0.1):
+            if isinstance(x_tick_labels, dict) and val in x_tick_labels:
+                tick_labels.append(x_tick_labels[val])
+            elif isinstance(x_tick_labels, dict) and int(val) in x_tick_labels:
+                tick_labels.append(x_tick_labels[int(val)])
+            elif np.isclose(val, 0.1):
                 tick_labels.append("0")
             else:
                 tick_labels.append(f"{val:g}")
 
     summary["sem"] = summary["std"].fillna(0.0) / np.sqrt(summary["n"].clip(lower=1))
 
-    fig, ax = make_single_panel_figure()
-    if invert_x:
-        ax.invert_xaxis()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    else:
+        fig = ax.figure
     ax.errorbar(
         x,
         summary["mean"].to_numpy(dtype=float),
@@ -199,6 +216,8 @@ def plot_empirical_accuracy_curve(
     )
     ax.set_xticks(x, labels=tick_labels)
     ax.axhspan(0.0, baseline, color="gray", alpha=0.08, zorder=0)
+    if invert_x:
+        ax.invert_xaxis()
     
     sns.despine(ax=ax)
     return fig

@@ -1435,7 +1435,7 @@ SIGNED_DELAY_ORDER = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
 SIGNED_DELAY_LABELS = ["0", "-1", "-3", "-10", "10", "3", "1", "0"]
 
 
-def plot_accuracy_by_delay(plot_df):
+def plot_accuracy_by_delay(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
     df_pd = to_pandas_df(plot_df)
     
     return plot_empirical_accuracy_curve(
@@ -1444,9 +1444,11 @@ def plot_accuracy_by_delay(plot_df):
         invert_x=False,
         accuracy_col="hit",
         xlabel="Delay",
-        title="2AFC delay",
+        title=title,
         baseline=0.5,
         color="#1f77b4",
+        ax=ax,
+        figsize=figsize,
     )
 
 

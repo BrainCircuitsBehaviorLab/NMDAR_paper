@@ -1550,7 +1550,7 @@ _binned_feature_summary = lambda df, feature_col, choice_col, pred_col, subj_col
 _attach_rank_posterior_cols = attach_rank_posterior_cols
 _attach_rank_state_model_cols = attach_rank_state_model_cols
 
-def plot_accuracy_by_stimulus(plot_df):
+def plot_accuracy_by_stimulus(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
     df_pd = (
         plot_df.to_pandas().copy()
         if hasattr(plot_df, "to_pandas")
@@ -1569,9 +1569,11 @@ def plot_accuracy_by_stimulus(plot_df):
         x_tick_labels={0: "0", 2: "2", 4: "4", 8: "8", 20: "20"},
         accuracy_col="Hit",
         xlabel=xlabel,
-        title="2AFC",
+        title=title,
         baseline=0.5,
         color="#2b7bba",
+        ax=ax,
+        figsize=figsize,
     )
 
 

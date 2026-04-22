@@ -651,7 +651,7 @@ from src.plots.common import (
 )
 
 
-def plot_accuracy_by_difficulty(df):
+def plot_accuracy_by_difficulty(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
     df_pd = df.to_pandas().copy() if hasattr(df, "to_pandas") else pd.DataFrame(df).copy()
     if "ttype_c" not in df_pd.columns and "ttype_n" in df_pd.columns:
         ttype_map = {float(key): value for key, value in cfg["encoding"]["ttype"].items()}
@@ -666,9 +666,11 @@ def plot_accuracy_by_difficulty(df):
         x_order=cfg["plots"]["ttype"]["order"],
         x_tick_labels=cfg["plots"]["ttype"]["labels"],
         xlabel="Trial difficulty",
-        title="MCDR",
+        title=title,
         baseline=1 / 3,
         color="#7B3F98",
+        ax=ax,
+        figsize=figsize,
     )
 
 
