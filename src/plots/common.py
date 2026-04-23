@@ -86,17 +86,19 @@ def make_single_panel_figure(*, extra_right_legend: bool = False, figsize=(3.0, 
     return fig, ax
 
 
-def plot_empirical_accuracy_curve(
+def plot_mean_over_data(
     df_like,
     *,
     x_col: str,
-    accuracy_col: str,
+    y_col: str,
     subject_col: str = "subject",
     x_order: list | None = None,
     x_tick_labels: list | dict | None = None,
     xlabel: str,
+    ylabel: str = "Value",
     title: str,
     baseline: float,
+    baseline_area: bool = True,
     color: str = "#2b7bba",
     invert_x: bool = False,
     ax=None,
@@ -111,34 +113,35 @@ def plot_empirical_accuracy_curve(
 
     if x_col not in df.columns:
         raise ValueError(f"Missing x column {x_col!r}.")
-    if accuracy_col not in df.columns:
-        raise ValueError(f"Missing accuracy column {accuracy_col!r}.")
+    if y_col not in df.columns:
+        raise ValueError(f"Missing y column {y_col!r}.")
 
-    df["_accuracy"] = pd.to_numeric(df[accuracy_col], errors="coerce")
-    df = df[df[x_col].notna() & df["_accuracy"].notna()].copy()
+    df["_y"] = pd.to_numeric(df[y_col], errors="coerce")
+    df = df[df[x_col].notna() & df["_y"].notna()].copy()
+
     if df.empty:
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
         else:
             fig = ax.figure
-        ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
+        ax.text(0.5, 0.5, "No valid data", ha="center", va="center")
         ax.axis("off")
         return fig
 
     if subject_col in df.columns:
         subject_summary = (
-            df.groupby([subject_col, x_col], observed=True)["_accuracy"]
+            df.groupby([subject_col, x_col], observed=True)["_y"]
             .mean()
-            .reset_index(name="subject_accuracy")
+            .reset_index(name="subject_mean")
         )
         summary = (
-            subject_summary.groupby(x_col, observed=True)["subject_accuracy"]
+            subject_summary.groupby(x_col, observed=True)["subject_mean"]
             .agg(mean="mean", std="std", n="count")
             .reset_index()
         )
     else:
         summary = (
-            df.groupby(x_col, observed=True)["_accuracy"]
+            df.groupby(x_col, observed=True)["_y"]
             .agg(mean="mean", std="std", n="count")
             .reset_index()
         )
@@ -150,7 +153,7 @@ def plot_empirical_accuracy_curve(
                 fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
             else:
                 fig = ax.figure
-            ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
+            ax.text(0.5, 0.5, "No valid data", ha="center", va="center")
             ax.axis("off")
             return fig
         summary[x_col] = pd.Categorical(summary[x_col], categories=x_order, ordered=True)
@@ -171,7 +174,7 @@ def plot_empirical_accuracy_curve(
                 fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
             else:
                 fig = ax.figure
-            ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
+            ax.text(0.5, 0.5, "No valid data", ha="center", va="center")
             ax.axis("off")
             return fig
         x = summary["_x_numeric"].to_numpy(dtype=float)
@@ -186,6 +189,7 @@ def plot_empirical_accuracy_curve(
             else:
                 tick_labels.append(f"{val:g}")
 
+
     summary["sem"] = summary["std"].fillna(0.0) / np.sqrt(summary["n"].clip(lower=1))
 
     if ax is None:
@@ -199,26 +203,26 @@ def plot_empirical_accuracy_curve(
         fmt="o-",
         color=color,
         ecolor=color,
-        # elinewidth=1.0,
-        # linewidth=2.0,
-        # markersize=4,
         capsize=0,
     )
-    
+
     ax.axhline(baseline, color="gray", ls="--")
+    if baseline_area:
+        ax.axhspan(0.0, baseline, color="gray", alpha=0.1, zorder=0)
     ax.set_title(title)
     ax.set_xlabel(xlabel)
-    ax.set_ylabel("Accuracy")
+    ax.set_ylabel(ylabel)
+
     ax.set_ylim(0.0, 1.0)
     ax.set_yticks([0.0, baseline, 1.0])
     ax.yaxis.set_major_formatter(
         FuncFormatter(lambda y, _: f"{y:.2f}".rstrip("0").rstrip("."))
     )
     ax.set_xticks(x, labels=tick_labels)
-    ax.axhspan(0.0, baseline, color="gray", alpha=0.1, zorder=0)
+
     if invert_x:
         ax.invert_xaxis()
-    
+
     sns.despine(ax=ax)
     return fig
 

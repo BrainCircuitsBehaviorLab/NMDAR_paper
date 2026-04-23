@@ -19,15 +19,15 @@ def _():
 
     from src.utils import fig_size
 
-    return Path, fig_size, get_adapter, make_plot_saver, mo, os, pl, plt, sns
+    return Path, fig_size, get_adapter, make_plot_saver, mo, pl, plt, sns
 
 
 @app.cell
-def _(os, plt, sns):
+def _(sns):
     # Set style
     sns.set_theme(style='ticks', context='notebook')
-    style_path = os.path.expanduser('~/PycharmProjects/alexis_style.mplstyle')
-    plt.style.use(style_path)
+    # style_path = os.path.expanduser('~/PycharmProjects/alexis_style.mplstyle')
+    # plt.style.use(style_path)
     return
 
 
@@ -66,8 +66,8 @@ def _(MCDR, data_path, pl, two_afc, two_afc_delay):
 
 
 @app.cell
-def _(df_2AFC):
-    df_2AFC
+def _(df_2AFC_delay):
+    df_2AFC_delay
     return
 
 
@@ -89,7 +89,7 @@ def _(MCDR, two_afc, two_afc_delay):
 
 @app.cell
 def _(MCDR_plots, df_MCDR, fig_size, plt):
-    MCDR_plots.plot_accuracy_by_difficulty(df_MCDR, figsize=fig_size(n_cols=3), title='')
+    MCDR_plots.plot_accuracy(df_MCDR, figsize=fig_size(n_cols=3), title='')
     plt.savefig('acc_vs_difficulty.svg')
     plt.show()
     return
@@ -97,7 +97,7 @@ def _(MCDR_plots, df_MCDR, fig_size, plt):
 
 @app.cell
 def _(df_2AFC, fig_size, plt, two_afc_plots):
-    two_afc_plots.plot_accuracy_by_stimulus(df_2AFC, figsize=fig_size(n_cols=3), title='')
+    two_afc_plots.plot_accuracy(df_2AFC, figsize=fig_size(n_cols=3), title='')
     plt.savefig('acc_vs_ild.svg')
     plt.show()
     return
@@ -105,9 +105,38 @@ def _(df_2AFC, fig_size, plt, two_afc_plots):
 
 @app.cell
 def _(df_2AFC_delay, fig_size, plt, two_afc_delay_plots):
-    two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay, figsize=fig_size(n_cols=3), title='')
+    two_afc_delay_plots.plot_accuracy(df_2AFC_delay, figsize=fig_size(n_cols=3), title='')
     plt.savefig('acc_vs_delay.svg')
     plt.show()
+    return
+
+
+@app.cell
+def _(MCDR_plots, df_MCDR, fig_size, plt):
+    MCDR_plots.plot_rb(df_MCDR, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('MCDR_rb.svg')
+    plt.show()
+    return
+
+
+@app.cell
+def _(df_2AFC_delay, fig_size, plt, two_afc_delay_plots):
+    two_afc_delay_plots.plot_rb(df_2AFC_delay, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('2ADC_rb.svg')
+    plt.show()
+    return
+
+
+@app.cell
+def _(df_2AFC, fig_size, plt, two_afc_plots):
+    two_afc_plots.plot_rb(df_2AFC, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('2AFC_rb.svg')
+    plt.show()
+    return
+
+
+@app.cell
+def _():
     return
 
 
