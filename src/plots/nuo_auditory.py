@@ -79,6 +79,22 @@ from glmhmmt.model_plotting.legacy import (
 )
 from glmhmmt.views import get_state_color, get_state_palette
 from src.process.nuo_auditory import _stim_bin_centers, _stim_param_weight_map, EMISSION_REGRESSOR_LABELS
+from src.process.common import (
+    assign_quantile_bins,
+    display_regressor_name as _display_regressor_name,
+    p_right_label,
+    pick_choice_history_regressor as _pick_choice_history_regressor,
+    prepare_evidence_curve,
+    prepare_right_integration_maps,
+    to_pandas_df,
+)
+from src.plots.common import (
+    apply_axis_style,
+    make_single_panel_figure,
+    plot_grouped_summary,
+    plot_integration_map_panels,
+    plot_simple_summary,
+)
 
 _SESSION_COL = "session"
 _SORT_COL = "trial_idx"
@@ -1679,9 +1695,414 @@ def prepare_predictions_df(df_pred):
         return df
 
 
+def _prepare_compat_plot_df(plot_df) -> pd.DataFrame:
+    df_pd = to_pandas_df(plot_df)
+    if {"correct_bool", "p_model_correct"} - set(df_pd.columns):
+        df_pd = prepare_predictions_df(df_pd)
+        df_pd = to_pandas_df(df_pd)
+
+    df_pd = df_pd.copy()
+    if "pR" not in df_pd.columns:
+        if "p_pred" in df_pd.columns:
+            df_pd["pR"] = 1.0 - pd.to_numeric(df_pd["p_pred"], errors="coerce")
+        elif "pL" in df_pd.columns:
+            df_pd["pR"] = 1.0 - pd.to_numeric(df_pd["pL"], errors="coerce")
+    if "pL" not in df_pd.columns and "pR" in df_pd.columns:
+        df_pd["pL"] = 1.0 - pd.to_numeric(df_pd["pR"], errors="coerce")
+    return df_pd
+
+
+def _ensure_previous_choice_column(df_pd: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
+    df = df_pd.copy()
+    group_cols = [col for col in ("subject", _SESSION_COL) if col in df.columns]
+    sort_cols = [col for col in ("subject", _SESSION_COL, _SORT_COL, "trial") if col in df.columns]
+    if group_cols and sort_cols and "response" in df.columns:
+        df = df.sort_values(sort_cols).copy()
+        df["_prev_choice_plot"] = df.groupby(group_cols, observed=True)["response"].shift(1)
+        return df, "_prev_choice_plot"
+    if "prev_choice" in df.columns:
+        return df, "prev_choice"
+    return df, None
+
+
+def _build_simple_summary_from_feature(
+    df_pd: pd.DataFrame,
+    *,
+    feature_col: str,
+    data_col: str,
+    model_col: str,
+    subj_col: str = "subject",
+    n_bins: int = 10,
+) -> tuple[pd.DataFrame | None, dict]:
+    summary = _binned_feature_summary(
+        df_pd,
+        feature_col=feature_col,
+        choice_col=data_col,
+        pred_col=model_col,
+        subj_col=subj_col,
+        n_bins=n_bins,
+    )
+    if summary is None:
+        return None, {}
+
+    subj_agg, _ = summary
+    overall = (
+        subj_agg.groupby("_x_bin", observed=True)
+        .agg(
+            x_center=("center", "median"),
+            data_mean=("data_mean", "mean"),
+            data_std=("data_mean", "std"),
+            data_count=("data_mean", "count"),
+            model_mean=("model_mean", "mean"),
+            model_std=("model_mean", "std"),
+        )
+        .reset_index(drop=True)
+        .sort_values("x_center")
+    )
+    overall["data_sem"] = overall["data_std"].fillna(0.0) / np.sqrt(overall["data_count"].clip(lower=1))
+    overall["model_sem"] = overall["model_std"].fillna(0.0) / np.sqrt(overall["data_count"].clip(lower=1))
+    return overall, {}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # High-level API used by the task plot facade
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def display_regressor_name(regressor_col: str) -> str:
+    return EMISSION_REGRESSOR_LABELS.get(regressor_col, _display_regressor_name(regressor_col))
+
+
+def pick_choice_history_regressor(regressor_options: list[str]) -> str | None:
+    return _pick_choice_history_regressor(regressor_options)
+
+
+def plot_right_by_regressor_simple(
+    plot_df,
+    *,
+    regressor_col: str,
+    title: str | None = None,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+    **plot_kwargs,
+):
+    df_pd = _prepare_compat_plot_df(plot_df)
+    if regressor_col not in df_pd.columns:
+        return None
+
+    df_pd = df_pd.copy()
+    df_pd["_response_right"] = pd.to_numeric(df_pd[_RESPONSE_COL], errors="coerce")
+    df_pd["_p_right_model"] = pd.to_numeric(df_pd["pR"], errors="coerce")
+
+    summary, _ = _build_simple_summary_from_feature(
+        df_pd,
+        feature_col=regressor_col,
+        data_col="_response_right",
+        model_col="_p_right_model",
+        subj_col="subject",
+        n_bins=n_bins,
+    )
+    if summary is None or summary.empty:
+        return None
+
+    meta = {
+        "xlabel": xlabel or display_regressor_name(regressor_col),
+        "ylabel": p_right_label(),
+        "baseline": 0.5,
+    }
+    ax = plot_simple_summary(summary, meta=meta, **plot_kwargs)
+    if ax is not None and title is not None:
+        ax.set_title(title)
+    return ax
+
+
+def plot_right_by_regressor(
+    plot_df,
+    *,
+    regressor_col: str,
+    title: str | None = None,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+    **plot_kwargs,
+):
+    df_pd = _prepare_compat_plot_df(plot_df)
+    if regressor_col not in df_pd.columns or _EVIDENCE_COL not in df_pd.columns:
+        return plot_right_by_regressor_simple(
+            df_pd,
+            regressor_col=regressor_col,
+            title=title,
+            xlabel=xlabel,
+            n_bins=n_bins,
+            **plot_kwargs,
+        )
+
+    df_pd = df_pd.copy()
+    df_pd["_response_right"] = pd.to_numeric(df_pd[_RESPONSE_COL], errors="coerce")
+    df_pd["_p_right_model"] = pd.to_numeric(df_pd["pR"], errors="coerce")
+    df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
+    df_pd[_EVIDENCE_COL] = pd.to_numeric(df_pd[_EVIDENCE_COL], errors="coerce")
+    df_pd = df_pd.dropna(subset=[regressor_col, _EVIDENCE_COL, "_response_right", "_p_right_model"])
+    if df_pd.empty:
+        return None
+
+    line_labels, line_order = assign_quantile_bins(df_pd[_EVIDENCE_COL], max_bins=4)
+    if not line_order:
+        return plot_right_by_regressor_simple(
+            df_pd,
+            regressor_col=regressor_col,
+            title=title,
+            xlabel=xlabel,
+            n_bins=n_bins,
+            **plot_kwargs,
+        )
+    df_pd["_evidence_bin"] = line_labels
+    df_pd = df_pd[df_pd["_evidence_bin"].notna()].copy()
+    if df_pd.empty:
+        return None
+
+    x_summary = _binned_feature_summary(
+        df_pd,
+        feature_col=regressor_col,
+        choice_col="_response_right",
+        pred_col="_p_right_model",
+        subj_col="subject",
+        n_bins=n_bins,
+    )
+    if x_summary is None:
+        return None
+
+    if len(df_pd[regressor_col].unique()) <= max(6, n_bins):
+        df_pd["_x_bin"] = df_pd[regressor_col]
+        centers = (
+            df_pd.groupby("_x_bin", observed=True)[regressor_col]
+            .median()
+            .rename("x_center")
+            .reset_index()
+            .sort_values("x_center")
+        )
+    else:
+        df_pd["_x_bin"] = pd.qcut(df_pd[regressor_col], q=n_bins, duplicates="drop")
+        centers = (
+            df_pd.groupby("_x_bin", observed=True)[regressor_col]
+            .median()
+            .rename("x_center")
+            .reset_index()
+            .sort_values("x_center")
+        )
+
+    subj = (
+        df_pd.groupby(["_evidence_bin", "_x_bin", "subject"], observed=True)
+        .agg(
+            md=("_response_right", "mean"),
+            mm=("_p_right_model", "mean"),
+        )
+        .reset_index()
+        .merge(centers, on="_x_bin", how="left")
+    )
+    if subj.empty:
+        return None
+
+    summary = (
+        subj.groupby(["_evidence_bin", "_x_bin"], observed=True)
+        .agg(
+            x_center=("x_center", "median"),
+            md=("md", "mean"),
+            sd=("md", "std"),
+            nd=("md", "count"),
+            mm=("mm", "mean"),
+        )
+        .reset_index()
+        .sort_values(["_evidence_bin", "x_center"])
+    )
+    summary["sem"] = summary["sd"].fillna(0.0) / np.sqrt(summary["nd"].clip(lower=1))
+
+    fig, ax = make_single_panel_figure(
+        extra_right_legend=True,
+        ax=plot_kwargs.get("ax"),
+        figsize=plot_kwargs.get("figsize", (3.0, 3.0)),
+    )
+    meta = {
+        "xlabel": xlabel or display_regressor_name(regressor_col),
+        "ylabel": p_right_label(),
+        "baseline": 0.5,
+        "line_order": line_order,
+        "legend_title": "Evidence bin",
+        "legend_outside": True,
+    }
+    plot_grouped_summary(
+        ax,
+        summary,
+        line_group_col="_evidence_bin",
+        x_col="x_center",
+        meta=meta,
+    )
+    if title is not None:
+        ax.set_title(title)
+    apply_axis_style(ax, **({"xlabel": xlabel} if xlabel is not None else {}))
+    return ax
+
+
+def plot_binned_accuracy_figure(
+    plot_df,
+    *,
+    regressor_col: str,
+    **plot_kwargs,
+):
+    df_pd = _prepare_compat_plot_df(plot_df)
+    if regressor_col not in df_pd.columns or _EVIDENCE_COL not in df_pd.columns:
+        return None
+
+    reg_labels, reg_order = assign_quantile_bins(df_pd[regressor_col], max_bins=4)
+    if not reg_order:
+        return None
+
+    df_pd = df_pd.copy()
+    df_pd["_reg_bin"] = reg_labels
+    df_pd = df_pd[df_pd["_reg_bin"].notna()].copy()
+    if df_pd.empty:
+        return None
+
+    panels: list[tuple[str, pd.DataFrame, dict]] = []
+    for label in reg_order:
+        df_panel = df_pd[df_pd["_reg_bin"] == label].copy()
+        summary, meta = prepare_evidence_curve(
+            df_panel,
+            evidence_col=_EVIDENCE_COL,
+            data_col="correct_bool",
+            model_col="p_model_correct",
+            baseline=0.5,
+            xlabel="Evidence strength",
+            ylabel="Accuracy",
+        )
+        if summary is None or summary.empty:
+            continue
+        panels.append((label, summary, meta))
+
+    if not panels:
+        return None
+
+    figsize = plot_kwargs.get("figsize", (4.0 * len(panels), 4.0))
+    fig, axes = plt.subplots(1, len(panels), figsize=figsize, sharey=True, constrained_layout=True)
+    axes = np.atleast_1d(axes)
+    reg_label = display_regressor_name(regressor_col)
+
+    for ax, (panel_label, summary, meta) in zip(axes, panels, strict=False):
+        plot_simple_summary(summary, meta=meta, ax=ax)
+        ax.set_title(f"{reg_label} {panel_label}")
+
+    return fig, axes[: len(panels)]
+
+
+def plot_accuracy_by_total_evidence(
+    plot_df,
+    *,
+    adapter,
+    views: dict,
+    **plot_kwargs,
+):
+    _ = adapter, views
+    df_pd = _prepare_compat_plot_df(plot_df)
+    if df_pd.empty or "p_model_correct" not in df_pd.columns:
+        return None
+
+    correct_prob = pd.to_numeric(df_pd["p_model_correct"], errors="coerce").clip(1e-6, 1.0 - 1e-6)
+    df_pd = df_pd.copy()
+    df_pd["_fitted_total_evidence"] = np.log(correct_prob / (1.0 - correct_prob))
+    df_pd["_fitted_correct_prob"] = correct_prob
+
+    summary, meta = prepare_evidence_curve(
+        df_pd,
+        evidence_col="_fitted_total_evidence",
+        data_col="correct_bool",
+        model_col="_fitted_correct_prob",
+        baseline=0.5,
+        xlabel="Correct-vs-rest fitted evidence",
+        ylabel="Accuracy",
+    )
+    return plot_simple_summary(summary, meta=meta, **plot_kwargs)
+
+
+def plot_repeat_by_repeat_evidence(
+    plot_df,
+    *,
+    views: dict,
+    **plot_kwargs,
+):
+    _ = views
+    df_pd = _prepare_compat_plot_df(plot_df)
+    df_pd, prev_choice_col = _ensure_previous_choice_column(df_pd)
+    if prev_choice_col is None or "pL" not in df_pd.columns or "pR" not in df_pd.columns:
+        return None
+
+    df_pd = df_pd.copy()
+    prev_choice = pd.to_numeric(df_pd[prev_choice_col], errors="coerce")
+    response = pd.to_numeric(df_pd[_RESPONSE_COL], errors="coerce")
+    p_left = pd.to_numeric(df_pd["pL"], errors="coerce")
+    p_right = pd.to_numeric(df_pd["pR"], errors="coerce")
+    valid = np.isfinite(prev_choice) & np.isfinite(response) & np.isfinite(p_left) & np.isfinite(p_right)
+    df_pd = df_pd[valid].copy()
+    if df_pd.empty:
+        return None
+
+    prev_choice = pd.to_numeric(df_pd[prev_choice_col], errors="coerce")
+    response = pd.to_numeric(df_pd[_RESPONSE_COL], errors="coerce")
+    p_left = pd.to_numeric(df_pd["pL"], errors="coerce")
+    p_right = pd.to_numeric(df_pd["pR"], errors="coerce")
+    p_repeat = np.where(prev_choice > 0.5, p_right, p_left)
+    p_repeat = np.clip(p_repeat, 1e-6, 1.0 - 1e-6)
+
+    df_pd["_repeat_choice"] = (response == prev_choice).astype(float)
+    df_pd["_p_repeat_model"] = p_repeat
+    df_pd["_repeat_choice_evidence"] = np.log(p_repeat / (1.0 - p_repeat))
+
+    summary, meta = prepare_evidence_curve(
+        df_pd,
+        evidence_col="_repeat_choice_evidence",
+        data_col="_repeat_choice",
+        model_col="_p_repeat_model",
+        baseline=0.5,
+        xlabel="Fitted evidence for repeating choice",
+        ylabel="P(Repeat)",
+    )
+    return plot_simple_summary(summary, meta=meta, **plot_kwargs)
+
+
+def plot_right_integration_map(
+    plot_df,
+    *,
+    x_col: str | None = None,
+    y_col: str | None = None,
+    value_col: str | None = None,
+    include_model: bool = True,
+    bnd: float | None = None,
+    dx: float | None = None,
+    n_bins: int = 64,
+    sigma: float | None = None,
+    smooth: bool = True,
+    **plot_kwargs,
+):
+    df_pd = _prepare_compat_plot_df(plot_df)
+    panels, meta = prepare_right_integration_maps(
+        df_pd,
+        response_mode="pm1_or_prob",
+        pred_col="pR",
+        x_col=x_col,
+        y_col=y_col,
+        value_col=value_col,
+        include_model=include_model,
+        bnd=bnd,
+        dx=dx,
+        n_bins=n_bins,
+        sigma=sigma,
+        fill_empty=smooth,
+        default_sigma_dx=5.0,
+    )
+    return plot_integration_map_panels(
+        panels,
+        meta=meta,
+        interpolation=None,
+        **plot_kwargs,
+    )
 
 
 def plot_emission_weights_by_subject(

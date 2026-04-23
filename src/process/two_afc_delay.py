@@ -247,6 +247,14 @@ def _bias_hot_cols(columns: list[str]) -> list[str]:
     )
 
 
+def _is_bias_hot_col(col: str) -> bool:
+    return col.startswith(_BIAS_HOT_COL_PREFIX) and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+
+
+def _drop_unavailable_bias_hot_cols(cols: list[str], available_cols: set[str]) -> list[str]:
+    return [col for col in cols if col in available_cols or not _is_bias_hot_col(col)]
+
+
 def _choice_lag_cols(columns: list[str]) -> list[str]:
     return sorted(
         [
@@ -957,7 +965,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
                     for v in pd.to_numeric(df_pd["delays"], errors="coerce").dropna().tolist()
                 }
             )
-        max_sessions = _max_subject_sessions()
+        max_sessions = _max_sessions_from_df(df_pd)
         session_order = list(dict.fromkeys(df_pd["session"].tolist()))
         session_to_idx = {session_name: idx for idx, session_name in enumerate(session_order)}
         choice_lag_cols = _choice_lag_names()
@@ -1153,6 +1161,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
         ecols = self._resolved_emission_cols(feature_df, emission_cols)
         ucols = transition_cols if transition_cols is not None else self.default_transition_cols()
         allowed_ecols = set(self.available_emission_cols(feature_df))
+        ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
         bad_u = [c for c in ucols if c not in TRANSITION_COLS]
         if bad_e:
@@ -1251,6 +1260,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
         else:
             expanded_ecols = list(requested_ecols)
         allowed_ecols = set(self.available_emission_cols(df))
+        expanded_ecols = _drop_unavailable_bias_hot_cols(expanded_ecols, allowed_ecols)
         bad_e = [c for c in expanded_ecols if c not in allowed_ecols]
         bad_u = [c for c in requested_ucols if c not in TRANSITION_COLS]
         if bad_e:

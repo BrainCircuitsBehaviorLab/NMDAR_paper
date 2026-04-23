@@ -125,14 +125,14 @@ def _(
     two_afc_plots,
 ):
     fig, axs = plt.subplot_mosaic(
-        [["mcdr", "two_afc", "delay"]],
-        figsize=(6, 2),
+        [["mcdr"], ["two_afc"], ["delay"]],
+        figsize=(2, 6),
         constrained_layout=True,
         sharey=True,
     )
-    MCDR_plots.plot_accuracy_by_difficulty(df_MCDR, ax=axs["mcdr"], title="MCDR")
-    two_afc_plots.plot_accuracy_by_stimulus(df_2AFC, ax=axs["two_afc"], title="2AFC")
-    two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay, ax=axs["delay"], title="2AFC delay")
+    MCDR_plots.plot_accuracy_by_difficulty(df_MCDR, ax=axs["mcdr"], title="")
+    two_afc_plots.plot_accuracy_by_stimulus(df_2AFC, ax=axs["two_afc"], title="")
+    two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay, ax=axs["delay"], title="")
     sns.despine(fig=fig)
     fig
     return

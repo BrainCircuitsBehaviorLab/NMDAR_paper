@@ -13,27 +13,43 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from process.two_afc_delay import TwoAFCDelayAdapter
+from process.nuo_auditory import NuoAuditoryAdapter
 
 
-class TestTwoAfcDelayGlm(unittest.TestCase):
-    def test_default_emission_cols_expand_one_hot_delay_families(self) -> None:
-        adapter = TwoAFCDelayAdapter()
+class TestNuoAuditoryGlm(unittest.TestCase):
+    def test_dynamic_emission_cols_use_max_sessions_per_subject(self) -> None:
+        adapter = NuoAuditoryAdapter()
         df = pl.DataFrame(
             {
-                "subject": ["N1", "N1", "N1", "N1"],
-                "session": ["s1", "s1", "s2", "s2"],
-                "delays": [0.1, 1.0, 3.0, 1.0],
+                "subject": ["A", "A", "B", "B", "B", "B"],
+                "session": ["s1", "s2", "t1", "t2", "t3", "t4"],
+                "response": [0, 1, 0, 1, 0, 1],
+                "last_choice": [0, 1, 0, 1, 0, 1],
+                "difficulty": ["easy"] * 6,
+                "correct_side": ["left"] * 6,
+                "total_evidence_strength": [0.1] * 6,
             }
         )
 
-        default_cols = adapter.default_emission_cols(df)
-
         self.assertEqual(
-            default_cols,
+            adapter._dynamic_emission_cols(df),
             [
+                "stim_bin_00",
+                "stim_bin_01",
+                "stim_bin_02",
+                "stim_bin_03",
+                "stim_bin_04",
+                "stim_bin_05",
+                "stim_bin_06",
+                "stim_bin_07",
+                "stim_bin_08",
+                "difficulty_easy",
+                "difficulty_medium",
+                "difficulty_hard",
                 "bias_0",
                 "bias_1",
+                "bias_2",
+                "bias_3",
                 "choice_lag_01",
                 "choice_lag_02",
                 "choice_lag_03",
@@ -49,46 +65,30 @@ class TestTwoAfcDelayGlm(unittest.TestCase):
                 "choice_lag_13",
                 "choice_lag_14",
                 "choice_lag_15",
-                "stim",
-                "delay_0p1",
-                "delay_1",
-                "delay_3",
-                "stim_x_delay_hot_0p1",
-                "stim_x_delay_hot_1",
-                "stim_x_delay_hot_3",
             ],
         )
 
-    def test_stim_x_delay_hot_cols_are_inferred_from_raw_delay_levels(self) -> None:
-        adapter = TwoAFCDelayAdapter()
-        df = pl.DataFrame({"delays": [0.1, 1.0, 3.0]})
-
-        self.assertEqual(
-            adapter.stim_x_delay_hot_cols(df),
-            ["stim_x_delay_hot_0p1", "stim_x_delay_hot_1", "stim_x_delay_hot_3"],
-        )
-
     def test_build_design_matrices_drops_unavailable_bias_hot_cols(self) -> None:
-        adapter = TwoAFCDelayAdapter()
+        adapter = NuoAuditoryAdapter()
         feature_df = pl.DataFrame(
             {
-                "model_choice_bin": [0, 1],
+                "response": [0, 1],
+                "bias": [1.0, 1.0],
                 "bias_0": [1.0, 1.0],
-                "choice_lag_01": [0.0, 1.0],
-                "stim": [0.5, -0.5],
+                "stim_vals": [0.5, -0.5],
             }
         )
 
         y, X, U, names = adapter.build_design_matrices(
             feature_df,
-            emission_cols=["bias_0", "bias_1", "choice_lag_01", "stim"],
+            emission_cols=["bias", "bias_0", "bias_1", "stim_vals"],
             transition_cols=[],
         )
 
         self.assertEqual(y.shape, (2,))
         self.assertEqual(X.shape, (2, 3))
         self.assertEqual(U.shape, (2, 0))
-        self.assertEqual(names["X_cols"], ["bias_0", "choice_lag_01", "stim"])
+        self.assertEqual(names["X_cols"], ["bias", "bias_0", "stim_vals"])
 
 
 if __name__ == "__main__":

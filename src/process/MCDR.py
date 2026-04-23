@@ -116,10 +116,10 @@ _EMISSION_GROUPS: list[dict] = [
     {"key": "speed1", "label": "speed 1", "members": {"N": "speed1"}},
     {"key": "speed2", "label": "speed 2", "members": {"N": "speed2"}},
     {"key": "speed3", "label": "speed 3", "members": {"N": "speed3"}},
-    # {"key": "stim1", "label": "stim 1", "members": {"L": "stim1L", "C": "stim1C", "R": "stim1R"}},
-    # {"key": "stim2", "label": "stim 2", "members": {"L": "stim2L", "C": "stim2C", "R": "stim2R"}},
-    # {"key": "stim3", "label": "stim 3", "members": {"L": "stim3L", "C": "stim3C", "R": "stim3R"}},
-    # {"key": "stim4", "label": "stim 4", "members": {"L": "stim4L", "C": "stim4C", "R": "stim4R"}},
+    {"key": "stim1", "label": "stim 1", "members": {"L": "stim1L", "C": "stim1C", "R": "stim1R"}},
+    {"key": "stim2", "label": "stim 2", "members": {"L": "stim2L", "C": "stim2C", "R": "stim2R"}},
+    {"key": "stim3", "label": "stim 3", "members": {"L": "stim3L", "C": "stim3C", "R": "stim3R"}},
+    {"key": "stim4", "label": "stim 4", "members": {"L": "stim4L", "C": "stim4C", "R": "stim4R"}},
 ]
 
 _TRANSITION_GROUPS: list[dict] = [
@@ -167,6 +167,14 @@ def _bias_hot_cols(columns: list[str]) -> list[str]:
         ],
         key=_bias_hot_sort_key,
     )
+
+
+def _is_bias_hot_col(col: str) -> bool:
+    return col.startswith(_BIAS_HOT_COL_PREFIX) and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+
+
+def _drop_unavailable_bias_hot_cols(cols: list[str], available_cols: set[str]) -> list[str]:
+    return [col for col in cols if col in available_cols or not _is_bias_hot_col(col)]
 
 
 def _choice_lag_cols(columns: list[str]) -> list[str]:
@@ -238,15 +246,15 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
                 )
                 registered.update(bias_hot_cols)
     if stim_hot_cols:
-        result.append(
-            {
-                "key": "stim_one_hot",
-                "label": "stim one-hot",
-                "members": {},
-                "toggle_members": list(stim_hot_cols),
-                "hide_members": True,
-            }
-        )
+        stim_hot_group = {
+            "key": "stim_hot",
+            "label": "stim one-hot",
+            "members": {},
+            "toggle_members": list(stim_hot_cols),
+            "hide_members": True,
+        }
+        result.append(stim_hot_group)
+        result.append({**stim_hot_group, "key": "stim_one_hot"})
         registered.update(stim_hot_cols)
 
     grouped_choice_lags: dict[str, dict[str, str]] = {}
@@ -904,6 +912,7 @@ class MCDRAdapter(TaskAdapter):
     task_key: str    = "MCDR"
     task_label: str  = "MCDR"
     num_classes: int = 3
+    baseline_class_idx: int = 1
     data_file: str   = "df_filtered.parquet"
     sort_col: str    = "trial_idx"
     session_col: str = "session"
@@ -1094,6 +1103,7 @@ class MCDRAdapter(TaskAdapter):
         ecols = emission_cols if emission_cols is not None else list(EMISSION_COLS)
         ucols = transition_cols if transition_cols is not None else list(TRANSITION_COLS)
         allowed_ecols = set(self.available_emission_cols(feature_df))
+        ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
         bad_u = [c for c in ucols if c not in TRANSITION_COLS]
         if bad_e:
@@ -1138,6 +1148,7 @@ class MCDRAdapter(TaskAdapter):
         ecols = list(emission_cols) if emission_cols is not None else list(EMISSION_COLS)
         ucols = list(transition_cols) if transition_cols is not None else list(TRANSITION_COLS)
         allowed_ecols = set(self.available_emission_cols(df))
+        ecols = _drop_unavailable_bias_hot_cols(ecols, allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
         bad_u = [c for c in ucols if c not in TRANSITION_COLS]
         if bad_e:

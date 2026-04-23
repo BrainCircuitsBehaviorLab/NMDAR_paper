@@ -20,10 +20,6 @@ import polars as pl
 import seaborn as sns
 from scipy.stats import t
 
-from glmhmmt.postprocess import (
-    build_transition_matrix_by_subject_payload,
-    build_transition_matrix_payload,
-)
 from glmhmmt.runtime import load_app_config
 from glmhmmt.model_plots import (
     _state_color,
@@ -43,19 +39,10 @@ from glmhmmt.model_plots import (
     plot_state_dwell_times,
     plot_state_posterior_count_kde,
     plot_state_occupancy,
-    plot_state_occupancy_overall,
-    plot_state_occupancy_overall_by_subject,
     plot_state_occupancy_overall_boxplot,
-    plot_state_occupancy_overall_summary,
-    plot_state_session_occupancy,
-    plot_state_session_occupancy_by_subject,
-    plot_state_session_occupancy_summary,
-    plot_state_switches,
-    plot_state_switches_by_subject,
-    plot_state_switches_summary,
+    plot_transition_matrix,
+    plot_transition_matrix_by_subject,
     plot_tau_sweep,
-    plot_transition_matrix as _plot_transition_matrix_simple,
-    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
     plot_transition_weights,
 )
 
@@ -65,73 +52,216 @@ cfg = load_app_config()
 CI_BAND_ERR_KWS = {"edgecolor": "none", "linewidth": 0}
 
 
-def plot_transition_matrix(
-    matrix,
-    tick_labels,
-    **kwargs,
-):
-    return _plot_transition_matrix_simple(
-        matrix=matrix,
-        tick_labels=tick_labels,
-        **kwargs,
-    )
+def _empty_plot(message: str = "No data") -> plt.Figure:
+    """Return a minimal placeholder figure for empty selections."""
+    fig, ax = plt.subplots()
+    ax.text(0.5, 0.5, message, ha="center", va="center")
+    ax.axis("off")
+    return fig
 
 
-def plot_transition_matrix_by_subject(
-    matrices,
-    subject_ids,
-    tick_labels_by_subject,
-    **kwargs,
-):
-    return _plot_transition_matrix_by_subject_simple(
-        matrices=matrices,
-        subject_ids=subject_ids,
-        tick_labels_by_subject=tick_labels_by_subject,
-        **kwargs,
-    )
+def _resolve_emission_plot_inputs(
+    *,
+    views: Optional[dict] = None,
+    arrays_store: Optional[dict] = None,
+    state_labels: Optional[dict] = None,
+    names: Optional[dict] = None,
+    subjects: Optional[Sequence[str]] = None,
+) -> tuple[dict, dict, dict, list[str]]:
+    """Normalize either `views` or legacy arrays inputs for emission plots."""
+    if views is not None:
+        arrays_from_views: dict = {}
+        labels_from_views: dict = {}
+        feat_names: list[str] = []
+
+        for subj, view in views.items():
+            if view is None or getattr(view, "emission_weights", None) is None:
+                continue
+            arrays_from_views[subj] = {
+                "emission_weights": np.asarray(view.emission_weights),
+                "X_cols": list(getattr(view, "feat_names", []) or []),
+            }
+            labels_from_views[subj] = {int(k): lbl for k, lbl in view.state_name_by_idx.items()}
+            if not feat_names:
+                feat_names = list(getattr(view, "feat_names", []) or [])
+
+        return arrays_from_views, labels_from_views, {"X_cols": feat_names}, list(arrays_from_views.keys())
+
+    if arrays_store is None:
+        raise ValueError("Provide either `views` or `arrays_store` for emission plots.")
+    if state_labels is None:
+        raise ValueError("`state_labels` is required when `views` is not provided.")
+    if names is None:
+        raise ValueError("`names` is required when `views` is not provided.")
+
+    resolved_subjects = list(subjects) if subjects is not None else list(arrays_store.keys())
+    return arrays_store, state_labels, names, resolved_subjects
+
+
+def _infer_emission_K(
+    *,
+    views: Optional[dict] = None,
+    arrays_store: Optional[dict] = None,
+    subjects: Optional[Sequence[str]] = None,
+) -> int:
+    """Infer K from views or the first available emission-weight array."""
+    if views:
+        first_view = next(iter(views.values()), None)
+        if first_view is not None:
+            return int(first_view.K)
+
+    if arrays_store:
+        candidate_subjects = list(subjects) if subjects is not None else list(arrays_store.keys())
+        for subj in candidate_subjects:
+            subj_arrays = arrays_store.get(subj, {})
+            weights = subj_arrays.get("emission_weights")
+            if weights is not None:
+                return int(np.asarray(weights).shape[0])
+
+    raise ValueError("Could not infer `K` for emission plots; pass it explicitly.")
 
 
 def plot_emission_weights_by_subject(
-    weights_df,
+    views: Optional[dict] = None,
+    K: Optional[int] = None,
+    save_path=None,
     *,
-    K: int | None = None,
+    arrays_store: Optional[dict] = None,
+    state_labels: Optional[dict] = None,
+    names: Optional[dict] = None,
+    subjects: Optional[Sequence[str]] = None,
 ) -> plt.Figure:
+    """Per-subject emission bars with either `views` or legacy arrays inputs."""
+    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
+        views=views,
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
+        subjects=subjects,
+    )
+    if not subjects:
+        return _empty_plot()
+
+    K = int(K) if K is not None else _infer_emission_K(
+        views=views,
+        arrays_store=arrays_store,
+        subjects=subjects,
+    )
     return _plot_emission_weights_by_subject_generic(
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
         K=K,
-        weights_df=weights_df,
+        subjects=subjects,
+        save_path=save_path,
     )
 
 
 def plot_emission_weights_summary(
-    weights_df,
+    views: Optional[dict] = None,
+    K: Optional[int] = None,
+    save_path=None,
     *,
-    K: int | None = None,
+    arrays_store: Optional[dict] = None,
+    state_labels: Optional[dict] = None,
+    names: Optional[dict] = None,
+    subjects: Optional[Sequence[str]] = None,
 ) -> plt.Figure:
-    return _plot_emission_weights_generic(
-        weights_df,
+    """Notebook-friendly high-level emission summary, aligned with 2AFC API."""
+    _ = save_path
+    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
+        views=views,
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
+        subjects=subjects,
+    )
+    if not subjects:
+        return _empty_plot()
+
+    K = int(K) if K is not None else _infer_emission_K(
+        views=views,
+        arrays_store=arrays_store,
+        subjects=subjects,
+    )
+    fig_summary, fig_detail = _plot_emission_weights_generic(
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
         K=K,
-    )[1]
+        subjects=subjects,
+    )
+    plt.close(fig_detail)
+    return fig_summary
 
 
 def plot_emission_weights_summary_lineplot(
-    weights_df,
+    views: Optional[dict] = None,
+    K: Optional[int] = None,
+    save_path=None,
     *,
-    K: int | None = None,
+    arrays_store: Optional[dict] = None,
+    state_labels: Optional[dict] = None,
+    names: Optional[dict] = None,
+    subjects: Optional[Sequence[str]] = None,
 ) -> plt.Figure:
+    _ = save_path
+    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
+        views=views,
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
+        subjects=subjects,
+    )
+    if not subjects:
+        return _empty_plot()
+
+    K = int(K) if K is not None else _infer_emission_K(
+        views=views,
+        arrays_store=arrays_store,
+        subjects=subjects,
+    )
     return _plot_emission_weights_summary_lineplot_generic(
-        weights_df,
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
         K=K,
+        subjects=subjects,
     )
 
 
 def plot_emission_weights_summary_boxplot(
-    weights_df,
+    views: Optional[dict] = None,
+    K: Optional[int] = None,
+    save_path=None,
     *,
-    K: int | None = None,
+    arrays_store: Optional[dict] = None,
+    state_labels: Optional[dict] = None,
+    names: Optional[dict] = None,
+    subjects: Optional[Sequence[str]] = None,
 ) -> plt.Figure:
+    _ = save_path
+    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
+        views=views,
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
+        subjects=subjects,
+    )
+    if not subjects:
+        return _empty_plot()
+
+    K = int(K) if K is not None else _infer_emission_K(
+        views=views,
+        arrays_store=arrays_store,
+        subjects=subjects,
+    )
     return _plot_emission_weights_summary_boxplot_generic(
-        weights_df,
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
         K=K,
+        subjects=subjects,
     )
 
 
@@ -141,7 +271,7 @@ def plot_lapse_rates_boxplot(
 ) -> plt.Figure:
     _ = K
     if not views:
-        raise ValueError("views is required for lapse-rate plots.")
+        return _empty_plot("No fitted lapses")
     return _plot_lapse_rates_boxplot(
         views,
         choice_labels=("Left", "Center", "Right"),
@@ -150,13 +280,38 @@ def plot_lapse_rates_boxplot(
 
 
 def plot_emission_weights(
-    weights_df,
+    views: Optional[dict] = None,
+    K: Optional[int] = None,
+    save_path=None,
     *,
-    K: int | None = None,
+    arrays_store: Optional[dict] = None,
+    state_labels: Optional[dict] = None,
+    names: Optional[dict] = None,
+    subjects: Optional[Sequence[str]] = None,
 ):
+    """Emission summaries with `views` support and backward-compatible kwargs."""
+    _ = save_path
+    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
+        views=views,
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
+        subjects=subjects,
+    )
+    if not subjects:
+        return _empty_plot(), _empty_plot()
+
+    K = int(K) if K is not None else _infer_emission_K(
+        views=views,
+        arrays_store=arrays_store,
+        subjects=subjects,
+    )
     return _plot_emission_weights_generic(
-        weights_df,
+        arrays_store=arrays_store,
+        state_labels=state_labels,
+        names=names,
         K=K,
+        subjects=subjects,
     )
 
 
@@ -175,22 +330,97 @@ def get_plot_path(subfolder: str, fname: str, model_name: str) -> Path:
     return out_dir / fname
 
 
+def prepare_predictions_df(df_pred: pl.DataFrame) -> pl.DataFrame:
+    df = df_pred.clone()
+
+    if "correct_bool" not in df.columns:
+        if "performance" in df.columns:
+            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
+        else:
+            raise ValueError("No encuentro 'performance' ni 'correct_bool' en df.")
+
+    for col in ["pL", "pC", "pR"]:
+        if col not in df.columns:
+            raise ValueError(f"Falta la columna '{col}' en df (predicciones por trial).")
+
+    if "response" not in df.columns:
+        raise ValueError("Falta la columna 'response' (0/1/2) en df.")
+
+    if "p_model_correct" not in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("stimulus") == 0)
+            .then(pl.col("pL"))
+            .when(pl.col("stimulus") == 1)
+            .then(pl.col("pC"))
+            .when(pl.col("stimulus") == 2)
+            .then(pl.col("pR"))
+            .otherwise(None)
+            .alias("p_model_correct")
+        )
+
+    if "stimd_c" not in df.columns:
+        if "stimd_n" in df.columns:
+            df = df.with_columns(pl.col("stimd_n").replace(cfg["encoding"]["stimd"], default=None).alias("stimd_c"))
+        else:
+            raise ValueError("Falta 'stimd_c' y no existe 'stimd_n' para mapear.")
+
+    if "ttype_c" not in df.columns:
+        if "ttype_n" in df.columns:
+            df = df.with_columns(pl.col("ttype_n").replace(cfg["encoding"]["ttype"], default=None).alias("ttype_c"))
+        else:
+            raise ValueError("Falta 'ttype_c' y no existe 'ttype_n' para mapear.")
+
+    return df
+
+
 def plot_cat_panel(ax, df, group_col, order, title, xlabel, ylabel=None, palette=None, labels=None):
-    payload = process.prepare_cat_panel_payload(df, group_col=group_col, order=list(order))
-    if payload is None:
+    subj = (
+        df.filter(pl.col(group_col).is_in(order))
+        .group_by([group_col, "subject"])
+        .agg(
+            [
+                pl.col("correct_bool").mean().alias("correct_mean"),
+                pl.col("p_model_correct").mean().alias("model_mean"),
+            ]
+        )
+    )
+    if subj.height == 0:
         ax.set_visible(False)
         return
 
-    cats = payload["cats"]
-    md = payload["md"]
-    sd = payload["sd"]
-    mm = payload["mm"]
-    sm = payload["sm"]
+    g = (
+        subj.group_by(group_col)
+        .agg(
+            [
+                pl.col("correct_mean").mean().alias("md"),
+                pl.col("correct_mean").std(ddof=1).alias("sd"),
+                pl.col("correct_mean").count().alias("nd"),
+                pl.col("model_mean").mean().alias("mm"),
+                pl.col("model_mean").std(ddof=1).alias("sm"),
+                pl.col("model_mean").count().alias("nm"),
+            ]
+        )
+        .with_columns(
+            [
+                pl.col("nd").clip(lower_bound=1),
+                pl.col("nm").clip(lower_bound=1),
+            ]
+        )
+        .with_columns(pl.col(group_col).cast(pl.Categorical).alias(group_col))
+    )
+
+    rows = {r[group_col]: r for r in g.to_dicts()}
+    cats = [c for c in order if c in rows]
+    md = np.array([rows[c]["md"] for c in cats])
+    sd = np.array([rows[c]["sd"] for c in cats])
+    nd = np.array([rows[c]["nd"] for c in cats])
+    mm = np.array([rows[c]["mm"] for c in cats])
+    sm = np.array([rows[c]["sm"] for c in cats])
 
     ax.plot(np.arange(len(cats)), mm, "-", color="black", lw=2, label="Model")
 
     colors_used = palette if palette else ["black"] * len(cats)
-    if payload["n_subjects"] > 1:
+    if df["subject"].n_unique() > 1:
         ax.fill_between(np.arange(len(cats)), mm - sm, mm + sm, color="black", alpha=0.12)
         for i, (xpos, yval, err) in enumerate(zip(np.arange(len(cats)), md, sd)):
             ax.errorbar(xpos, yval, yerr=err, fmt="o", color=colors_used[i], ms=7, capsize=3)
@@ -216,16 +446,38 @@ def plot_cat_panel(ax, df, group_col, order, title, xlabel, ylabel=None, palette
 
 
 def _plot_state_panel(ax, df_state, group_col, order, color):
-    payload = process.prepare_state_panel_payload(df_state, group_col=group_col, order=list(order))
-    if payload is None:
+    subj = (
+        df_state.filter(pl.col(group_col).is_in(order))
+        .group_by([group_col, "subject"])
+        .agg(
+            [
+                pl.col("correct_bool").mean().alias("acc"),
+                pl.col("p_model_correct").mean().alias("model"),
+            ]
+        )
+    )
+    if subj.height == 0:
         return None, None
 
-    xpos = payload["xpos"]
-    md = payload["md"]
-    sd = payload["sd"]
-    mm = payload["mm"]
-    sm = payload["sm"]
-    n_subj = payload["n_subjects"]
+    agg = subj.group_by(group_col).agg(
+        [
+            pl.col("acc").mean().alias("md"),
+            pl.col("acc").std(ddof=1).alias("sd"),
+            pl.col("model").mean().alias("mm"),
+            pl.col("model").std(ddof=1).alias("sm"),
+        ]
+    )
+    rows = {r[group_col]: r for r in agg.to_dicts()}
+    cats = [c for c in order if c in rows]
+    if not cats:
+        return None, None
+
+    xpos = np.array([order.index(c) for c in cats])
+    md = np.array([rows[c]["md"] for c in cats])
+    sd = np.array([rows[c]["sd"] for c in cats])
+    mm = np.array([rows[c]["mm"] for c in cats])
+    sm = np.array([rows[c]["sm"] for c in cats])
+    n_subj = subj["subject"].n_unique()
 
     data_h = None
     for i, (x, y) in enumerate(zip(xpos, md)):
@@ -385,7 +637,7 @@ def plot_categorical_performance_all(
     _ = (views, X_cols, ild_max, background_style)
     fig, axes = plt.subplots(1, 3, figsize=(10, 4), sharey=True)
     ax1, ax2, ax3 = axes
-    df = process.prepare_categorical_performance_df(df)
+    df = df.drop("p_model_correct").rename({"p_model_correct_marginal": "p_model_correct"})
 
     plot_cat_panel(
         ax1,
@@ -425,20 +677,58 @@ def plot_categorical_performance_all(
 
 def plot_delay_or_stim_1d_on_ax(ax, df, subject, n_bins, which):
     """Plot delay or stimulus duration accuracy for one subject."""
-    payload = process.prepare_delay_or_stim_1d_payload(df, subject=subject, n_bins=n_bins, which=which)
-    if payload is None:
-        title_suffix = "Delay" if which == "delay" else "Stimulus"
+    df = df.to_pandas()
+    df_delay = df[df["stimd_c"] == "SS"]
+    df_stim = df.copy()
+
+    if subject is not None:
+        df_delay = df_delay[df_delay["subject"] == subject].copy()
+        df_stim = df_stim[df_stim["subject"] == subject].copy()
+
+    needed_cols = ["delay_d", "correct_bool", "p_model_correct", "subject", "stim_d"]
+    df_delay = df_delay.dropna(subset=needed_cols)
+    df_stim = df_stim.dropna(subset=needed_cols)
+
+    if which == "delay":
+        d = df_delay
+        xcol = "delay_d"
+        xlabel = "Delay duration"
+        title_suffix = "Delay"
+        band_floor = 1 / 3
+        palette_data = truncate_colormap("Purples_r", 0, 0.7)
+    elif which == "stim":
+        d = df_stim
+        xcol = "stim_d"
+        xlabel = "Stimulus duration"
+        title_suffix = "Stimulus"
+        band_floor = 1 / 3
+        palette_data = truncate_colormap("Oranges", 0.3, 1.0)
+    else:
+        raise ValueError("which must be 'delay' or 'stim'")
+
+    if d.empty:
         ax.set_title(f"{subject} - {title_suffix}\n(no data)", fontsize=9)
         ax.axis("off")
         return False
 
-    plot_df = payload["plot_df"]
-    meta = payload["meta"]
-    palette_data = (
-        truncate_colormap("Purples_r", 0, 0.7)
-        if meta["palette"] == "Purples_r"
-        else truncate_colormap("Oranges", 0.3, 1.0)
+    d = d.copy()
+    d["x_bin"], _ = pd.qcut(d[xcol], q=n_bins, retbins=True, duplicates="drop")
+    centers = d.groupby("x_bin", observed=True)[xcol].median().rename("center").reset_index().sort_values("center")
+
+    subj = (
+        d.groupby(["x_bin", "subject"], observed=True)
+        .agg(data_acc=("correct_bool", "mean"), model_acc=("p_model_correct", "mean"))
+        .reset_index()
+        .merge(centers, on="x_bin", how="left")
     )
+
+    plot_df = subj.melt(
+        id_vars=["x_bin", "subject", "center"],
+        value_vars=["data_acc", "model_acc"],
+        var_name="kind",
+        value_name="acc",
+    )
+    plot_df["kind"] = plot_df["kind"].map({"data_acc": "Data", "model_acc": "Model"})
 
     sns.lineplot(
         data=plot_df[plot_df["kind"] == "Model"],
@@ -466,9 +756,9 @@ def plot_delay_or_stim_1d_on_ax(ax, df, subject, n_bins, which):
         zorder=10,
     )
 
-    ax.axhspan(0, meta["band_floor"], color="gray", alpha=0.15, zorder=0)
+    ax.axhspan(0, band_floor, color="gray", alpha=0.15, zorder=0)
     ax.set_ylim(0.2, 1.05)
-    ax.set_xlabel(meta["xlabel"], fontsize=12)
+    ax.set_xlabel(xlabel, fontsize=12)
     ax.set_ylabel("Frac. correct responses", fontsize=12)
     ax.set_title(f"{subject}", fontsize=12)
     ax.tick_params(labelsize=12)
@@ -485,18 +775,31 @@ def plot_categorical_strat_by_side(
     cond_order=("VG", "SL", "SM", "SS", "SIL"),
     cond_labels=("Visual", "Easy", "Medium", "Hard", "Silent"),
 ):
-    payload = process.prepare_categorical_strat_by_side_payload(
-        df,
-        df_silent=df_silent,
-        cond_col=cond_col,
-        cond_order=cond_order,
-        cond_labels=cond_labels,
+    df = df.to_pandas().copy()
+    df["x_c"] = df["x_c"].astype("string").str.strip().str.upper()
+
+    if cond_order is None:
+        cond_order = sorted(df[cond_col].dropna().unique())
+    if cond_labels is None:
+        cond_labels = cond_order
+
+    g = (
+        df.groupby([cond_col, "x_c"], observed=True)
+        .agg(
+            data_mean=("correct_bool", "mean"),
+            model_mean=("p_model_correct", "mean"),
+            n=("correct_bool", "size"),
+        )
+        .reset_index()
     )
-    g = payload["summary"]
-    p_silent = payload["p_silent"]
-    meta = payload["meta"]
-    cond_order = meta["cond_order"]
-    cond_labels = meta["cond_labels"]
+    g["data_sem"] = np.sqrt(g["data_mean"] * (1.0 - g["data_mean"]) / g["n"].clip(lower=1))
+
+    if df_silent is not None:
+        df_s = df_silent.copy()
+        p_silent = {"L": df_s["pL_mean"], "C": df_s["pC_mean"], "R": df_s["pR_mean"]}
+
+    cond_to_x = {c: i for i, c in enumerate(cond_order)}
+    g["x_pos"] = g[cond_col].map(cond_to_x)
 
     side_palette = {"L": "#e41a1c", "C": "#4daf4a", "R": "#377eb8"}
     fig, ax = plt.subplots(figsize=(4, 4))
@@ -526,7 +829,7 @@ def plot_categorical_strat_by_side(
             label=f"Data {side}",
             zorder=3,
         )
-        if p_silent is not None:
+        if df_silent is not None:
             ax.plot(
                 len(cond_order) - 1,
                 p_silent[side],
@@ -550,12 +853,61 @@ def plot_categorical_strat_by_side(
 
 
 def plot_delay_binned_1d(df, model_name, subject=None, n_bins=7):
-    payload = process.prepare_delay_binned_1d_payload(df, subject=subject, n_bins=n_bins)
-    if payload is None:
+    df = df.to_pandas()
+    df_delay = df[df["stimd_c"] == "SS"]
+    df_stim = df[df["ttype_c"] == "DS"].copy()
+
+    if subject is not None:
+        df_delay = df_delay[df_delay["subject"] == subject].copy()
+        df_stim = df_stim[df_stim["subject"] == subject].copy()
+
+    needed_cols = ["delay_d", "correct_bool", "p_model_correct", "subject", "stim_d"]
+    df_delay = df_delay.dropna(subset=needed_cols)
+    df_stim = df_stim.dropna(subset=needed_cols)
+    if df_delay.empty or df_stim.empty:
         return None
 
-    plot_delay = payload["plot_delay"]
-    plot_stim = payload["plot_stim"]
+    df_delay["delay_bin"] = df_delay.groupby("ttype_c", observed=True)["delay_d"].transform(
+        lambda s: pd.qcut(s, q=n_bins, duplicates="drop")
+    )
+    centers_delay = (
+        df_delay.groupby(["ttype_c", "delay_bin"], observed=True)["delay_d"].median().rename("center").reset_index()
+    )
+    subj_delay = (
+        df_delay.groupby(["ttype_c", "delay_bin", "subject"], observed=True)
+        .agg(data_acc=("correct_bool", "mean"), model_acc=("p_model_correct", "mean"))
+        .reset_index()
+        .merge(centers_delay, on=["ttype_c", "delay_bin"], how="left")
+    )
+
+    df_stim["stim_bin"] = df_stim.groupby("stimd_c", observed=True)["stim_d"].transform(
+        lambda s: pd.qcut(s, q=n_bins, duplicates="drop")
+    )
+    centers_stim = (
+        df_stim.groupby(["stimd_c", "stim_bin"], observed=True)["stim_d"].median().rename("center").reset_index()
+    )
+    subj_stim = (
+        df_stim.groupby(["stimd_c", "stim_bin", "subject"], observed=True)
+        .agg(data_acc=("correct_bool", "mean"), model_acc=("p_model_correct", "mean"))
+        .reset_index()
+        .merge(centers_stim, on=["stimd_c", "stim_bin"], how="left")
+    )
+
+    plot_delay = subj_delay.melt(
+        id_vars=["delay_bin", "subject", "ttype_c", "center"],
+        value_vars=["data_acc", "model_acc"],
+        var_name="kind",
+        value_name="acc",
+    )
+    plot_delay["kind"] = plot_delay["kind"].map({"data_acc": "Data", "model_acc": "Model"})
+
+    plot_stim = subj_stim.melt(
+        id_vars=["stim_bin", "subject", "center", "stimd_c"],
+        value_vars=["data_acc", "model_acc"],
+        var_name="kind",
+        value_name="acc",
+    )
+    plot_stim["kind"] = plot_stim["kind"].map({"data_acc": "Data", "model_acc": "Model"})
 
     fig_delay, ax = plt.subplots(figsize=(6, 6))
     sns.lineplot(
@@ -627,264 +979,3 @@ def plot_delay_binned_1d(df, model_name, subject=None, n_bins=7):
     fig_stim.tight_layout()
 
     return fig_delay, fig_stim
-
-
-
-from src.process.common import (
-    attach_repeat_choice_evidence,
-    attach_total_fitted_evidence,
-    display_regressor_name,
-    pick_choice_history_regressor,
-    prepare_evidence_curve,
-    prepare_right_integration_maps,
-    REPEAT_EVIDENCE_TAIL_QUANTILES,
-    add_choice_lag_summary_regressor,
-)
-from src.process import MCDR as process
-from src.plots.common import (
-    add_shared_figure_legend,
-    make_single_panel_figure,
-    plot_grouped_summary,
-    plot_empirical_accuracy_curve,
-    plot_integration_map_panels,
-    plot_simple_summary,
-)
-
-
-def plot_accuracy_by_difficulty(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
-    df_pd = df.to_pandas().copy() if hasattr(df, "to_pandas") else pd.DataFrame(df).copy()
-    if "ttype_c" not in df_pd.columns and "ttype_n" in df_pd.columns:
-        ttype_map = {float(key): value for key, value in cfg["encoding"]["ttype"].items()}
-        df_pd["ttype_c"] = pd.to_numeric(df_pd["ttype_n"], errors="coerce").map(ttype_map)
-
-    accuracy_col = "correct_bool" if "correct_bool" in df_pd.columns else "performance"
-    return plot_empirical_accuracy_curve(
-        df_pd,
-        x_col="ttype_c",
-        accuracy_col=accuracy_col,
-        invert_x=False,
-        x_order=cfg["plots"]["ttype"]["order"],
-        x_tick_labels=cfg["plots"]["ttype"]["labels"],
-        xlabel="Trial difficulty",
-        title=title,
-        baseline=1 / 3,
-        color="#7B3F98",
-        ax=ax,
-        figsize=figsize,
-    )
-
-
-def plot_right_by_regressor_simple(
-    plot_df,
-    *,
-    regressor_col: str,
-    title: str | None = None,
-    xlabel: str | None = None,
-    n_bins: int = 10,
-):
-    summary, meta = process.prepare_right_by_regressor_simple(
-        plot_df,
-        regressor_col=regressor_col,
-        xlabel=xlabel,
-        n_bins=n_bins,
-    )
-    return plot_simple_summary(summary, meta=meta, title=title)
-
-
-def plot_binned_accuracy_figure(
-    plot_df,
-    *,
-    regressor_col: str,
-):
-    panels, legend_title = process.prepare_binned_accuracy_figure(
-        plot_df,
-        regressor_col=regressor_col,
-        cfg=cfg,
-    )
-    if not panels:
-        return None
-
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(1, len(panels), figsize=(10, 4), sharey=True)
-    axes = np.atleast_1d(axes)
-
-    x_cols = ["ttype_c", "stimd_c", "ttype_c"]
-
-    for ax, panel, x_col in zip(axes, panels, x_cols, strict=False):
-        plot_grouped_summary(
-            ax,
-            panel["summary"],
-            line_group_col="_reg_bin",
-            x_col=x_col,
-            meta=panel["meta"],
-        )
-        if ax.legend_ is not None:
-            ax.legend_.remove()
-
-    add_shared_figure_legend(fig, source_ax=axes[-1], title=legend_title)
-    fig.tight_layout()
-    return fig
-
-
-def plot_right_by_regressor(
-    plot_df,
-    *,
-    regressor_col: str,
-    title: str | None = None,
-    xlabel: str | None = None,
-    n_bins: int = 10,
-):
-    summary, meta = process.prepare_right_by_regressor(
-        plot_df,
-        regressor_col=regressor_col,
-        cfg=cfg,
-        xlabel=xlabel,
-        n_bins=n_bins,
-    )
-    if summary is None or summary.empty:
-        return None
-
-    label_map = dict(zip(cfg["plots"]["delay"]["order"], cfg["plots"]["delay"]["labels"]))
-
-    fig, ax = make_single_panel_figure()
-    plot_grouped_summary(
-        ax,
-        summary,
-        line_group_col="ttype_c",
-        x_col="x_center",
-        meta=meta,
-        label_map=label_map,
-    )
-    if title:
-        ax.set_title(title)
-    return fig
-
-
-def plot_right_integration_map(
-    plot_df,
-    *,
-    x_col: str | None = None,
-    y_col: str | None = None,
-    value_col: str | None = None,
-    include_model: bool = True,
-    bnd: float | None = None,
-    dx: float | None = None,
-    n_bins: int = 64,
-    sigma: float | None = None,
-    smooth: bool = True,
-):
-    _n_bins = n_bins
-    panels, meta = prepare_right_integration_maps(
-        plot_df,
-        response_mode=process.RESPONSE_MODE,
-        pred_col=process.PRED_COL,
-        x_col=x_col,
-        y_col=y_col,
-        value_col=value_col,
-        include_model=include_model,
-        bnd=bnd,
-        dx=dx,
-        n_bins=_n_bins,
-        sigma=sigma,
-        fill_empty=smooth,
-        default_sigma_dx=5.0,
-    )
-    return plot_integration_map_panels(
-        panels,
-        meta=meta,
-        interpolation=None,
-    )
-
-
-def plot_accuracy_by_total_evidence(
-    plot_df,
-    *,
-    adapter,
-    views: dict,
-):
-    df_pd = attach_total_fitted_evidence(
-        plot_df,
-        adapter=adapter,
-        views=views,
-        is_mcdr=True,
-    )
-    if df_pd.empty or "_fitted_total_evidence" not in df_pd.columns:
-        return None
-
-    summary, meta = prepare_evidence_curve(
-        df_pd,
-        evidence_col="_fitted_total_evidence",
-        data_col="correct_bool",
-        model_col="_fitted_correct_prob",
-        baseline=1.0 / 3.0,
-        xlabel="Correct-vs-rest fitted evidence",
-        ylabel="Accuracy",
-    )
-    return plot_simple_summary(summary, meta=meta)
-
-
-def plot_repeat_by_repeat_evidence(
-    plot_df,
-    *,
-    views: dict,
-):
-    df_pd = attach_repeat_choice_evidence(
-        plot_df,
-        views=views,
-        is_mcdr=True,
-    )
-    if df_pd.empty:
-        return None
-
-    baseline = 1.0 / next(iter(views.values())).num_classes if views else 0.5
-    summary, meta = prepare_evidence_curve(
-        df_pd,
-        evidence_col="_repeat_choice_evidence",
-        data_col="_repeat_choice",
-        model_col="_p_repeat_model",
-        baseline=float(baseline),
-        xlabel="Fitted evidence for repeating choice",
-        ylabel="P(Repeat)",
-        quantiles=REPEAT_EVIDENCE_TAIL_QUANTILES,
-    )
-    # Overlay theoretical pure logistic function (zero lapse)
-    try:
-        x = summary["x_center"].to_numpy(dtype=float)
-        if x.size >= 2:
-            x_min, x_max = float(np.nanmin(x)), float(np.nanmax(x))
-            pad = max(1.0, (x_max - x_min) * 0.2)
-            x_dense = np.linspace(x_min - pad, x_max + pad, 400)
-            model_dense = 1.0 / (1.0 + np.exp(-x_dense))
-        else:
-            x_dense = None
-            model_dense = None
-        # Use model asymptotes (binned model endpoints) for lapse estimates
-        left_model = float(summary["model_mean"].iloc[0])
-        right_model = float(summary["model_mean"].iloc[-1])
-        lapse_to_alternate = 1.0 - right_model
-        lapse_to_repeat = left_model
-        title = f"lapse to repeat: {lapse_to_repeat:.2f}, lapse to alternate: {lapse_to_alternate:.2f}"
-    except Exception:
-        x_dense = None
-        model_dense = None
-        title = None
-
-    fig = plot_simple_summary(summary, meta=meta, title=title)
-    if fig is not None and x_dense is not None and model_dense is not None:
-        ax = fig.axes[0]
-        ax.plot(x_dense, model_dense, color="black", linewidth=1.0, linestyle=(0, (3, 1)), alpha=0.9, zorder=1)
-    return fig
-
-
-__all__ = [
-    "display_regressor_name",
-    "pick_choice_history_regressor",
-    "plot_accuracy_by_difficulty",
-    "plot_accuracy_by_total_evidence",
-    "plot_binned_accuracy_figure",
-    "plot_repeat_by_repeat_evidence",
-    "plot_right_integration_map",
-    "plot_right_by_regressor",
-    "plot_right_by_regressor_simple",
-]

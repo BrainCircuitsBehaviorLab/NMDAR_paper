@@ -8,6 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
@@ -116,6 +118,28 @@ class TestMcdrGlm(unittest.TestCase):
             )
 
         self.assertEqual(half_life, 37.0)
+
+    def test_build_design_matrices_drops_unavailable_bias_hot_cols(self) -> None:
+        adapter = mcdr.MCDRAdapter()
+        feature_df = mcdr.pl.DataFrame(
+            {
+                "response": [0, 1],
+                "bias": [1.0, 1.0],
+                "bias_0": [1.0, 1.0],
+                "stim1L": [0.0, 1.0],
+            }
+        )
+
+        y, X, U, names = adapter.build_design_matrices(
+            feature_df,
+            emission_cols=["bias", "bias_0", "bias_1", "stim1L"],
+            transition_cols=[],
+        )
+
+        self.assertEqual(y.shape, (2,))
+        self.assertEqual(X.shape, (2, 3))
+        self.assertEqual(U.shape, (2, 0))
+        self.assertEqual(names["X_cols"], ["bias", "bias_0", "stim1L"])
 
 
 if __name__ == "__main__":

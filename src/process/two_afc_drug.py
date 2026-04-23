@@ -71,7 +71,7 @@ _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     arrays_suffix="glm_arrays.npz",
     exclude_features=("bias", "stim_0"),
     excluded_subjects=("325", "325.0"),
-    sign=-1.0,
+    sign=1.0,
 )
 
 _EMISSION_GROUPS: list[dict] = [
@@ -185,15 +185,17 @@ class TwoAFCDrugAdapter(TaskAdapter):
     session_col: str = "Session"
 
     _SCORING_OPTIONS: dict = {
-        "stim_vals (-w)": [("stim_vals", "neg")],
+        "stim_vals (w)": [("stim_vals", "pos")],
+        "stim_vals (-w)": [("stim_vals", "pos")],
         "stim_vals (|w|)": [("stim_vals", "abs")],
-        "stim_param (-w)": [("stim_param", "neg")],
+        "stim_param (w)": [("stim_param", "pos")],
+        "stim_param (-w)": [("stim_param", "pos")],
         "stim_param (|w|)": [("stim_param", "abs")],
         "at_choice (|w|)": [("at_choice", "abs")],
         "wsls (|w|)": [("wsls", "abs")],
         "bias (|w|)": [("bias", "abs")],
     }
-    scoring_key: str = "stim_vals (-w)"
+    scoring_key: str = "stim_vals (w)"
 
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
         if "Experiment" not in df.columns:
@@ -449,8 +451,8 @@ class TwoAFCDrugAdapter(TaskAdapter):
         subjects: list,
     ) -> tuple:
         pairs = self._SCORING_OPTIONS.get(
-            getattr(self, "scoring_key", "stim_vals (-w)"),
-            self._SCORING_OPTIONS["stim_vals (-w)"],
+            getattr(self, "scoring_key", "stim_vals (w)"),
+            self._SCORING_OPTIONS["stim_vals (w)"],
         )
 
         def _score_states(
@@ -487,8 +489,8 @@ class TwoAFCDrugAdapter(TaskAdapter):
             for stim_name in stim_candidates:
                 stim_fi_local = name2fi_local.get(stim_name)
                 if stim_fi_local is not None:
-                    return -W_np[:, 0, stim_fi_local]
-            return -W_np[:, 0, :].mean(axis=1)
+                    return W_np[:, 0, stim_fi_local]
+            return W_np[:, 0, :].mean(axis=1)
 
         base_feat = list(names.get("X_cols", []))
         state_labels: dict = {}
@@ -518,7 +520,7 @@ class TwoAFCDrugAdapter(TaskAdapter):
             elif K == 3:
                 bias_fi = name2fi.get("bias")
                 if bias_fi is not None:
-                    bias_disp = -W[others, 0, bias_fi]
+                    bias_disp = W[others, 0, bias_fi]
                     biased_l = others[int(np.argmin(bias_disp))]
                     biased_r = others[int(np.argmax(bias_disp))]
                 else:

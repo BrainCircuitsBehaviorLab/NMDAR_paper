@@ -166,9 +166,7 @@ def plot_weights(
     feature_names: Sequence[str],
     state_labels: Optional[Sequence[str]] = None,
     state_colors: Optional[Sequence[str]] = None,
-    title: str = "GLM-HMM weights",
-    figsize: Optional[Tuple[float, float]] = None,
-    ax: Optional[plt.Axes] = None,
+    **plot_kwargs,
 ) -> plt.Figure:
     """Bar chart of emission weights per state.
 
@@ -195,10 +193,11 @@ def plot_weights(
     x = np.arange(M)
     width = 0.8 / K
 
+    style = dict(plot_kwargs)
+    ax = style.get("ax")
     if ax is None:
-        fig, ax = plt.subplots(figsize=figsize or (max(5, 0.7 * M), 3.5))
-    else:
-        fig = ax.figure
+        _, ax = plt.subplots(figsize=style.get("figsize", (max(5, 0.7 * M), 3.5)))
+    fig = ax.figure
 
     for k in range(K):
         w_k = W[k].mean(axis=0)
@@ -209,11 +208,11 @@ def plot_weights(
     ax.set_xticks(x)
     ax.set_xticklabels(_format_feature_labels(feature_names), rotation=0, ha="center")
     ax.set_ylabel("Weight")
-    ax.set_title(title)
     ax.legend(frameon=False)
     sns.despine(ax=ax)
     fig.tight_layout()
-    return fig
+    apply_axis_style(ax, **style)
+    return ax
 
 
 def plot_weights_per_contrast(
@@ -221,7 +220,7 @@ def plot_weights_per_contrast(
     feature_names: Sequence[str],
     contrast_names: Optional[Sequence[str]] = None,
     state_labels: Optional[Sequence[str]] = None,
-    figsize: Optional[Tuple[float, float]] = None,
+    **plot_kwargs,
 ) -> plt.Figure:
     """One subplot per contrast (row of W), all states overlaid."""
     W = np.asarray(weights)
@@ -234,8 +233,13 @@ def plot_weights_per_contrast(
     x = np.arange(M)
     bar_w = 0.8 / K
 
-    fig, axes = plt.subplots(1, C_m1, figsize=figsize or (max(5, 0.7 * M) * C_m1, 3.5), sharey=True)
-    axes = np.atleast_1d(axes)
+    style = dict(plot_kwargs)
+    fig, axes = resolve_axes(
+        style.get("axes"),
+        n_axes=C_m1,
+        figsize=style.get("figsize", (max(5, 0.7 * M) * C_m1, 3.5)),
+        sharey=True,
+    )
     for c, ax in enumerate(axes):
         for k in range(K):
             offset = (k - (K - 1) / 2) * bar_w
@@ -243,12 +247,13 @@ def plot_weights_per_contrast(
         ax.axhline(0, color="k", lw=0.8, ls="--")
         ax.set_xticks(x)
         ax.set_xticklabels(_format_feature_labels(feature_names), rotation=0, ha="center")
-        ax.set_title(cnames[c])
         sns.despine(ax=ax)
     axes[0].set_ylabel("Weight")
     axes[-1].legend(frameon=False)
     fig.tight_layout()
-    return fig
+    for ax in axes[:C_m1]:
+        apply_axis_style(ax, **style)
+    return fig, axes[:C_m1]
 
 
 def plot_weights_boxplot(
@@ -256,23 +261,24 @@ def plot_weights_boxplot(
     feature_names: Sequence[str],
     state_labels: Optional[Sequence[str]] = None,
     state_colors: Optional[Sequence[str]] = None,
-    title: str = "GLM-HMM weights (across subjects)",
-    figsize: Optional[Tuple[float, float]] = None,
     connect_subjects: bool = True,
     show_ttests: bool = True,
+    **plot_kwargs,
 ) -> plt.Figure:
-    return _plot_weights_boxplot_simple(
+    style = dict(plot_kwargs)
+    fig = _plot_weights_boxplot_simple(
         **build_weights_boxplot_payload(
             all_weights,
             feature_names=feature_names,
             state_labels=state_labels,
             state_colors=state_colors,
         ),
-        title=title,
-        figsize=figsize,
         connect_subjects=connect_subjects,
         show_ttests=show_ttests,
     )
+    for ax in fig.axes:
+        apply_axis_style(ax, **style)
+    return fig
 
 
 plot_trans_mat = _plot_trans_mat
@@ -291,12 +297,18 @@ def plot_transition_matrix_by_subject(
     tick_labels_by_subject,
     **kwargs,
 ):
-    return _plot_transition_matrix_by_subject_simple(
+    style = dict(kwargs)
+    figsize = style.get("figsize")
+    fig = _plot_transition_matrix_by_subject_simple(
         matrices=matrices,
         subject_ids=subject_ids,
         tick_labels_by_subject=tick_labels_by_subject,
+        figsize=figsize,
         **kwargs,
     )
+    for ax in fig.axes:
+        apply_axis_style(ax, **style)
+    return fig
 
 
 def plot_transition_matrix(
@@ -304,11 +316,18 @@ def plot_transition_matrix(
     tick_labels,
     **kwargs,
 ):
-    return _plot_transition_matrix_simple(
+    style = dict(kwargs)
+    ax = style.get("ax")
+    if ax is None:
+        _, ax = plt.subplots(figsize=style.get("figsize", (3.0, 3.0)))
+    _plot_transition_matrix_simple(
         matrix=matrix,
         tick_labels=tick_labels,
+        ax=ax,
         **kwargs,
     )
+    apply_axis_style(ax, **style)
+    return ax
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -487,7 +506,6 @@ def _psych_panel(
 ) -> None:
     """Draw a pooled psychometric curve from a process-prepared payload."""
     if df.empty:
-        ax.set_title(title)
         return
 
     choice_col = _require_plot_col(df, choice_col)
@@ -500,7 +518,6 @@ def _psych_panel(
         tick_values=tick_ilds,
     )
     if payload is None:
-        ax.set_title(title)
         return
 
     subj_agg = payload["subject_summary"]
@@ -836,7 +853,6 @@ def plot_lapse_rates_boxplot(
         views,
         K,
         choice_labels=("Right", "Left"),
-        title=f"Lapse rates  (K={K})",
     )
 
 
@@ -987,7 +1003,6 @@ def _plot_delay_accuracy_panel(
         label="Data",
     )
     ax.axhline(0.5, color="#888888", lw=0.8, ls="--", zorder=0)
-    ax.set_title(title)
     ax.set_xlabel("Delay")
     ax.set_ylabel(ylabel)
     ax.set_ylim(0, 1)
@@ -1011,8 +1026,10 @@ def plot_categorical_performance_all(
     X_cols: Optional[Sequence[str]] = None,
     ild_max: Optional[float] = None,
     background_style: str = "data",
+    **plot_kwargs,
 ) -> plt.Figure:
     """Plot task accuracy as a function of delay, ignoring stimulus sign."""
+    style = dict(plot_kwargs)
     del ild_col, choice_col, pred_col, subj_col, views, X_cols, ild_max, background_style
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas()
@@ -1022,14 +1039,17 @@ def plot_categorical_performance_all(
     conds = sorted(df_pd[cond_col].dropna().unique()) if cond_col in df_pd.columns else []
     exps = sorted(df_pd[exp_col].dropna().unique()) if exp_col in df_pd.columns else []
     n_panels = 1 + len(conds) + len(exps)
-    fig, axes = plt.subplots(1, n_panels, figsize=(4 * n_panels, 4), sharey=True)
-    axes = np.atleast_1d(axes)
+    fig, axes = resolve_axes(
+        style.get("axes"),
+        n_axes=n_panels,
+        figsize=style.get("figsize", (4 * n_panels, 4)),
+        sharey=True,
+    )
     ax_idx = 0
 
     _plot_delay_accuracy_panel(
         axes[ax_idx],
         df_pd,
-        title="a) Accuracy by delay",
         color="#2b7bba",
     )
     ax_idx += 1
@@ -1040,7 +1060,6 @@ def plot_categorical_performance_all(
             _plot_delay_accuracy_panel(
                 axes[ax_idx],
                 df_pd[df_pd[cond_col] == cond],
-                title=f"{chr(ord('b') + ci)}) {cond}",
                 color=cond_colors.get(cond, "k"),
             )
             ax_idx += 1
@@ -1051,12 +1070,13 @@ def plot_categorical_performance_all(
             _plot_delay_accuracy_panel(
                 axes[ax_idx],
                 df_pd[df_pd[exp_col] == exp],
-                title=f"{chr(ord('b') + len(conds) + ei)}) {exp}",
                 color=exp_palette[ei],
             )
             ax_idx += 1
     fig.tight_layout()
-    return fig, None
+    for ax in axes[:n_panels]:
+        apply_axis_style(ax, **style)
+    return fig, axes[:n_panels]
 
 
 def plot_categorical_performance_all_by_state(
@@ -1077,8 +1097,10 @@ def plot_categorical_performance_all_by_state(
     overlay_only: bool = False,
     model_line_mode: str = "smooth",
     state_assignment_mode: str = "weighted",
+    **plot_kwargs,
 ) -> plt.Figure:
     """Per-state accuracy by delay, ignoring stimulus sign."""
+    style = dict(plot_kwargs)
     del ild_col, choice_col, pred_col, X_cols, ild_max, background_style
     del show_weighted_points, show_data_smooth, show_model_smooth, model_line_mode
     if hasattr(df, "to_pandas"):
@@ -1113,8 +1135,13 @@ def plot_categorical_performance_all_by_state(
     if overlay_only:
         _n_panels = 1
     _figsize = (3, 3) if overlay_only else (panel_w * _n_panels, 4)
-    fig, axes = plt.subplots(1, _n_panels, figsize=_figsize, sharey=True, dpi=figure_dpi)
-    axes = np.atleast_1d(axes)
+    fig, axes = resolve_axes(
+        style.get("axes"),
+        n_axes=_n_panels,
+        figsize=style.get("figsize", _figsize),
+        sharey=True,
+        dpi=figure_dpi,
+    )
 
     if _include_overlay:
         _ax_overlay = axes[0]
@@ -1128,12 +1155,10 @@ def plot_categorical_performance_all_by_state(
             _plot_delay_accuracy_panel(
                 _ax_overlay,
                 _df_state,
-                title="",
                 color=color,
                 weight_col=_weight_col,
             )
         _ax_overlay.set_xlabel("Delay")
-        _ax_overlay.set_title("")
         _ax_overlay.legend(frameon=False, fontsize=8)
 
     if not overlay_only:
@@ -1147,7 +1172,6 @@ def plot_categorical_performance_all_by_state(
             _plot_delay_accuracy_panel(
                 ax,
                 _df_state,
-                title=lbl,
                 color=color,
                 weight_col=_weight_col,
             )
@@ -1156,11 +1180,11 @@ def plot_categorical_performance_all_by_state(
                 ax.set_ylabel("Accuracy")
             else:
                 ax.set_ylabel("")
-
-    fig.suptitle(model_name, y=1.02)
     sns.despine(fig=fig)
     fig.tight_layout()
-    return fig, None
+    for ax in axes[:_n_panels]:
+        apply_axis_style(ax, **style)
+    return fig, axes[:_n_panels]
 
 
 # Alias used by the analysis notebooks
@@ -1187,6 +1211,7 @@ def plot_regressor_psychometric_by_state(
     overlay_only: bool = False,
     model_line_mode: str = "smooth",
     state_assignment_mode: str = "weighted",
+    **plot_kwargs,
 ) -> plt.Figure:
     """Per-state partial-dependence plot for any emission regressor.
 
@@ -1195,6 +1220,7 @@ def plot_regressor_psychometric_by_state(
     while the model line sweeps the same regressor over a dense grid and
     marginalises over the empirical distribution of the remaining features.
     """
+    style = dict(plot_kwargs)
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas().reset_index(drop=True)
     else:
@@ -1207,10 +1233,14 @@ def plot_regressor_psychometric_by_state(
     df_pd[feature_col] = pd.to_numeric(df_pd[feature_col], errors="coerce")
     df_pd = df_pd.dropna(subset=[feature_col])
     if df_pd.empty:
-        fig, ax = plt.subplots()
+        fig, ax = resolve_single_axis(
+            ax=style.get("ax"),
+            figsize=style.get("figsize", (3.0, 3.0)),
+        )
         ax.text(0.5, 0.5, f"No valid {feature_col} data", ha="center", va="center")
         ax.axis("off")
-        return fig, None
+        apply_axis_style(ax, **style)
+        return ax
 
     if "state_rank" in df_pd.columns:
         _arr = df_pd["state_rank"].to_numpy().astype(int)
@@ -1295,8 +1325,13 @@ def plot_regressor_psychometric_by_state(
     if overlay_only:
         _n_panels = 1
     _figsize = (3, 3) if overlay_only else (4 * _n_panels, 4)
-    fig, axes = plt.subplots(1, _n_panels, figsize=_figsize, sharey=True, dpi=figure_dpi)
-    axes = np.atleast_1d(axes)
+    fig, axes = resolve_axes(
+        style.get("axes"),
+        n_axes=_n_panels,
+        figsize=style.get("figsize", _figsize),
+        sharey=True,
+        dpi=figure_dpi,
+    )
 
     xlabel = _feature_label(feature_col)
 
@@ -1333,7 +1368,6 @@ def plot_regressor_psychometric_by_state(
             )
         _ax_overlay.set_xlabel(xlabel)
         _ax_overlay.set_ylabel(r"$p(\mathrm{right})$")
-        _ax_overlay.set_title("")
         _ax_overlay.legend(frameon=False, fontsize=8)
 
     if not overlay_only:
@@ -1375,7 +1409,9 @@ def plot_regressor_psychometric_by_state(
     # fig.suptitle(f"{model_name} — {_feature_label(feature_col)} psychometric", y=1.02)
     sns.despine(fig=fig)
     fig.tight_layout()
-    return fig, None
+    for ax in axes[:_n_panels]:
+        apply_axis_style(ax, **style)
+    return fig, axes[:_n_panels]
 
 
 from src.process.common import (
@@ -1404,12 +1440,15 @@ from src.process.common import (
 from src.process import two_afc_delay as process
 from src.plots.common import (
     add_shared_figure_legend,
+    apply_axis_style,
     centered_numeric_group_palette,
     make_single_panel_figure,
     plot_grouped_summary,
     plot_empirical_accuracy_curve,
     plot_integration_map_panels,
     plot_simple_summary,
+    resolve_axes,
+    resolve_single_axis,
 )
 
 display_regressor_name = _display_regressor_name
@@ -1435,7 +1474,9 @@ SIGNED_DELAY_ORDER = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
 SIGNED_DELAY_LABELS = ["0", "-1", "-3", "-10", "10", "3", "1", "0"]
 
 
-def plot_accuracy_by_delay(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
+def plot_accuracy_by_delay(plot_df, **plot_kwargs):
+    style = dict(plot_kwargs)
+    style.setdefault("xlabel", "Delay")
     df_pd = to_pandas_df(plot_df)
     
     return plot_empirical_accuracy_curve(
@@ -1443,12 +1484,9 @@ def plot_accuracy_by_delay(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC del
         x_col="delays",
         invert_x=False,
         accuracy_col="hit",
-        xlabel="Delay",
-        title=title,
         baseline=0.5,
         color="#1f77b4",
-        ax=ax,
-        figsize=figsize,
+        **style,
     )
 
 
@@ -1466,14 +1504,19 @@ def plot_right_by_regressor_simple(
         xlabel=xlabel,
         n_bins=n_bins,
     )
-    return plot_simple_summary(summary, meta=meta, title=title)
+    style = {}
+    if xlabel is not None:
+        style["xlabel"] = xlabel
+    return plot_simple_summary(summary, meta=meta, **style)
 
 
 def plot_binned_accuracy_figure(
     plot_df,
     *,
     regressor_col: str,
+    **plot_kwargs,
 ):
+    style = dict(plot_kwargs)
     panels, legend_title = process.prepare_binned_accuracy_figure(
         plot_df,
         regressor_col=regressor_col,
@@ -1481,10 +1524,12 @@ def plot_binned_accuracy_figure(
     if not panels:
         return None
 
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(1, len(panels), figsize=(4 * len(panels), 4), sharey=True)
-    axes = np.atleast_1d(axes)
+    fig, axes = resolve_axes(
+        style.get("axes"),
+        n_axes=len(panels),
+        figsize=style.get("figsize", (4 * len(panels), 4)),
+        sharey=True,
+    )
 
     for ax, panel in zip(axes, panels, strict=False):
         x_col = "_signed_delay_cat" if panel["meta"].get("categorical_x") else "delay"
@@ -1499,7 +1544,9 @@ def plot_binned_accuracy_figure(
             ax.legend_.remove()
 
     add_shared_figure_legend(fig, source_ax=axes[-1], title=legend_title)
-    return fig
+    for ax in axes[: len(panels)]:
+        apply_axis_style(ax, **style)
+    return fig, axes[: len(panels)]
 
 
 def plot_right_by_regressor(
@@ -1509,6 +1556,7 @@ def plot_right_by_regressor(
     title: str | None = None,
     xlabel: str | None = None,
     n_bins: int = 10,
+    **plot_kwargs,
 ):
     summary, meta = process.prepare_right_by_regressor(
         plot_df,
@@ -1539,7 +1587,11 @@ def plot_right_by_regressor(
     line_labels = meta.get("line_labels") or []
     label_map = dict(zip(raw_line_order, line_labels, strict=False)) if line_labels else {}
 
-    fig, ax = make_single_panel_figure(extra_right_legend=True)
+    fig, ax = make_single_panel_figure(
+        extra_right_legend=True,
+        ax=plot_kwargs.get("ax"),
+        figsize=plot_kwargs.get("figsize", (3.0, 3.0)),
+    )
     plot_grouped_summary(
         ax,
         summary,
@@ -1549,9 +1601,8 @@ def plot_right_by_regressor(
         label_map=label_map,
         palette=palette,
     )
-    if title:
-        ax.set_title(title)
-    return fig
+    apply_axis_style(ax, **({"xlabel": xlabel} if xlabel is not None else {}))
+    return ax
 
 
 def plot_right_integration_map(
@@ -1566,6 +1617,8 @@ def plot_right_integration_map(
     n_bins: int = 64,
     sigma: float | None = None,
     smooth: bool = True,
+    ax : plt.Axes | None = None,
+    **plot_kwargs,
 ):
     _n_bins = n_bins
     _plot_df = plot_df
@@ -1606,10 +1659,13 @@ def plot_right_integration_map(
     )
     if _x_edges is not None:
         meta["xlabel"] = "Signed delay"
+    axes = [ax] if ax is not None else None
     return plot_integration_map_panels(
         panels,
         meta=meta,
+        axes = axes,
         interpolation=None,
+        **plot_kwargs,
     )
 
 
@@ -1618,6 +1674,7 @@ def plot_accuracy_by_total_evidence(
     *,
     adapter,
     views: dict,
+    **plot_kwargs,
 ):
     df_pd = attach_total_fitted_evidence(
         plot_df,
@@ -1637,14 +1694,16 @@ def plot_accuracy_by_total_evidence(
         xlabel="Correct-vs-rest fitted evidence",
         ylabel="Accuracy",
     )
-    return plot_simple_summary(summary, meta=meta)
+    return plot_simple_summary(summary, meta=meta, **plot_kwargs)
 
 
 def plot_repeat_by_repeat_evidence(
     plot_df,
     *,
     views: dict,
+    **plot_kwargs,
 ):
+    style = dict(plot_kwargs)
     df_pd = attach_repeat_choice_evidence(
         plot_df,
         views=views,
@@ -1686,11 +1745,10 @@ def plot_repeat_by_repeat_evidence(
         model_dense = None
         title = None
 
-    fig = plot_simple_summary(summary, meta=meta, title=title)
-    if fig is not None and x_dense is not None and model_dense is not None:
-        ax = fig.axes[0]
+    ax = plot_simple_summary(summary, meta=meta, **style)
+    if ax is not None and x_dense is not None and model_dense is not None:
         ax.plot(x_dense, model_dense, color="black", linewidth=1.0, linestyle=(0, (3, 1)), alpha=0.9, zorder=1)
-    return fig
+    return ax
 
 
 __all__ = [

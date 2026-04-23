@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import numpy as np
+from collections.abc import Sequence
+
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
-import seaborn as sns
+import numpy as np
 import pandas as pd
+import seaborn as sns
 
 from glmhmmt.plots import (
     custom_boxplot,
@@ -19,34 +21,74 @@ from glmhmmt.postprocess import (
 )
 
 
+def apply_axis_style(
+    ax,
+    *,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    xlim=None,
+    ylim=None,
+    xticks=None,
+    yticks=None,
+    xticklabels=None,
+    yticklabels=None,
+    title: str | None = None,
+    grid: bool = False,
+):
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    if xticks is not None:
+        ax.set_xticks(xticks)
+    if yticks is not None:
+        ax.set_yticks(yticks)
+
+    if xticklabels is not None:
+        ax.set_xticklabels(xticklabels)
+    if yticklabels is not None:
+        ax.set_yticklabels(yticklabels)
+
+    if title is not None:
+        ax.set_title(title)
+
+    if grid:
+        ax.grid(True)
+
 def plot_weights_boxplot(
     weights,
     feature_names=None,
     state_labels=None,
     state_colors=None,
-    figsize=None,
-    title: str = "GLM-HMM weights (across subjects)",
     connect_subjects: bool = True,
     show_ttests: bool = True,
     subject_line_color: str = "#7A7A7A",
     subject_line_alpha: float = 0.15,
     subject_line_width: float = 1.0,
+    **style,
 ):
-    return _plot_weights_boxplot(
+    fig = _plot_weights_boxplot(
         **build_weights_boxplot_payload(
             weights,
             feature_names=feature_names,
             state_labels=state_labels,
             state_colors=state_colors,
         ),
-        figsize=figsize,
-        title=title,
         connect_subjects=connect_subjects,
         show_ttests=show_ttests,
         subject_line_color=subject_line_color,
         subject_line_alpha=subject_line_alpha,
         subject_line_width=subject_line_width,
     )
+    for ax in fig.axes:
+        apply_axis_style(ax, **style)
+    return fig
 
 
 def plot_transition_matrix(
@@ -54,15 +96,23 @@ def plot_transition_matrix(
     state_labels: dict,
     K: int,
     subjects: list,
+    ax: plt.Axes | None = None,
+    figsize=(3.0, 3.0),
+    **style,
 ):
-    return _plot_transition_matrix(
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    fig = _plot_transition_matrix(
         **build_transition_matrix_payload(
             arrays_store=arrays_store,
             state_labels=state_labels,
             K=K,
             subjects=subjects,
-        )
+        ),
+        ax=ax,
     )
+    apply_axis_style(ax, **style)
+    return ax
 
 
 def plot_transition_matrix_by_subject(
@@ -70,20 +120,76 @@ def plot_transition_matrix_by_subject(
     state_labels: dict,
     K: int,
     subjects: list,
+    figsize=(3.0, 3.0),
+    **style,
 ):
-    return _plot_transition_matrix_by_subject(
+    fig = _plot_transition_matrix_by_subject(
         **build_transition_matrix_by_subject_payload(
             arrays_store=arrays_store,
             state_labels=state_labels,
             K=K,
             subjects=subjects,
-        )
+        ),
+        figsize=figsize,
     )
+    axes = np.asarray(fig.axes, dtype=object).ravel()
+    for ax in axes:
+        apply_axis_style(ax, **style)
+    return fig, axes
 
 
-def make_single_panel_figure(*, extra_right_legend: bool = False, figsize=(3.0, 3.0)):
-    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+def make_single_panel_figure(
+    *,
+    extra_right_legend: bool = False,
+    figsize=(3.0, 3.0),
+    ax: plt.Axes | None = None,
+    **style,
+):
+    _ = extra_right_legend
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    else:
+        fig = ax.figure
+    apply_axis_style(ax, **style)
     return fig, ax
+
+
+def resolve_single_axis(
+    *,
+    ax: plt.Axes | None = None,
+    figsize=(3.0, 3.0),
+    constrained_layout: bool = True,
+):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize, constrained_layout=constrained_layout)
+    else:
+        fig = ax.figure
+    return fig, ax
+
+
+def resolve_axes(
+    axes: Sequence[plt.Axes] | None = None,
+    *,
+    n_axes: int,
+    figsize,
+    squeeze: bool = False,
+    **subplots_kwargs,
+):
+    if axes is None:
+        fig, axes = plt.subplots(
+            1,
+            n_axes,
+            figsize=figsize,
+            squeeze=squeeze,
+            **subplots_kwargs,
+        )
+        axes = np.atleast_1d(axes).ravel()
+        return fig, axes
+
+    axes = np.asarray(axes, dtype=object).ravel()
+    if len(axes) < n_axes:
+        raise ValueError(f"Expected at least {n_axes} axes, got {len(axes)}.")
+    return axes[0].figure, axes
 
 
 def plot_empirical_accuracy_curve(
@@ -94,14 +200,18 @@ def plot_empirical_accuracy_curve(
     subject_col: str = "subject",
     x_order: list | None = None,
     x_tick_labels: list | dict | None = None,
-    xlabel: str,
-    title: str,
     baseline: float,
     color: str = "#2b7bba",
     invert_x: bool = False,
-    ax=None,
+    ax: plt.Axes | None = None,
     figsize=(3.0, 3.0),
+    **style,
 ):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    else:
+        fig = ax.figure
+
     if isinstance(df_like, pd.DataFrame):
         df = df_like.copy()
     elif hasattr(df_like, "to_pandas"):
@@ -117,13 +227,10 @@ def plot_empirical_accuracy_curve(
     df["_accuracy"] = pd.to_numeric(df[accuracy_col], errors="coerce")
     df = df[df[x_col].notna() & df["_accuracy"].notna()].copy()
     if df.empty:
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
-        else:
-            fig = ax.figure
         ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
         ax.axis("off")
-        return fig
+        apply_axis_style(ax, **style)
+        return ax
 
     if subject_col in df.columns:
         subject_summary = (
@@ -146,13 +253,10 @@ def plot_empirical_accuracy_curve(
     if x_order is not None:
         summary = summary[summary[x_col].isin(x_order)].copy()
         if summary.empty:
-            if ax is None:
-                fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
-            else:
-                fig = ax.figure
             ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
             ax.axis("off")
-            return fig
+            apply_axis_style(ax, **style)
+            return ax
         summary[x_col] = pd.Categorical(summary[x_col], categories=x_order, ordered=True)
         summary = summary.sort_values(x_col)
         x = np.arange(len(summary), dtype=float)
@@ -167,13 +271,10 @@ def plot_empirical_accuracy_curve(
         summary["_x_numeric"] = pd.to_numeric(summary[x_col], errors="coerce")
         summary = summary.dropna(subset=["_x_numeric"]).sort_values("_x_numeric")
         if summary.empty:
-            if ax is None:
-                fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
-            else:
-                fig = ax.figure
             ax.text(0.5, 0.5, "No valid accuracy data", ha="center", va="center")
             ax.axis("off")
-            return fig
+            apply_axis_style(ax, **style)
+            return ax
         x = summary["_x_numeric"].to_numpy(dtype=float)
         tick_labels = []
         for val in x:
@@ -187,11 +288,6 @@ def plot_empirical_accuracy_curve(
                 tick_labels.append(f"{val:g}")
 
     summary["sem"] = summary["std"].fillna(0.0) / np.sqrt(summary["n"].clip(lower=1))
-
-    if ax is None:
-        fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
-    else:
-        fig = ax.figure
     ax.errorbar(
         x,
         summary["mean"].to_numpy(dtype=float),
@@ -204,11 +300,10 @@ def plot_empirical_accuracy_curve(
         markersize=4,
         capsize=0,
     )
-    
+
     ax.axhline(baseline, color="gray", lw=0.8, ls="--", alpha=0.5)
-    ax.set_title(title)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("Accuracy")
+    ax.set_xlabel(style.get("xlabel", ""))
+    ax.set_ylabel(style.get("ylabel", "Accuracy"))
     ax.set_ylim(0.0, 1.0)
     ax.set_yticks([0.0, baseline, 1.0])
     ax.yaxis.set_major_formatter(
@@ -218,22 +313,23 @@ def plot_empirical_accuracy_curve(
     ax.axhspan(0.0, baseline, color="gray", alpha=0.08, zorder=0)
     if invert_x:
         ax.invert_xaxis()
-    
+
     sns.despine(ax=ax)
-    return fig
+    apply_axis_style(ax, **style)
+    return ax
 
 
 def add_shared_figure_legend(
     fig,
     *,
     source_ax,
-    title: str,
+    title: str | None = None,
     bbox_x: float = 0.94,
 ) -> None:
     handles, labels = source_ax.get_legend_handles_labels()
     if not handles:
         return
-    legend = fig.legend(
+    fig.legend(
         handles,
         labels,
         title=title,
@@ -269,24 +365,34 @@ def centered_numeric_group_palette(group_order: list) -> dict:
     return palette
 
 
-def _apply_axis_style(ax, *, meta, title: str | None = None):
-    if title:
-        ax.set_title(title)
-    ax.set_xlabel(meta["xlabel"])
-    ax.set_ylabel(meta["ylabel"])
+def _apply_summary_axis_style(ax, *, meta, **style):
+    ax.set_xlabel(style.get("xlabel", meta["xlabel"]))
+    ax.set_ylabel(style.get("ylabel", meta["ylabel"]))
     ax.set_ylim(0.0, 1.0)
 
     if meta["baseline"] is not None:
         ax.axhline(meta["baseline"], color="gray", lw=0.8, ls="--", alpha=0.5)
 
     sns.despine(ax=ax)
+    apply_axis_style(ax, **style)
 
 
-def plot_simple_summary(summary_df, *, meta, title: str | None = None):
+def plot_simple_summary(
+    summary_df,
+    *,
+    meta,
+    ax: plt.Axes | None = None,
+    figsize=(3.0, 3.0),
+    **style,
+):
     if summary_df is None or summary_df.empty:
         return None
 
-    fig, ax = make_single_panel_figure()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    else:
+        fig = ax.figure
+
     x = summary_df["x_center"].to_numpy(dtype=float)
     model_mean = summary_df["model_mean"].to_numpy(dtype=float)
     model_sem = summary_df["model_sem"].to_numpy(dtype=float)
@@ -322,9 +428,9 @@ def plot_simple_summary(summary_df, *, meta, title: str | None = None):
     )
     ax.axvline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
 
-    _apply_axis_style(ax, meta=meta, title=title)
+    _apply_summary_axis_style(ax, meta=meta, **style)
     ax.legend(frameon=False, fontsize=8)
-    return fig
+    return ax
 
 
 def plot_grouped_summary(
@@ -336,10 +442,12 @@ def plot_grouped_summary(
     meta,
     label_map: dict | None = None,
     palette: dict | None = None,
+    **style,
 ):
     if summary_df is None or summary_df.empty:
         ax.set_axis_off()
-        return
+        apply_axis_style(ax, **style)
+        return ax
 
     line_order = meta.get("line_order") or list(
         summary_df[line_group_col].dropna().unique()
@@ -394,12 +502,11 @@ def plot_grouped_summary(
     elif meta.get("xticks") is not None:
         ax.set_xticks(meta["xticks"], labels=meta.get("x_tick_labels"))
 
-    _apply_axis_style(ax, meta=meta)
+    _apply_summary_axis_style(ax, meta=meta, **style)
 
     legend_kwargs = {
         "title": meta.get("legend_title"),
         "frameon": False,
-        "fontsize": 8,
     }
     if meta.get("legend_outside", False):
         legend_kwargs.update(
@@ -413,17 +520,21 @@ def plot_grouped_summary(
             }
         )
     ax.legend(**legend_kwargs)
+    return ax
 
 
 def plot_integration_map_panels(
     panels: list[dict],
     *,
     meta: dict,
+    axes: Sequence[plt.Axes] | None = None,
+    figsize=None,
     contour_levels: tuple[float, ...] = (0.15, 0.3, 0.5, 0.7, 0.85),
     colours=None,
     cmap: str | None = None,
     interpolation: str | None = None,
     data_points_cutoff: float = 20.0,
+    **style,
 ):
     if not panels:
         return None
@@ -439,15 +550,19 @@ def plot_integration_map_panels(
         raise ValueError("colours must be a 2-by-3 RGB array.")
 
     n_panels = len(panels)
-    fig, axes = plt.subplots(
-        1,
-        n_panels,
-        figsize=(4.4 * n_panels, 4.0),
-        constrained_layout=True,
-        sharex=True,
-        sharey=True,
-    )
-    axes = np.atleast_1d(axes)
+    if axes is None:
+        fig, axes = plt.subplots(
+            1,
+            n_panels,
+            figsize=figsize or (4 * n_panels, 4.0),
+            constrained_layout=True,
+            sharex=True,
+            sharey=True,
+        )
+        axes = np.asarray(axes, dtype=object).ravel()
+    else:
+        axes = np.asarray(axes, dtype=object).ravel()
+        fig = axes[0].figure
 
     for ax, panel in zip(axes, panels, strict=False):
         z = np.asarray(panel["map"], dtype=float)
@@ -514,20 +629,29 @@ def plot_integration_map_panels(
                     colors="black",
                     linewidths=1.0,
                 )
-        ax.set_title(panel["label"])
         ax.set_xlabel(meta["xlabel"])
         if meta.get("xticks") is not None:
             ax.set_xticks(meta["xticks"], labels=meta.get("x_tick_labels"))
-        ax.set_box_aspect(1)
+        # ax.set_box_aspect(1)
+        apply_axis_style(ax, **style)
 
     axes[0].set_ylabel(meta["ylabel"])
-    return fig
+    return fig, axes
 
 
 __all__ = [
+    "add_shared_figure_legend",
+    "apply_axis_style",
+    "centered_numeric_group_palette",
     "custom_boxplot",
+    "make_single_panel_figure",
+    "plot_empirical_accuracy_curve",
+    "plot_grouped_summary",
     "plot_integration_map_panels",
+    "plot_simple_summary",
     "plot_transition_matrix",
     "plot_transition_matrix_by_subject",
     "plot_weights_boxplot",
+    "resolve_axes",
+    "resolve_single_axis",
 ]

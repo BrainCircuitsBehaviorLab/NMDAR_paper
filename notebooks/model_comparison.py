@@ -2046,6 +2046,7 @@ def _(mo):
 
 @app.cell
 def _(
+    get_adapter,
     mo,
     paths,
     refit_button,
@@ -2073,6 +2074,7 @@ def _(
     if not _FITTING_AVAILABLE:
         mo.md("❌  Fitting scripts not available in this environment (likely WASM).")
         mo.stop(True)
+    _baseline_class_idx = int(get_adapter(ui_task.value).baseline_class_idx)
 
     with mo.status.spinner(title="Re-fitting GLMHMM…"):
         if ui_glmhmm_dir.value:
@@ -2082,6 +2084,7 @@ def _(
                     K_list=_K_list,
                     out_dir=paths.RESULTS / "fits" / ui_task.value / "glmhmm" / _alias,
                     task=ui_task.value,
+                    baseline_class_idx=_baseline_class_idx,
                 )
 
     with mo.status.spinner(title="Re-fitting GLMHMM-T…"):
@@ -2092,6 +2095,7 @@ def _(
                     K_list=_K_list,
                     out_dir=paths.RESULTS / "fits" / ui_task.value / "glmhmmt" / _alias,
                     task=ui_task.value,
+                    baseline_class_idx=_baseline_class_idx,
                 )
 
     mo.md("✅  Re-fit complete. Reload the notebook to refresh cached metrics.")

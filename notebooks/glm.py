@@ -61,6 +61,7 @@ def _():
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
+    sns.set_context("notebook")
     paths = get_runtime_paths()
     return (
         CoefficientEditorWidget,
@@ -278,6 +279,7 @@ def _(
                 n_restarts=_n_restarts,
                 verbose=True,
                 progress_callback=_on_progress,
+                baseline_class_idx=1,
             )
         mm_widget.saved_model_name = _selected_id
         mm_widget.alias_error = ""
@@ -905,10 +907,10 @@ def _(
     _weights_df_sel = weights_df.filter(pl.col("subject").is_in(selected))
     _mcdr_mode = ui_mcdr_one_hot_mode.value if task_name == "MCDR" else "folded"
 
-    _fig_by_subject = plots.plot_emission_weights_by_subject(
-        _weights_df_sel,
-        K=K,
-    )
+    # _fig_by_subject = plots.plot_emission_weights_by_subject(
+    #     _weights_df_sel,
+    #     K=K,
+    # )
 
     _fig_summary = plot_weights_boxplot(**build_weights_boxplot_payload(build_emission_weights_df(views_sel)))
     _fig_stim_hot = plot_stim_hot_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
@@ -1123,6 +1125,12 @@ def _(
 
 
 @app.cell
+def _(ui_accuracy_regressor):
+    ui_accuracy_regressor
+    return
+
+
+@app.cell
 def _(
     is_2afc,
     mo,
@@ -1140,6 +1148,7 @@ def _(
         "glm",
         background_style="model",
         **_perf_kwargs,
+        # figsize=(4,4)
     )
 
     _choice_history_regressor = plots.pick_choice_history_regressor(regressor_options)
@@ -1285,20 +1294,13 @@ def _(
 
 
 @app.cell
-def _(mo):
-    ui_integration_map_smooth = mo.ui.checkbox(value=True, label="Smooth map")
-    return (ui_integration_map_smooth,)
-
-
-@app.cell
-def _(mo, plot_df_all, plots, save_plot, ui_integration_map_smooth):
-    mo.stop(
+def _(mo, plot_df_all, plots, save_plot, zmo):
+    zmo.stop(
         not hasattr(plots, "plot_right_integration_map"),
         mo.md("No p(right) integration map helper is available for this task."),
     )
     _fig_integration_map = plots.plot_right_integration_map(
         plot_df_all,
-        smooth=ui_integration_map_smooth.value,
     )
     mo.stop(
         _fig_integration_map is None,
@@ -1307,7 +1309,6 @@ def _(mo, plot_df_all, plots, save_plot, ui_integration_map_smooth):
 
     mo.vstack(
         [
-            ui_integration_map_smooth,
             _fig_integration_map,
             save_plot(
                 _fig_integration_map,
@@ -1317,6 +1318,31 @@ def _(mo, plot_df_all, plots, save_plot, ui_integration_map_smooth):
         ],
         align="center",
     )
+    return
+
+
+@app.cell
+def _(plot_df_all, plots, plt):
+    fig, axd = plt.subplot_mosaic(
+        [["a", "b"], ["c", "d"]],
+        figsize=(7, 5),
+        layout="constrained",
+    )   
+    plots.plot_right_by_regressor(plot_df_all, regressor_col="choice_lag_one_hot_sum", ax=axd["a"])
+    plots.plot_right_integration_map(plot_df_all, ax=axd["b"])
+    plots.plot_right_by_regressor(plot_df_all, regressor_col="choice_lag_one_hot_sum", ax=axd["d"])
+    plots.plot_right_integration_map(plot_df_all, ax=axd["c"])
+    for label, ax in zip("abcd", axd.values()):
+        ax.text(
+            -0.25, 1.1, label,
+            transform=ax.transAxes,
+            fontsize=14,
+            fontweight="bold",
+            va="top",
+            ha="right",
+        )
+        # ax.set_box_aspect(1)
+    fig
     return
 
 

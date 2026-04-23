@@ -167,18 +167,20 @@ def _(mo):
 
 
 @app.cell
-def _(model_cfg, task_name):
+def _(get_adapter, model_cfg, task_name):
     from glmhmmt.cli.fit_glmhmm import generate_model_id as _gen_id
+    baseline_class_idx = int(get_adapter(task_name).baseline_class_idx)
 
     current_hash = _gen_id(
-        task_name,
-        model_cfg.K,
-        model_cfg.tau,
-        model_cfg.emission_cols,
-        model_cfg.frozen_emissions,
-        model_cfg.cv_mode,
-        model_cfg.cv_repeats,
-        model_cfg.condition_filter,
+        task=task_name,
+        K=model_cfg.K,
+        tau=model_cfg.tau,
+        emission_cols=model_cfg.emission_cols,
+        frozen_emissions=model_cfg.frozen_emissions,
+        baseline_class_idx=baseline_class_idx,
+        cv_mode=model_cfg.cv_mode,
+        cv_repeats=model_cfg.cv_repeats,
+        condition_filter=model_cfg.condition_filter,
     )
     return (current_hash,)
 
@@ -226,6 +228,7 @@ def _(
     current_hash,
     fit_main,
     get_last_fit_click,
+    get_adapter,
     mm_widget,
     mo,
     model_cfg,
@@ -242,6 +245,7 @@ def _(
 
     _n_restarts = 1 if model_cfg.cv_mode != "none" else 5
     _cv_repeats = int(model_cfg.cv_repeats) if model_cfg.cv_mode != "none" else 0
+    _baseline_class_idx = int(get_adapter(task_name).baseline_class_idx)
 
     _selected_id = model_cfg.existing or (model_cfg.alias if model_cfg.alias else current_hash)
     _OUT = paths.RESULTS / "fits" / task_name / "glmhmm" / _selected_id
@@ -317,6 +321,7 @@ def _(
                 n_restarts=_n_restarts,
                 verbose=False,
                 condition_filter=model_cfg.condition_filter,
+                baseline_class_idx=_baseline_class_idx,
                 progress_callback=_on_progress,
             )
         mm_widget.saved_model_name = _selected_id

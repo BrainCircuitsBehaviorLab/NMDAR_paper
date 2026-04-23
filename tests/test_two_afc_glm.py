@@ -10,6 +10,8 @@ import polars as pl
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
@@ -86,6 +88,28 @@ class TestTwoAfcGlm(unittest.TestCase):
         self.assertEqual(U.shape, (3, 0))
         self.assertEqual(names["X_cols"], ["bias", "stim_param"])
         np.testing.assert_allclose(np.asarray(X[:, 1]), stim_param)
+
+    def test_load_subject_drops_unavailable_bias_hot_cols(self) -> None:
+        adapter = TwoAFCAdapter()
+        df_sub = _subject_df()
+
+        with (
+            patch("process.two_afc.load_subject_choice_half_life", return_value=None),
+            patch(
+                "glmhmmt.cli.alexis_functions.get_action_trace",
+                return_value=(np.zeros(3), np.zeros(3), np.zeros(3), np.zeros(3)),
+            ),
+        ):
+            y, X, U, names = adapter.load_subject(
+                df_sub,
+                emission_cols=["bias", "bias_0", "bias_1", "stim_vals"],
+                transition_cols=[],
+            )
+
+        self.assertEqual(y.shape, (3,))
+        self.assertEqual(X.shape, (3, 3))
+        self.assertEqual(U.shape, (3, 0))
+        self.assertEqual(names["X_cols"], ["bias", "bias_0", "stim_vals"])
 
 
 if __name__ == "__main__":

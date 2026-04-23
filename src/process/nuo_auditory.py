@@ -33,10 +33,15 @@ except ImportError:
         return result
 
 _NUM_STIM_BINS = 9
-_NUM_CHOICE_LAGS = 10
+_NUM_CHOICE_LAGS = 15
 _STIM_BIN_PREFIX = "stim_bin_"
 _CHOICE_LAG_PREFIX = "choice_lag_"
+_DIFFICULTY_COL_PREFIX = "difficulty_"
+_BIAS_HOT_COL_PREFIX = "bias_"
 _STIM_PARAM_COL = "stim_param"
+_DIFFICULTY_PARAM_COL = "difficulty_param"
+_AT_CHOICE_PARAM_COL = "at_choice_param"
+_DIFFICULTY_LEVELS = ("easy", "medium", "hard")
 
 
 def _stim_bin_names() -> list[str]:
@@ -47,14 +52,22 @@ def _choice_lag_names() -> list[str]:
     return [f"{_CHOICE_LAG_PREFIX}{idx:02d}" for idx in range(1, _NUM_CHOICE_LAGS + 1)]
 
 
+def _difficulty_col_names() -> list[str]:
+    return [f"{_DIFFICULTY_COL_PREFIX}{level}" for level in _DIFFICULTY_LEVELS]
+
+
 _STIM_BIN_COLS = _stim_bin_names()
 _CHOICE_LAG_COLS = _choice_lag_names()
+_DIFFICULTY_COLS = _difficulty_col_names()
 
 EMISSION_COLS: list[str] = [
     "bias",
+    "bias_param",
     "stim_vals",
     "stim_param",
+    "difficulty_param",
     "at_choice",
+    "at_choice_param",
     "at_error",
     "at_correct",
     "reward_trace",
@@ -83,8 +96,26 @@ _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     source_features=tuple(_STIM_BIN_COLS),
 )
 
-_AT_CHOICE_SPEC = FittedWeightRegressorSpec(
-    target_name="at_choice",
+_BIAS_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="bias_param",
+    fit_task="nuo_auditory",
+    fit_model_kind="glm",
+    fit_model_id="one hot lapses",
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_BIAS_HOT_COL_PREFIX,),
+)
+
+_DIFFICULTY_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="difficulty_param",
+    fit_task="nuo_auditory",
+    fit_model_kind="glm",
+    fit_model_id="one hot lapses",
+    arrays_suffix="glm_arrays.npz",
+    source_features=tuple(_DIFFICULTY_COLS),
+)
+
+_AT_CHOICE_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="at_choice_param",
     fit_task="nuo_auditory",
     fit_model_kind="glm",
     fit_model_id="lagged choices",
@@ -94,9 +125,15 @@ _AT_CHOICE_SPEC = FittedWeightRegressorSpec(
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "stim_vals": r"$\mathrm{Stimulus}$",
+    "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
     "stim_param": r"$\mathrm{Stimulus}_{\mathrm{param}}$",
+    "difficulty_param": r"$\mathrm{Difficulty}_{\mathrm{param}}$",
+    "difficulty_easy": r"$\mathrm{Easy}$",
+    "difficulty_medium": r"$\mathrm{Medium}$",
+    "difficulty_hard": r"$\mathrm{Hard}$",
     "bias": r"$\mid\mathrm{bias}\mid$",
     "at_choice": r"$\mathrm{A}_t^{\mathrm{choice}}$",
+    "at_choice_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
     "at_error": r"$\mathrm{A}_t^{\mathrm{error}}$",
     "at_correct": r"$\mathrm{A}_t^{\mathrm{correct}}$",
     "reward_trace": r"$\mathrm{Reward}_{\mathrm{trace}}$",
@@ -108,9 +145,12 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
 
 _EMISSION_GROUPS: list[dict] = [
     {"key": "bias", "label": "bias", "members": {"N": "bias"}},
+    {"key": "bias_param", "label": "bias param", "members": {"N": "bias_param"}},
     {"key": "stim_vals", "label": "stim vals", "members": {"N": "stim_vals"}},
     {"key": "stim_param", "label": "stim param", "members": {"N": "stim_param"}},
+    {"key": "difficulty_param", "label": "difficulty param", "members": {"N": "difficulty_param"}},
     {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
+    {"key": "at_choice_param", "label": "choice param", "members": {"N": "at_choice_param"}},
     {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
     {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
     {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
@@ -152,6 +192,52 @@ def _safe_weighted_sum_regressor(part, spec: FittedWeightRegressorSpec) -> np.nd
         return None
 
 
+def _bias_hot_sort_key(name: str) -> tuple[int, str]:
+    suffix = name.removeprefix(_BIAS_HOT_COL_PREFIX)
+    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
+
+
+def _bias_hot_cols(columns: list[str]) -> list[str]:
+    return sorted(
+        [
+            col
+            for col in columns
+            if col.startswith(_BIAS_HOT_COL_PREFIX)
+            and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+        ],
+        key=_bias_hot_sort_key,
+    )
+
+
+def _is_bias_hot_col(col: str) -> bool:
+    return col.startswith(_BIAS_HOT_COL_PREFIX) and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+
+
+def _drop_unavailable_bias_hot_cols(cols: list[str], available_cols: set[str]) -> list[str]:
+    return [col for col in cols if col in available_cols or not _is_bias_hot_col(col)]
+
+
+def _max_sessions_from_df(df: pl.DataFrame) -> int:
+    if "session" not in df.columns:
+        return 0
+    if "subject" not in df.columns:
+        return int(df.select(pl.col("session").drop_nulls().n_unique()).item() or 0)
+    return int(
+        df.group_by("subject")
+        .agg(pl.col("session").drop_nulls().n_unique().alias("n_sessions"))
+        .select(pl.col("n_sessions").max())
+        .item()
+        or 0
+    )
+
+
+def _infer_bias_hot_cols_from_df(df: pl.DataFrame) -> list[str]:
+    existing = _bias_hot_cols(list(df.columns))
+    if existing:
+        return existing
+    return [f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(_max_sessions_from_df(df))]
+
+
 def _stim_param_weight_map() -> dict[str, float]:
     try:
         return mean_feature_weights_from_fit(_STIM_PARAM_SPEC)
@@ -170,7 +256,9 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
             result.append({**group, "members": filtered})
             registered.update(filtered.values())
 
+    bias_hot_cols = _bias_hot_cols(available_cols)
     stim_bin_cols = [col for col in available_cols if col in _STIM_BIN_COLS]
+    difficulty_cols = [col for col in available_cols if col in _DIFFICULTY_COLS]
     choice_lag_cols = [col for col in available_cols if col in _CHOICE_LAG_COLS]
     for group in _EMISSION_GROUPS:
         add_scalar(group)
@@ -185,7 +273,29 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
                 }
             )
             registered.update(stim_bin_cols)
-        if group["key"] == "at_choice" and choice_lag_cols:
+        if group["key"] == "bias_param" and bias_hot_cols:
+            result.append(
+                {
+                    "key": "bias_hot",
+                    "label": "bias_hot",
+                    "members": {},
+                    "toggle_members": list(bias_hot_cols),
+                    "hide_members": True,
+                }
+            )
+            registered.update(bias_hot_cols)
+        if group["key"] == "difficulty_param" and difficulty_cols:
+            result.append(
+                {
+                    "key": "difficulty_hot",
+                    "label": "difficulty_hot",
+                    "members": {},
+                    "toggle_members": list(difficulty_cols),
+                    "hide_members": True,
+                }
+            )
+            registered.update(difficulty_cols)
+        if group["key"] == "at_choice_param" and choice_lag_cols:
             result.append(
                 {
                     "key": "at_choice_lag",
@@ -210,21 +320,23 @@ class NuoAuditoryAdapter(TaskAdapter):
     task_key: str = "nuo_auditory"
     task_label: str = "Nuo auditory"
     num_classes: int = 2
-    data_file: str = "auditory_2AFC.parquet"
+    data_file: str = "hernando.parquet"
     sort_col = ["session", "trial"]
     session_col: str = "session"
     psychometric_x_col: str = "total_evidence_strength"
 
     _SCORING_OPTIONS: dict = {
-        "stim_vals (-w)": [("stim_vals", "neg")],
+        "stim_vals (w)": [("stim_vals", "pos")],
+        "stim_vals (-w)": [("stim_vals", "pos")],
         "stim_vals (|w|)": [("stim_vals", "abs")],
-        "stim_param (-w)": [("stim_param", "neg")],
+        "stim_param (w)": [("stim_param", "pos")],
+        "stim_param (-w)": [("stim_param", "pos")],
         "stim_param (|w|)": [("stim_param", "abs")],
         "at_choice (|w|)": [("at_choice", "abs")],
         "wsls (|w|)": [("wsls", "abs")],
         "bias (|w|)": [("bias", "abs")],
     }
-    scoring_key: str = "stim_vals (-w)"
+    scoring_key: str = "stim_vals (w)"
 
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
         """Drop miss trials and add the canonical binary-task columns.
@@ -275,6 +387,23 @@ class NuoAuditoryAdapter(TaskAdapter):
         if stim_scale <= 0:
             stim_scale = 1.0
 
+        session_order = list(dict.fromkeys(df_sub["session"].to_list()))
+        session_map = pl.DataFrame(
+            {
+                "session": session_order,
+                "_session_idx": np.arange(len(session_order), dtype=np.int32),
+            }
+        )
+        df_sub = df_sub.join(session_map, on="session", how="left")
+        session_idx_np = df_sub["_session_idx"].to_numpy().astype(np.int32)
+        bias_hot_exprs = [
+            pl.Series(
+                f"{_BIAS_HOT_COL_PREFIX}{idx}",
+                (session_idx_np == idx).astype(np.float32),
+            )
+            for idx in range(len(session_order))
+        ]
+
         choice_signed_expr = (
             pl.when(pl.col("response") == 1)
             .then(pl.lit(1.0))
@@ -286,11 +415,20 @@ class NuoAuditoryAdapter(TaskAdapter):
 
         df_sub = df_sub.with_columns(
             [
-                (pl.col("total_evidence_strength").cast(pl.Float32) / pl.lit(stim_scale)).alias("stim_vals"),
+                (-pl.col("total_evidence_strength").cast(pl.Float32) / pl.lit(stim_scale)).alias("stim_vals"),
                 pl.lit(1.0).cast(pl.Float32).alias("bias"),
                 choice_signed_expr.alias("_choice_signed"),
+                pl.when(pl.col("correct_side").str.to_lowercase() == "left")
+                .then(pl.lit(-1.0))
+                .when(pl.col("correct_side").str.to_lowercase() == "right")
+                .then(pl.lit(1.0))
+                .otherwise(pl.lit(0.0))
+                .cast(pl.Float32)
+                .alias("_correct_side_signed"),
             ]
         )
+        if bias_hot_exprs:
+            df_sub = df_sub.with_columns(bias_hot_exprs)
 
         stim_vals_np = df_sub["stim_vals"].to_numpy().astype(np.float32)
         stim_bin_idx = _stim_bin_indices(stim_vals_np)
@@ -302,6 +440,16 @@ class NuoAuditoryAdapter(TaskAdapter):
             for idx, name in enumerate(_STIM_BIN_COLS)
         ]
         df_sub = df_sub.with_columns(stim_bin_exprs)
+        df_sub = df_sub.with_columns(
+            [
+                pl.when(pl.col("difficulty").str.to_lowercase() == level)
+                .then(pl.col("_correct_side_signed"))
+                .otherwise(pl.lit(0.0))
+                .cast(pl.Float32)
+                .alias(col)
+                for level, col in zip(_DIFFICULTY_LEVELS, _DIFFICULTY_COLS)
+            ]
+        )
 
         df_sub = df_sub.with_columns(
             [
@@ -325,8 +473,10 @@ class NuoAuditoryAdapter(TaskAdapter):
         ]
         df_sub = df_sub.with_columns(lag_exprs)
 
+        bias_param = _safe_weighted_sum_regressor(df_sub, _BIAS_PARAM_SPEC)
         stim_param = _safe_weighted_sum_regressor(df_sub, _STIM_PARAM_SPEC)
-        at_choice_param = _safe_weighted_sum_regressor(df_sub, _AT_CHOICE_SPEC)
+        difficulty_param = _safe_weighted_sum_regressor(df_sub, _DIFFICULTY_PARAM_SPEC)
+        at_choice_param = _safe_weighted_sum_regressor(df_sub, _AT_CHOICE_PARAM_SPEC)
         df_sub = df_sub.with_columns(
             [
                 pl.when(pl.col("_cumulative_reward_raw").max().over("session") > 0)
@@ -334,18 +484,29 @@ class NuoAuditoryAdapter(TaskAdapter):
                 .otherwise(pl.lit(0.0))
                 .cast(pl.Float32)
                 .alias("cumulative_reward"),
-                (
-                    pl.Series("at_choice", at_choice_param)
-                    if at_choice_param is not None
-                    else pl.col("_prev_choice_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("at_choice")
-                ),
+                pl.col("_prev_choice_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("at_choice"),
                 pl.col("_prev_correct_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("at_correct"),
                 pl.col("_prev_error_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("at_error"),
                 pl.col("prev_reward").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("reward_trace"),
                 (
+                    pl.Series("bias_param", bias_param)
+                    if bias_param is not None
+                    else pl.col("bias").cast(pl.Float32).alias("bias_param")
+                ),
+                (
                     pl.Series(_STIM_PARAM_COL, stim_param)
                     if stim_param is not None
                     else pl.col("stim_vals").cast(pl.Float32).alias(_STIM_PARAM_COL)
+                ),
+                (
+                    pl.Series(_DIFFICULTY_PARAM_COL, difficulty_param)
+                    if difficulty_param is not None
+                    else pl.sum_horizontal([pl.col(col) for col in _DIFFICULTY_COLS]).cast(pl.Float32).alias(_DIFFICULTY_PARAM_COL)
+                ),
+                (
+                    pl.Series(_AT_CHOICE_PARAM_COL, at_choice_param)
+                    if at_choice_param is not None
+                    else pl.col("_prev_choice_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias(_AT_CHOICE_PARAM_COL)
                 ),
             ]
         )
@@ -376,6 +537,7 @@ class NuoAuditoryAdapter(TaskAdapter):
         ecols = emission_cols if emission_cols is not None else self.default_emission_cols(feature_df)
         ucols = transition_cols if transition_cols is not None else self.default_transition_cols()
         allowed_ecols = set(self.available_emission_cols(feature_df))
+        ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
         bad_u = [c for c in ucols if c not in TRANSITION_COLS]
         if bad_e:
@@ -397,15 +559,27 @@ class NuoAuditoryAdapter(TaskAdapter):
         if df is None:
             return []
 
-        dynamic_cols = [c for c in list(_STIM_BIN_COLS) + list(_CHOICE_LAG_COLS) if c in df.columns]
+        dynamic_cols = [
+            c
+            for c in list(_STIM_BIN_COLS) + list(_DIFFICULTY_COLS) + list(_CHOICE_LAG_COLS)
+            if c in df.columns
+        ]
+        dynamic_cols.extend(_bias_hot_cols(list(df.columns)))
+        dynamic_cols = list(dict.fromkeys(dynamic_cols))
         if dynamic_cols:
             return dynamic_cols
 
         raw_has_stim = "total_evidence_strength" in df.columns
+        raw_has_difficulty = "difficulty" in df.columns and "correct_side" in df.columns
         raw_has_choice = "last_choice" in df.columns or "response" in df.columns
+        raw_has_session = "session" in df.columns
         inferred: list[str] = []
         if raw_has_stim:
             inferred.extend(_STIM_BIN_COLS)
+        if raw_has_difficulty:
+            inferred.extend(_DIFFICULTY_COLS)
+        if raw_has_session:
+            inferred.extend(_infer_bias_hot_cols_from_df(df))
         if raw_has_choice:
             inferred.extend(_CHOICE_LAG_COLS)
         return inferred
@@ -438,6 +612,7 @@ class NuoAuditoryAdapter(TaskAdapter):
         ecols = list(emission_cols) if emission_cols is not None else self.default_emission_cols(df)
         ucols = list(transition_cols) if transition_cols is not None else self.default_transition_cols()
         allowed_ecols = set(self.available_emission_cols(df))
+        ecols = _drop_unavailable_bias_hot_cols(ecols, allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
         bad_u = [c for c in ucols if c not in TRANSITION_COLS]
         if bad_e:
