@@ -6,6 +6,7 @@ app = marimo.App(width="full")
 
 @app.cell
 def _():
+    # Imports
     import marimo as mo
     import polars as pl
     import matplotlib.pyplot as plt
@@ -14,22 +15,30 @@ def _():
     from plot_saver import make_plot_saver
     from glmhmmt.tasks import get_adapter
     from glmhmmt.runtime import configure_paths
+    import os
 
-    configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
-    sns.set_style("ticks")
-    return Path, get_adapter, make_plot_saver, mo, pl, plt, sns
+    from src.utils import fig_size
+
+    return Path, fig_size, get_adapter, make_plot_saver, mo, os, pl, plt, sns
 
 
 @app.cell
-def _(Path):
-    data_path = Path(__file__).parents[1] / "data/processed"
-    data_path
-    return (data_path,)
+def _(os, plt, sns):
+    # Set style
+    sns.set_theme(style='ticks', context='notebook')
+    style_path = os.path.expanduser('~/PycharmProjects/alexis_style.mplstyle')
+    plt.style.use(style_path)
+    return
 
 
 @app.cell
 def _(Path, make_plot_saver, mo):
+    # Set paths
+    data_path = Path(__file__).parents[1] / "data/processed"
+    print(data_path)
+
     project_path = Path(__file__).resolve().parents[1]
+    print(project_path)
     save_plot = make_plot_saver(
         mo,
         results_dir=project_path / "results",
@@ -37,7 +46,7 @@ def _(Path, make_plot_saver, mo):
         task_name="figure1",
         model_id="behavior",
     )
-    return (save_plot,)
+    return (data_path,)
 
 
 @app.cell
@@ -56,6 +65,12 @@ def _(MCDR, data_path, pl, two_afc, two_afc_delay):
     return df_2AFC, df_2AFC_delay, df_MCDR
 
 
+@app.cell
+def _(df_2AFC):
+    df_2AFC
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -65,86 +80,34 @@ def _(mo):
 
 
 @app.cell
-def _(
-    MCDR,
-    df_2AFC,
-    df_2AFC_delay,
-    df_MCDR,
-    mo,
-    save_plot,
-    sns,
-    two_afc,
-    two_afc_delay,
-):
-    sns.set_context("paper")
+def _(MCDR, two_afc, two_afc_delay):
     MCDR_plots = MCDR.get_plots()
     two_afc_plots = two_afc.get_plots()
     two_afc_delay_plots = two_afc_delay.get_plots()
-    _figsize = (3.0, 3.0)
-    _fig_mcdr = MCDR_plots.plot_accuracy_by_difficulty(df_MCDR, figsize=_figsize, title="MCDR")
-    _fig_2afc = two_afc_plots.plot_accuracy_by_stimulus(df_2AFC, figsize=_figsize, title="2AFC")
-    _fig_delay = two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay, figsize=_figsize, title="2AFC delay")
-    mo.hstack(
-        [
-            mo.vstack(
-                [
-                    _fig_mcdr,
-                    save_plot(_fig_mcdr, "MCDR accuracy", stem="mcdr_accuracy"),
-                ],
-                align="center",
-            ),
-            mo.vstack(
-                [
-                    _fig_2afc,
-                    save_plot(_fig_2afc, "2AFC accuracy", stem="two_afc_accuracy"),
-                ],
-                align="center",
-            ),
-            mo.vstack(
-                [
-                    _fig_delay,
-                    save_plot(_fig_delay, "2AFC delay accuracy", stem="two_afc_delay_accuracy"),
-                ],
-                align="center",
-            ),
-        ],
-        align="center",
-    )
     return MCDR_plots, two_afc_delay_plots, two_afc_plots
 
 
 @app.cell
-def _(
-    MCDR_plots,
-    df_2AFC,
-    df_2AFC_delay,
-    df_MCDR,
-    plt,
-    sns,
-    two_afc_delay_plots,
-    two_afc_plots,
-):
-    fig, axs = plt.subplot_mosaic(
-        [["mcdr", "two_afc", "delay"]],
-        figsize=(6, 2),
-        constrained_layout=True,
-        sharey=True,
-    )
-    MCDR_plots.plot_accuracy_by_difficulty(df_MCDR, ax=axs["mcdr"], title="MCDR")
-    two_afc_plots.plot_accuracy_by_stimulus(df_2AFC, ax=axs["two_afc"], title="2AFC")
-    two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay, ax=axs["delay"], title="2AFC delay")
-    sns.despine(fig=fig)
-    fig
+def _(MCDR_plots, df_MCDR, fig_size, plt):
+    MCDR_plots.plot_accuracy_by_difficulty(df_MCDR, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('acc_vs_difficulty.svg')
+    plt.show()
     return
 
 
 @app.cell
-def _():
+def _(df_2AFC, fig_size, plt, two_afc_plots):
+    two_afc_plots.plot_accuracy_by_stimulus(df_2AFC, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('acc_vs_ild.svg')
+    plt.show()
     return
 
 
 @app.cell
-def _():
+def _(df_2AFC_delay, fig_size, plt, two_afc_delay_plots):
+    two_afc_delay_plots.plot_accuracy_by_delay(df_2AFC_delay, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('acc_vs_delay.svg')
+    plt.show()
     return
 
 

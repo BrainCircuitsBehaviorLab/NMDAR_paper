@@ -199,13 +199,13 @@ def plot_empirical_accuracy_curve(
         fmt="o-",
         color=color,
         ecolor=color,
-        elinewidth=1.0,
-        linewidth=2.0,
-        markersize=4,
+        # elinewidth=1.0,
+        # linewidth=2.0,
+        # markersize=4,
         capsize=0,
     )
     
-    ax.axhline(baseline, color="gray", lw=0.8, ls="--", alpha=0.5)
+    ax.axhline(baseline, color="gray", ls="--")
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Accuracy")
@@ -215,7 +215,7 @@ def plot_empirical_accuracy_curve(
         FuncFormatter(lambda y, _: f"{y:.2f}".rstrip("0").rstrip("."))
     )
     ax.set_xticks(x, labels=tick_labels)
-    ax.axhspan(0.0, baseline, color="gray", alpha=0.08, zorder=0)
+    ax.axhspan(0.0, baseline, color="gray", alpha=0.1, zorder=0)
     if invert_x:
         ax.invert_xaxis()
     

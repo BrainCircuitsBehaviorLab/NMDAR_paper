@@ -91,7 +91,6 @@ from glmhmmt.model_plots import (
 from glmhmmt.views import build_state_palette, get_state_color, get_state_palette
 
 # ── state colour palette ──────────────────────────────────────────────────────
-sns.set_style("ticks")
 
 _SESSION_COL = "session"
 _SORT_COL = "trial_idx"
@@ -1559,7 +1558,7 @@ def plot_accuracy_by_stimulus(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"
 
     df_pd["abs_ILD"] = pd.to_numeric(df_pd["ILD"], errors="coerce").abs()
     x_col = "abs_ILD"
-    xlabel = "Absolute ILD (dB)"
+    xlabel = "|ILD| (dB)"
 
     return plot_empirical_accuracy_curve(
         df_pd,
@@ -1571,7 +1570,7 @@ def plot_accuracy_by_stimulus(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"
         xlabel=xlabel,
         title=title,
         baseline=0.5,
-        color="#2b7bba",
+        color="tab:blue",
         ax=ax,
         figsize=figsize,
     )

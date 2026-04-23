@@ -59,8 +59,6 @@ from glmhmmt.model_plots import (
     plot_transition_weights,
 )
 
-sns.set_style("white")
-
 cfg = load_app_config()
 CI_BAND_ERR_KWS = {"edgecolor": "none", "linewidth": 0}
 
@@ -664,11 +662,12 @@ def plot_accuracy_by_difficulty(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
         accuracy_col=accuracy_col,
         invert_x=False,
         x_order=cfg["plots"]["ttype"]["order"],
-        x_tick_labels=cfg["plots"]["ttype"]["labels"],
-        xlabel="Trial difficulty",
+        # x_tick_labels=cfg["plots"]["ttype"]["labels"],
+        x_tick_labels=['VG', 'Easy', 'Mid', 'Hard'],
+        xlabel="Difficulty",
         title=title,
         baseline=1 / 3,
-        color="#7B3F98",
+        color="tab:blue",
         ax=ax,
         figsize=figsize,
     )

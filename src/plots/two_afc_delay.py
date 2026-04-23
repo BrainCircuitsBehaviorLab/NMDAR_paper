@@ -91,7 +91,6 @@ from glmhmmt.model_plots import (
 from glmhmmt.views import get_state_color, get_state_palette
 
 # ── state colour palette ──────────────────────────────────────────────────────
-sns.set_style("ticks")
 
 _SESSION_COL = "session"
 _SORT_COL = "trial_idx"
@@ -1446,7 +1445,7 @@ def plot_accuracy_by_delay(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC del
         xlabel="Delay",
         title=title,
         baseline=0.5,
-        color="#1f77b4",
+        color="tab:blue",
         ax=ax,
         figsize=figsize,
     )
