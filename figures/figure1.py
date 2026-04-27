@@ -51,6 +51,7 @@ def _(Path, make_plot_saver, mo):
 
 @app.cell
 def _(get_adapter):
+    # Get adapters
     MCDR = get_adapter("MCDR")
     two_afc = get_adapter("2AFC")
     two_afc_delay = get_adapter("2AFC_delay")
@@ -63,12 +64,6 @@ def _(MCDR, data_path, pl, two_afc, two_afc_delay):
     df_2AFC_delay = two_afc_delay.subject_filter(pl.read_parquet(data_path / "tiffany.parquet"))
     df_MCDR = MCDR.subject_filter(pl.read_parquet(data_path / "df_filtered.parquet"))
     return df_2AFC, df_2AFC_delay, df_MCDR
-
-
-@app.cell
-def _(df_2AFC_delay):
-    df_2AFC_delay
-    return
 
 
 @app.cell(hide_code=True)
@@ -88,39 +83,12 @@ def _(MCDR, two_afc, two_afc_delay):
 
 
 @app.cell
-def _(MCDR_plots, df_MCDR, fig_size, plt):
-    MCDR_plots.plot_accuracy(df_MCDR, figsize=fig_size(n_cols=3), title='')
-    plt.savefig('acc_vs_difficulty.svg')
-    plt.show()
-    return
-
-
-@app.cell
-def _(df_2AFC, fig_size, plt, two_afc_plots):
-    two_afc_plots.plot_accuracy(df_2AFC, figsize=fig_size(n_cols=3), title='')
-    plt.savefig('acc_vs_ild.svg')
-    plt.show()
-    return
-
-
-@app.cell
 def _(df_2AFC_delay, fig_size, plt, two_afc_delay_plots):
+    # 2ADC
     two_afc_delay_plots.plot_accuracy(df_2AFC_delay, figsize=fig_size(n_cols=3), title='')
     plt.savefig('acc_vs_delay.svg')
     plt.show()
-    return
 
-
-@app.cell
-def _(MCDR_plots, df_MCDR, fig_size, plt):
-    MCDR_plots.plot_rb(df_MCDR, figsize=fig_size(n_cols=3), title='')
-    plt.savefig('MCDR_rb.svg')
-    plt.show()
-    return
-
-
-@app.cell
-def _(df_2AFC_delay, fig_size, plt, two_afc_delay_plots):
     two_afc_delay_plots.plot_rb(df_2AFC_delay, figsize=fig_size(n_cols=3), title='')
     plt.savefig('2ADC_rb.svg')
     plt.show()
@@ -129,6 +97,11 @@ def _(df_2AFC_delay, fig_size, plt, two_afc_delay_plots):
 
 @app.cell
 def _(df_2AFC, fig_size, plt, two_afc_plots):
+    # 2AFC
+    two_afc_plots.plot_accuracy(df_2AFC, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('acc_vs_ild.svg')
+    plt.show()
+
     two_afc_plots.plot_rb(df_2AFC, figsize=fig_size(n_cols=3), title='')
     plt.savefig('2AFC_rb.svg')
     plt.show()
@@ -136,7 +109,14 @@ def _(df_2AFC, fig_size, plt, two_afc_plots):
 
 
 @app.cell
-def _():
+def _(MCDR_plots, df_MCDR, fig_size, plt):
+    MCDR_plots.plot_accuracy(df_MCDR, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('acc_vs_difficulty.svg')
+    plt.show()
+
+    MCDR_plots.plot_rb(df_MCDR, figsize=fig_size(n_cols=3), title='')
+    plt.savefig('MCDR_rb.svg')
+    plt.show()
     return
 
 

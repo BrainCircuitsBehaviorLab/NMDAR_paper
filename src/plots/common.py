@@ -95,7 +95,7 @@ def plot_mean_over_data(
     x_order: list | None = None,
     x_tick_labels: list | dict | None = None,
     xlabel: str,
-    ylabel: str = "Value",
+    ylabel: str = "Accuracy",
     title: str,
     baseline: float,
     baseline_area: bool = True,
