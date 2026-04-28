@@ -4,7 +4,6 @@ from __future__ import annotations
 from functools import lru_cache
 import json
 from pathlib import Path
-import types
 from typing import List, Tuple, Dict, Any
 
 import jax.numpy as jnp
@@ -14,7 +13,7 @@ import polars as pl
 
 from ._choice_tau import load_subject_choice_half_life
 from glmhmmt.runtime import get_data_dir, get_results_dir
-from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
+from glmhmmt.tasks import TaskAdapter, _register
 from glmhmmt.tasks.fitted_regressors import (
     FittedWeightRegressorSpec,
     weighted_sum_regressor,
@@ -1036,6 +1035,14 @@ class MCDRAdapter(TaskAdapter):
     data_file: str   = "df_filtered.parquet"
     sort_col: str    = "trial_idx"
     session_col: str = "session"
+    prediction_col: str = PRED_COL
+    response_mode: str = RESPONSE_MODE
+    psychometric_x_col: str = "ttype_c"
+    psychometric_x_label: str = "Trial difficulty"
+    accuracy_x_col: str = "ttype_c"
+    accuracy_x_label: str = "Trial difficulty"
+    emission_cols: list[str] = EMISSION_COLS
+    transition_cols: list[str] = TRANSITION_COLS
 
     # ── state-scoring options ────────────────────────────────────────────────
     # Each entry maps a label to a list of (feature_name, class_idx) pairs;
@@ -1220,16 +1227,17 @@ class MCDRAdapter(TaskAdapter):
         transition_cols: List[str] | None = None,
     ) -> Tuple[Any, Any, Any, Dict]:
         """Return ``(y, X, U, names)`` from the MCDR feature dataframe."""
-        ecols = emission_cols if emission_cols is not None else list(EMISSION_COLS)
-        ucols = transition_cols if transition_cols is not None else list(TRANSITION_COLS)
+        ecols = emission_cols if emission_cols is not None else self.default_emission_cols(feature_df)
+        ucols = transition_cols if transition_cols is not None else self.default_transition_cols()
         allowed_ecols = set(self.available_emission_cols(feature_df))
         ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        bad_u = [c for c in ucols if c not in TRANSITION_COLS]
+        allowed_ucols = self.available_transition_cols()
+        bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
         if bad_u:
-            raise ValueError(f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}")
+            raise ValueError(f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}")
 
         y = jnp.asarray(feature_df["response"].to_numpy().astype(np.int32))
         X = jnp.asarray(feature_df.select(ecols).to_numpy().astype(np.float32)) if ecols else jnp.empty((len(y), 0), dtype=jnp.float32)
@@ -1249,15 +1257,18 @@ class MCDRAdapter(TaskAdapter):
         return list(dict.fromkeys(cols))
 
     def default_transition_cols(self) -> List[str]:
-        return list(TRANSITION_COLS)
+        return list(self.transition_cols)
 
     def available_emission_cols(self, df=None) -> List[str]:
-        available_cols = list(EMISSION_COLS)
+        available_cols = list(self.emission_cols)
         if df is not None:
             available_cols.extend(self.bias_hot_cols(df))
             available_cols.extend(_choice_lag_cols(list(df.columns)) or _choice_lag_names())
             available_cols.extend(self.stim_hot_cols(df))
         return list(dict.fromkeys(available_cols))
+
+    def available_transition_cols(self) -> List[str]:
+        return list(self.transition_cols)
 
     def resolve_design_names(
         self,
@@ -1265,16 +1276,17 @@ class MCDRAdapter(TaskAdapter):
         transition_cols: List[str] | None = None,
         df=None,
     ) -> Dict[str, List[str]]:
-        ecols = list(emission_cols) if emission_cols is not None else list(EMISSION_COLS)
-        ucols = list(transition_cols) if transition_cols is not None else list(TRANSITION_COLS)
+        ecols = list(emission_cols) if emission_cols is not None else self.default_emission_cols(df)
+        ucols = list(transition_cols) if transition_cols is not None else self.default_transition_cols()
         allowed_ecols = set(self.available_emission_cols(df))
         ecols = _drop_unavailable_bias_hot_cols(ecols, allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        bad_u = [c for c in ucols if c not in TRANSITION_COLS]
+        allowed_ucols = self.available_transition_cols()
+        bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
         if bad_u:
-            raise ValueError(f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}")
+            raise ValueError(f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}")
         return {"X_cols": ecols, "U_cols": ucols}
 
     def bias_hot_cols(self, df: pl.DataFrame) -> List[str]:
@@ -1423,13 +1435,6 @@ class MCDRAdapter(TaskAdapter):
             "performance": "performance",
         }
 
-    # ── plots ────────────────────────────────────────────────────────────────
-
-    def get_plots(self) -> types.ModuleType:
-        return resolve_plots_module(
-            adapter_module_name=__name__,
-            task_key=self.task_key,
-        )
     # ── state labelling ─────────────────────────────────────────────────────
 
     def label_states(

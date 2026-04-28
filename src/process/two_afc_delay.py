@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from functools import lru_cache
-import types
 from typing import Any, Dict, List, Sequence, Tuple
 
 import jax.numpy as jnp
@@ -13,7 +12,7 @@ import pandas as pd
 from ._choice_tau import compute_choice_ewma, load_subject_choice_half_life
 from glmhmmt.cli.alexis_functions import get_action_trace
 from glmhmmt.runtime import get_data_dir
-from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
+from glmhmmt.tasks import TaskAdapter, _register
 from glmhmmt.tasks.fitted_regressors import (
     FittedWeightRegressorSpec,
     mean_feature_weights_from_fit,
@@ -1044,6 +1043,14 @@ class TwoAFCDelayAdapter(TaskAdapter):
     data_file: str = "tiffany.parquet"
     sort_col = ["session", "trial"]
     session_col: str = "session"
+    prediction_col: str = PRED_COL
+    response_mode: str = RESPONSE_MODE
+    psychometric_x_col: str = "delay"
+    psychometric_x_label: str = "Delay"
+    accuracy_x_col: str = "delays"
+    accuracy_x_label: str = "Delay"
+    emission_cols: list[str] = EMISSION_COLS
+    transition_cols: list[str] = TRANSITION_COLS
 
     _SCORING_OPTIONS: dict = {
         "stim (w)": [("stim", "pos")],
@@ -1279,12 +1286,13 @@ class TwoAFCDelayAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(feature_df))
         ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        bad_u = [c for c in ucols if c not in TRANSITION_COLS]
+        allowed_ucols = self.available_transition_cols()
+        bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
         if bad_u:
             raise ValueError(
-                f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}"
+                f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
 
         y_np = feature_df["model_choice_bin"].to_numpy().astype(np.int32)
@@ -1338,10 +1346,10 @@ class TwoAFCDelayAdapter(TaskAdapter):
         return list(dict.fromkeys(default_cols))
 
     def default_transition_cols(self) -> List[str]:
-        return list(TRANSITION_COLS)
+        return list(self.transition_cols)
 
     def available_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        available_cols = list(EMISSION_COLS)
+        available_cols = list(self.emission_cols)
         if df is not None:
             available_cols.extend(self.sf_cols(df))
             available_cols.extend(self.delay_hot_cols(df))
@@ -1351,7 +1359,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
         return list(dict.fromkeys(available_cols))
 
     def available_transition_cols(self) -> List[str]:
-        return list(TRANSITION_COLS)
+        return list(self.transition_cols)
 
     def resolve_design_names(
         self,
@@ -1378,12 +1386,13 @@ class TwoAFCDelayAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(df))
         expanded_ecols = _drop_unavailable_bias_hot_cols(expanded_ecols, allowed_ecols)
         bad_e = [c for c in expanded_ecols if c not in allowed_ecols]
-        bad_u = [c for c in requested_ucols if c not in TRANSITION_COLS]
+        allowed_ucols = self.available_transition_cols()
+        bad_u = [c for c in requested_ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
         if bad_u:
             raise ValueError(
-                f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}"
+                f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
         return {"X_cols": list(dict.fromkeys(expanded_ecols)), "U_cols": list(requested_ucols)}
 
@@ -1530,12 +1539,6 @@ class TwoAFCDelayAdapter(TaskAdapter):
             "response": "choices",
             "performance": "hit",
         }
-
-    def get_plots(self) -> types.ModuleType:
-        return resolve_plots_module(
-            adapter_module_name=__name__,
-            task_key=self.task_key,
-        )
 
     def label_states(
         self,

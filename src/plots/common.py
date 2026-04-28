@@ -8,19 +8,6 @@ from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 import seaborn as sns
-
-from glmhmmt.plots import (
-    custom_boxplot,
-    plot_feature_boxplot,
-    plot_transition_matrix as _plot_transition_matrix,
-    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject,
-    plot_weights_boxplot as _plot_weights_boxplot,
-)
-from glmhmmt.postprocess import (
-    build_transition_matrix_by_subject_payload,
-    build_transition_matrix_payload,
-    build_weights_boxplot_payload,
-)
 from src.process.common import (
     PreparedWeightFamilyPlot,
     attach_quantile_bin_column,
@@ -68,36 +55,6 @@ def apply_axis_style(
 
     if grid:
         ax.grid(True)
-
-def plot_weights_boxplot(
-    weights,
-    feature_names=None,
-    state_labels=None,
-    state_colors=None,
-    connect_subjects: bool = True,
-    show_ttests: bool = True,
-    subject_line_color: str = "#7A7A7A",
-    subject_line_alpha: float = 0.15,
-    subject_line_width: float = 1.0,
-    **style,
-):
-    fig = _plot_weights_boxplot(
-        **build_weights_boxplot_payload(
-            weights,
-            feature_names=feature_names,
-            state_labels=state_labels,
-            state_colors=state_colors,
-        ),
-        connect_subjects=connect_subjects,
-        show_ttests=show_ttests,
-        subject_line_color=subject_line_color,
-        subject_line_alpha=subject_line_alpha,
-        subject_line_width=subject_line_width,
-    )
-    for ax in fig.axes:
-        apply_axis_style(ax, **style)
-    return fig
-
 
 def plot_prepared_weight_family(
     prepared: PreparedWeightFamilyPlot | None,
@@ -156,7 +113,6 @@ def plot_prepared_weight_family(
         ax.set_ylabel(prepared.ylabel)
         ax.set_xticks(positions)
         ax.set_xticklabels(summary["x_label"].astype(str).tolist())
-        sns.despine(ax=ax)
         fig.tight_layout()
         return fig
 
@@ -180,62 +136,30 @@ def plot_prepared_weight_family(
     if not any(values.size for values in per_feature_values):
         return None
 
-    return plot_feature_boxplot(
+    fig, ax = plt.subplots(figsize=(max(5.0, 0.8 * len(x_order)), 4.0))
+    positions = np.arange(1, len(x_order) + 1)
+    ax.boxplot(
         per_feature_values,
-        x_order,
-        subject_lines=subject_lines,
-        figsize=(max(5.0, 0.8 * len(x_order)), 4.0),
-        title=prepared.title,
-        xlabel=prepared.xlabel,
-        ylabel=prepared.ylabel,
+        positions=positions,
+        widths=0.55,
+        patch_artist=True,
+        medianprops={"color": "black", "linewidth": 1.2},
+        boxprops={"facecolor": "#d9e8f6", "edgecolor": "#356b9a", "linewidth": 1.0},
+        whiskerprops={"color": "#356b9a", "linewidth": 1.0},
+        capprops={"color": "#356b9a", "linewidth": 1.0},
+        flierprops={"marker": "o", "markersize": 3, "alpha": 0.35},
     )
-
-
-def plot_transition_matrix(
-    arrays_store: dict,
-    state_labels: dict,
-    K: int,
-    subjects: list,
-    ax: plt.Axes | None = None,
-    figsize=(3.0, 3.0),
-    **style,
-):
-    if ax is None:
-        _, ax = plt.subplots(figsize=figsize)
-    fig = _plot_transition_matrix(
-        **build_transition_matrix_payload(
-            arrays_store=arrays_store,
-            state_labels=state_labels,
-            K=K,
-            subjects=subjects,
-        ),
-        ax=ax,
-    )
-    apply_axis_style(ax, **style)
-    return ax
-
-
-def plot_transition_matrix_by_subject(
-    arrays_store: dict,
-    state_labels: dict,
-    K: int,
-    subjects: list,
-    figsize=(3.0, 3.0),
-    **style,
-):
-    fig = _plot_transition_matrix_by_subject(
-        **build_transition_matrix_by_subject_payload(
-            arrays_store=arrays_store,
-            state_labels=state_labels,
-            K=K,
-            subjects=subjects,
-        ),
-        figsize=figsize,
-    )
-    axes = np.asarray(fig.axes, dtype=object).ravel()
-    for ax in axes:
-        apply_axis_style(ax, **style)
-    return fig, axes
+    for row in subject_lines:
+        if np.isfinite(row).sum() >= 2:
+            ax.plot(positions, row, color="#777777", alpha=0.18, linewidth=0.8, zorder=0)
+    ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+    ax.set_title(prepared.title)
+    ax.set_xlabel(prepared.xlabel)
+    ax.set_ylabel(prepared.ylabel)
+    ax.set_xticks(positions)
+    ax.set_xticklabels(list(x_order))
+    fig.tight_layout()
+    return fig
 
 
 def make_single_panel_figure(
@@ -414,7 +338,6 @@ def plot_empirical_accuracy_curve(
     if invert_x:
         ax.invert_xaxis()
 
-    sns.despine(ax=ax)
     apply_axis_style(ax, **style)
     return ax
 
@@ -649,7 +572,6 @@ def _apply_summary_axis_style(ax, *, meta, **style):
     if meta["baseline"] is not None:
         ax.axhline(meta["baseline"], color="gray", lw=0.8, ls="--", alpha=0.5)
 
-    sns.despine(ax=ax)
     apply_axis_style(ax, **style)
 
 
@@ -933,7 +855,6 @@ def plot_regressor_net_impact(
     ax.set_ylabel(ylabel or y_label)
     if title is not None:
         ax.set_title(title)
-    sns.despine(ax=ax)
     apply_axis_style(ax, **style)
     return ax
 
@@ -1058,7 +979,6 @@ __all__ = [
     "add_shared_figure_legend",
     "apply_axis_style",
     "centered_numeric_group_palette",
-    "custom_boxplot",
     "make_single_panel_figure",
     "plot_empirical_accuracy_curve",
     "plot_prepared_weight_family",
@@ -1066,9 +986,6 @@ __all__ = [
     "plot_integration_map_panels",
     "plot_regressor_net_impact",
     "plot_simple_summary",
-    "plot_transition_matrix",
-    "plot_transition_matrix_by_subject",
-    "plot_weights_boxplot",
     "resolve_axes",
     "resolve_single_axis",
 ]

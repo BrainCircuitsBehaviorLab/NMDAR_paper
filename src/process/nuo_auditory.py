@@ -1,7 +1,6 @@
 """Task adapter for the Nuo auditory 2AFC task."""
 from __future__ import annotations
 
-import types
 from typing import Any, List, Tuple, Dict
 
 import jax.numpy as jnp
@@ -14,9 +13,10 @@ from glmhmmt.tasks.fitted_regressors import (
     mean_feature_weights_from_fit,
     weighted_sum_regressor,
 )
-from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
+from glmhmmt.tasks import TaskAdapter, _register
 from src.process.common import (
     PreparedWeightFamilyPlot,
+    binned_feature_summary,
     prepare_grouped_weight_family_plot,
     to_pandas_df,
 )
@@ -49,6 +49,13 @@ _EVIDENCE_PARAM_COL = "evidence_param"
 _DIFFICULTY_PARAM_COL = "difficulty_param"
 _AT_CHOICE_PARAM_COL = "at_choice_param"
 _DIFFICULTY_LEVELS = ("easy", "medium", "hard")
+PRED_COL = "p_pred"
+RESPONSE_MODE = "pm1_or_prob"
+BASELINE = 0.5
+RESPONSE_COL = "response"
+PERFORMANCE_COL = "performance"
+EVIDENCE_COL = "total_evidence_strength"
+PLOT_CHOICE_RIGHT_COL = "_plot_choice_right"
 
 
 def _stim_bin_names() -> list[str]:
@@ -203,6 +210,152 @@ def _stim_bin_indices(values: np.ndarray) -> np.ndarray:
     return np.clip(idx, 0, _NUM_STIM_BINS - 1).astype(np.int32)
 
 
+def with_plot_choice_right(
+    df: pd.DataFrame,
+    choice_col: str = RESPONSE_COL,
+) -> tuple[pd.DataFrame, str]:
+    """Return a copy with a numeric right-choice column for plotting."""
+
+    out = df.copy()
+    out[PLOT_CHOICE_RIGHT_COL] = pd.to_numeric(out[choice_col], errors="coerce")
+    return out, PLOT_CHOICE_RIGHT_COL
+
+
+def attach_natural_evidence_bins(
+    df_pd: pd.DataFrame,
+    *,
+    evidence_col: str = EVIDENCE_COL,
+    bin_col: str = "_evidence_bin",
+) -> tuple[pd.DataFrame | None, list[float]]:
+    """Assign Nuo's native evidence-bin centers to each trial."""
+
+    df = df_pd.copy()
+    evidence = pd.to_numeric(df[evidence_col], errors="coerce")
+    valid = evidence.notna() & np.isfinite(evidence)
+    centers = _stim_bin_centers().astype(float)
+    if int(valid.sum()) == 0:
+        return None, centers.tolist()
+
+    mids = (centers[:-1] + centers[1:]) / 2.0
+    df[bin_col] = np.nan
+    bin_idx = np.digitize(evidence.loc[valid].to_numpy(dtype=float), mids, right=False)
+    bin_idx = np.clip(bin_idx, 0, len(centers) - 1)
+    df.loc[valid, bin_col] = centers[bin_idx]
+    return df, centers.tolist()
+
+
+def prepare_predictions_df(df_pred):
+    """Prepare canonical Nuo auditory trial-level prediction columns."""
+
+    if isinstance(df_pred, pl.DataFrame):
+        df = df_pred.clone()
+        required = {"stimulus", RESPONSE_COL, PERFORMANCE_COL, EVIDENCE_COL}
+        missing = sorted(required.difference(df.columns))
+        if missing:
+            raise ValueError(f"Missing required Nuo auditory columns: {missing}")
+
+        if "correct_bool" not in df.columns:
+            df = df.with_columns(pl.col(PERFORMANCE_COL).cast(pl.Boolean).alias("correct_bool"))
+        if "pL" not in df.columns or "pR" not in df.columns:
+            raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
+
+        return df.with_columns(
+            pl.col("pR").alias(PRED_COL),
+            pl.when(pl.col("stimulus") == 0)
+            .then(pl.col("pL"))
+            .otherwise(pl.col("pR"))
+            .alias("p_model_correct"),
+        )
+
+    df = df_pred.copy()
+    required = {"stimulus", RESPONSE_COL, PERFORMANCE_COL, EVIDENCE_COL}
+    missing = sorted(required.difference(df.columns))
+    if missing:
+        raise ValueError(f"Missing required Nuo auditory columns: {missing}")
+
+    if "correct_bool" not in df.columns:
+        df["correct_bool"] = df[PERFORMANCE_COL].astype(bool)
+    if "pL" not in df.columns or "pR" not in df.columns:
+        raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
+
+    df[PRED_COL] = df["pR"]
+    df["p_model_correct"] = df.apply(
+        lambda row: row["pL"] if row["stimulus"] == 0 else row["pR"],
+        axis=1,
+    )
+    return df
+
+
+def prepare_compat_plot_df(plot_df) -> pd.DataFrame:
+    """Return pandas trial data with Nuo prediction aliases present."""
+
+    df_pd = to_pandas_df(plot_df)
+    if {"correct_bool", "p_model_correct"} - set(df_pd.columns):
+        df_pd = to_pandas_df(prepare_predictions_df(df_pd))
+
+    df_pd = df_pd.copy()
+    if "pR" not in df_pd.columns:
+        if PRED_COL in df_pd.columns:
+            df_pd["pR"] = pd.to_numeric(df_pd[PRED_COL], errors="coerce")
+        elif "pL" in df_pd.columns:
+            df_pd["pR"] = 1.0 - pd.to_numeric(df_pd["pL"], errors="coerce")
+    if "pL" not in df_pd.columns and "pR" in df_pd.columns:
+        df_pd["pL"] = 1.0 - pd.to_numeric(df_pd["pR"], errors="coerce")
+    return df_pd
+
+
+def ensure_previous_choice_column(df_pd: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
+    df = df_pd.copy()
+    group_cols = [col for col in ("subject", "session") if col in df.columns]
+    sort_cols = [col for col in ("subject", "session", "trial_idx", "trial") if col in df.columns]
+    if group_cols and sort_cols and RESPONSE_COL in df.columns:
+        df = df.sort_values(sort_cols).copy()
+        df["_prev_choice_plot"] = df.groupby(group_cols, observed=True)[RESPONSE_COL].shift(1)
+        return df, "_prev_choice_plot"
+    if "prev_choice" in df.columns:
+        return df, "prev_choice"
+    return df, None
+
+
+def build_simple_summary_from_feature(
+    df_pd: pd.DataFrame,
+    *,
+    feature_col: str,
+    data_col: str,
+    model_col: str,
+    subj_col: str = "subject",
+    n_bins: int = 10,
+) -> tuple[pd.DataFrame | None, dict]:
+    summary = binned_feature_summary(
+        df_pd,
+        feature_col=feature_col,
+        choice_col=data_col,
+        pred_col=model_col,
+        subj_col=subj_col,
+        n_bins=n_bins,
+    )
+    if summary is None:
+        return None, {}
+
+    subj_agg, _ = summary
+    overall = (
+        subj_agg.groupby("_x_bin", observed=True)
+        .agg(
+            x_center=("center", "median"),
+            data_mean=("data_mean", "mean"),
+            data_std=("data_mean", "std"),
+            data_count=("data_mean", "count"),
+            model_mean=("model_mean", "mean"),
+            model_std=("model_mean", "std"),
+        )
+        .reset_index(drop=True)
+        .sort_values("x_center")
+    )
+    overall["data_sem"] = overall["data_std"].fillna(0.0) / np.sqrt(overall["data_count"].clip(lower=1))
+    overall["model_sem"] = overall["model_std"].fillna(0.0) / np.sqrt(overall["data_count"].clip(lower=1))
+    return overall, {}
+
+
 def _safe_weighted_sum_regressor(part, spec: FittedWeightRegressorSpec) -> np.ndarray | None:
     try:
         return weighted_sum_regressor(part, spec, dtype=np.float32)
@@ -341,7 +494,14 @@ class NuoAuditoryAdapter(TaskAdapter):
     data_file: str = "hernando.parquet"
     sort_col = ["session", "trial"]
     session_col: str = "session"
+    prediction_col: str = PRED_COL
+    response_mode: str = RESPONSE_MODE
     psychometric_x_col: str = "total_evidence_strength"
+    psychometric_x_label: str = "Evidence strength"
+    accuracy_x_col: str = "total_evidence_strength"
+    accuracy_x_label: str = "Evidence strength"
+    emission_cols: list[str] = EMISSION_COLS
+    transition_cols: list[str] = TRANSITION_COLS
 
     _SCORING_OPTIONS: dict = {
         "stim_vals (w)": [("stim_vals", "pos")],
@@ -566,14 +726,15 @@ class NuoAuditoryAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(feature_df))
         ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        bad_u = [c for c in ucols if c not in TRANSITION_COLS]
+        allowed_ucols = self.available_transition_cols()
+        bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(
                 f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}"
             )
         if bad_u:
             raise ValueError(
-                f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}"
+                f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
 
         y = jnp.asarray(feature_df["response"].to_numpy().astype(np.int32))
@@ -612,17 +773,17 @@ class NuoAuditoryAdapter(TaskAdapter):
         return inferred
 
     def default_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        return list(EMISSION_COLS) + self._dynamic_emission_cols(df)
+        return list(self.emission_cols) + self._dynamic_emission_cols(df)
 
     def default_transition_cols(self) -> List[str]:
-        return list(TRANSITION_COLS)
+        return list(self.transition_cols)
 
     def available_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        available_cols = list(EMISSION_COLS) + [_EVIDENCE_PARAM_COL]
+        available_cols = list(self.emission_cols) + [_EVIDENCE_PARAM_COL]
         return list(dict.fromkeys(available_cols + self._dynamic_emission_cols(df)))
 
     def available_transition_cols(self) -> List[str]:
-        return list(TRANSITION_COLS)
+        return list(self.transition_cols)
 
     def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_emission_groups(list(available_cols))
@@ -715,14 +876,15 @@ class NuoAuditoryAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(df))
         ecols = _drop_unavailable_bias_hot_cols(ecols, allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        bad_u = [c for c in ucols if c not in TRANSITION_COLS]
+        allowed_ucols = self.available_transition_cols()
+        bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(
                 f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}"
             )
         if bad_u:
             raise ValueError(
-                f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}"
+                f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
         return {"X_cols": list(ecols), "U_cols": list(ucols)}
 
@@ -759,12 +921,6 @@ class NuoAuditoryAdapter(TaskAdapter):
             "response": "response",
             "performance": "performance",
         }
-
-    def get_plots(self) -> types.ModuleType:
-        return resolve_plots_module(
-            adapter_module_name=__name__,
-            task_key=self.task_key,
-        )
 
     def label_states(
         self,

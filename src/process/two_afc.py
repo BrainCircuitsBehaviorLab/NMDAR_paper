@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from functools import lru_cache
-import types
 from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
@@ -17,7 +16,7 @@ from glmhmmt.tasks.fitted_regressors import (
     resolved_source_features,
     weighted_sum_regressor,
 )
-from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
+from glmhmmt.tasks import TaskAdapter, _register
 from glmhmmt.runtime import get_data_dir
 
 try:
@@ -777,6 +776,12 @@ class TwoAFCAdapter(TaskAdapter):
     # per-session concatenation order used during fitting.
     sort_col         = ["Session", "Trial"]
     session_col: str = "Session"
+    prediction_col: str = PRED_COL
+    response_mode: str = RESPONSE_MODE
+    psychometric_x_col: str = "ILD"
+    psychometric_x_label: str = "ILD (dB)"
+    accuracy_x_col: str = "abs_ILD"
+    accuracy_x_label: str = "Absolute ILD (dB)"
     emission_cols: list[str] = EMISSION_COLS
     transition_cols: list[str] = TRANSITION_COLS
     stim_param_spec: FittedWeightRegressorSpec = _STIM_PARAM_SPEC
@@ -824,12 +829,6 @@ class TwoAFCAdapter(TaskAdapter):
             f"Unknown 2AFC condition filter {condition_filter!r}. "
             "Expected one of: all."
         )
-
-    def _emission_cols(self) -> list[str]:
-        return list(self.emission_cols)
-
-    def _transition_cols(self) -> list[str]:
-        return list(self.transition_cols)
 
     def _build_stim_param(self, part: pd.DataFrame, stim_abs_levels: list[int]) -> np.ndarray:
         return _build_stim_param_from_spec(part, stim_abs_levels, self.stim_param_spec)
@@ -1073,7 +1072,7 @@ class TwoAFCAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(feature_df))
         ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        allowed_ucols = self._transition_cols()
+        allowed_ucols = self.available_transition_cols()
         bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
@@ -1102,7 +1101,7 @@ class TwoAFCAdapter(TaskAdapter):
     def default_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
         default_cols = [
             c
-            for c in self._emission_cols()
+            for c in self.emission_cols
             if c not in {"stim_strength", _STIM_PARAM_COL, "bias_param", "at_choice_param"}
         ]
         if df is not None:
@@ -1110,10 +1109,10 @@ class TwoAFCAdapter(TaskAdapter):
         return list(dict.fromkeys(default_cols))
 
     def default_transition_cols(self) -> List[str]:
-        return self._transition_cols()
+        return list(self.transition_cols)
 
     def available_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        available_cols = self._emission_cols()
+        available_cols = list(self.emission_cols)
         if df is not None:
             available_cols.extend(self.sf_cols(df))
             available_cols.extend(self.stim_abs_cols(df))
@@ -1122,7 +1121,7 @@ class TwoAFCAdapter(TaskAdapter):
         return list(dict.fromkeys(available_cols))
 
     def available_transition_cols(self) -> List[str]:
-        return self._transition_cols()
+        return list(self.transition_cols)
 
     def resolve_design_names(
         self,
@@ -1149,7 +1148,7 @@ class TwoAFCAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(df))
         resolved_ecols = _drop_unavailable_bias_hot_cols(resolved_ecols, allowed_ecols)
         bad_e = [c for c in resolved_ecols if c not in allowed_ecols]
-        allowed_ucols = self._transition_cols()
+        allowed_ucols = self.available_transition_cols()
         bad_u = [c for c in requested_ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
@@ -1270,13 +1269,6 @@ class TwoAFCAdapter(TaskAdapter):
             "performance": "Hit",
         }
 
-    # ── plots ────────────────────────────────────────────────────────────────
-
-    def get_plots(self) -> types.ModuleType:
-        return resolve_plots_module(
-            adapter_module_name=__name__,
-            task_key=self.task_key,
-        )
     # ── state labelling ─────────────────────────────────────────────────────
 
     def label_states(

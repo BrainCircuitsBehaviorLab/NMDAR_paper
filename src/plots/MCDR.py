@@ -2,8 +2,8 @@
 
 This module owns plots that depend on MCDR task semantics such as trial
 difficulty, stimulus duration, delay duration, and side-stratified
-performance. Shared model diagnostics are re-exported from
-``glmhmmt.model_plots``.
+performance. Shared model diagnostics live in ``glmhmmt.plots`` and should be
+imported from there directly.
 """
 
 from __future__ import annotations
@@ -21,30 +21,7 @@ import seaborn as sns
 from scipy.stats import t
 
 from glmhmmt.runtime import load_app_config
-from glmhmmt.model_plots import (
-    _state_color,
-    plot_emission_weights as _plot_emission_weights_generic,
-    plot_emission_weights_by_subject as _plot_emission_weights_by_subject_generic,
-    plot_emission_weights_summary_boxplot as _plot_emission_weights_summary_boxplot_generic,
-    plot_emission_weights_summary_lineplot as _plot_emission_weights_summary_lineplot_generic,
-    plot_lapse_rates_boxplot as _plot_lapse_rates_boxplot,
-    plot_posterior_probs,
-    plot_change_triggered_posteriors_by_subject,
-    plot_change_triggered_posteriors_summary,
-    plot_session_deepdive,
-    plot_session_trajectories,
-    plot_state_accuracy,
-    plot_state_dwell_times_by_subject,
-    plot_state_dwell_times_summary,
-    plot_state_dwell_times,
-    plot_state_posterior_count_kde,
-    plot_state_occupancy,
-    plot_state_occupancy_overall_boxplot,
-    plot_transition_matrix,
-    plot_transition_matrix_by_subject,
-    plot_tau_sweep,
-    plot_transition_weights,
-)
+from glmhmmt.views import get_state_color
 from src.process import MCDR as process
 from src.process.common import (
     REPEAT_EVIDENCE_TAIL_QUANTILES,
@@ -69,269 +46,6 @@ cfg = load_app_config()
 CI_BAND_ERR_KWS = {"edgecolor": "none", "linewidth": 0}
 
 
-def _empty_plot(message: str = "No data") -> plt.Figure:
-    """Return a minimal placeholder figure for empty selections."""
-    fig, ax = plt.subplots()
-    ax.text(0.5, 0.5, message, ha="center", va="center")
-    ax.axis("off")
-    return fig
-
-
-def _resolve_emission_plot_inputs(
-    *,
-    views: Optional[dict] = None,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-) -> tuple[dict, dict, dict, list[str]]:
-    """Normalize either `views` or legacy arrays inputs for emission plots."""
-    if views is not None:
-        arrays_from_views: dict = {}
-        labels_from_views: dict = {}
-        feat_names: list[str] = []
-
-        for subj, view in views.items():
-            if view is None or getattr(view, "emission_weights", None) is None:
-                continue
-            arrays_from_views[subj] = {
-                "emission_weights": np.asarray(view.emission_weights),
-                "X_cols": list(getattr(view, "feat_names", []) or []),
-            }
-            labels_from_views[subj] = {int(k): lbl for k, lbl in view.state_name_by_idx.items()}
-            if not feat_names:
-                feat_names = list(getattr(view, "feat_names", []) or [])
-
-        return arrays_from_views, labels_from_views, {"X_cols": feat_names}, list(arrays_from_views.keys())
-
-    if arrays_store is None:
-        raise ValueError("Provide either `views` or `arrays_store` for emission plots.")
-    if state_labels is None:
-        raise ValueError("`state_labels` is required when `views` is not provided.")
-    if names is None:
-        raise ValueError("`names` is required when `views` is not provided.")
-
-    resolved_subjects = list(subjects) if subjects is not None else list(arrays_store.keys())
-    return arrays_store, state_labels, names, resolved_subjects
-
-
-def _infer_emission_K(
-    *,
-    views: Optional[dict] = None,
-    arrays_store: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-) -> int:
-    """Infer K from views or the first available emission-weight array."""
-    if views:
-        first_view = next(iter(views.values()), None)
-        if first_view is not None:
-            return int(first_view.K)
-
-    if arrays_store:
-        candidate_subjects = list(subjects) if subjects is not None else list(arrays_store.keys())
-        for subj in candidate_subjects:
-            subj_arrays = arrays_store.get(subj, {})
-            weights = subj_arrays.get("emission_weights")
-            if weights is not None:
-                return int(np.asarray(weights).shape[0])
-
-    raise ValueError("Could not infer `K` for emission plots; pass it explicitly.")
-
-
-def plot_emission_weights_by_subject(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
-    *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-) -> plt.Figure:
-    """Per-subject emission bars with either `views` or legacy arrays inputs."""
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
-    return _plot_emission_weights_by_subject_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        K=K,
-        subjects=subjects,
-        save_path=save_path,
-    )
-
-
-def plot_emission_weights_summary(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
-    *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-) -> plt.Figure:
-    """Notebook-friendly high-level emission summary, aligned with 2AFC API."""
-    _ = save_path
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
-    fig_summary, fig_detail = _plot_emission_weights_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        K=K,
-        subjects=subjects,
-    )
-    plt.close(fig_detail)
-    return fig_summary
-
-
-def plot_emission_weights_summary_lineplot(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
-    *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-) -> plt.Figure:
-    _ = save_path
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
-    return _plot_emission_weights_summary_lineplot_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        K=K,
-        subjects=subjects,
-    )
-
-
-def plot_emission_weights_summary_boxplot(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
-    *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-) -> plt.Figure:
-    _ = save_path
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
-    return _plot_emission_weights_summary_boxplot_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        K=K,
-        subjects=subjects,
-    )
-
-
-def plot_lapse_rates_boxplot(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-) -> plt.Figure:
-    _ = K
-    if not views:
-        return _empty_plot("No fitted lapses")
-    return _plot_lapse_rates_boxplot(
-        views,
-        choice_labels=("Left", "Center", "Right"),
-        title="Lapse rates",
-    )
-
-
-def plot_emission_weights(
-    views: Optional[dict] = None,
-    K: Optional[int] = None,
-    save_path=None,
-    *,
-    arrays_store: Optional[dict] = None,
-    state_labels: Optional[dict] = None,
-    names: Optional[dict] = None,
-    subjects: Optional[Sequence[str]] = None,
-):
-    """Emission summaries with `views` support and backward-compatible kwargs."""
-    _ = save_path
-    arrays_store, state_labels, names, subjects = _resolve_emission_plot_inputs(
-        views=views,
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        subjects=subjects,
-    )
-    if not subjects:
-        return _empty_plot(), _empty_plot()
-
-    K = int(K) if K is not None else _infer_emission_K(
-        views=views,
-        arrays_store=arrays_store,
-        subjects=subjects,
-    )
-    return _plot_emission_weights_generic(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        names=names,
-        K=K,
-        subjects=subjects,
-    )
-
-
 def truncate_colormap(cmap_name, minval=0.2, maxval=0.9, n=256):
     """Return a colormap truncated to a subrange."""
     cmap = cm.get_cmap(cmap_name, n)
@@ -348,46 +62,7 @@ def get_plot_path(subfolder: str, fname: str, model_name: str) -> Path:
 
 
 def prepare_predictions_df(df_pred: pl.DataFrame) -> pl.DataFrame:
-    df = df_pred.clone()
-
-    if "correct_bool" not in df.columns:
-        if "performance" in df.columns:
-            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
-        else:
-            raise ValueError("No encuentro 'performance' ni 'correct_bool' en df.")
-
-    for col in ["pL", "pC", "pR"]:
-        if col not in df.columns:
-            raise ValueError(f"Falta la columna '{col}' en df (predicciones por trial).")
-
-    if "response" not in df.columns:
-        raise ValueError("Falta la columna 'response' (0/1/2) en df.")
-
-    if "p_model_correct" not in df.columns:
-        df = df.with_columns(
-            pl.when(pl.col("stimulus") == 0)
-            .then(pl.col("pL"))
-            .when(pl.col("stimulus") == 1)
-            .then(pl.col("pC"))
-            .when(pl.col("stimulus") == 2)
-            .then(pl.col("pR"))
-            .otherwise(None)
-            .alias("p_model_correct")
-        )
-
-    if "stimd_c" not in df.columns:
-        if "stimd_n" in df.columns:
-            df = df.with_columns(pl.col("stimd_n").replace(cfg["encoding"]["stimd"], default=None).alias("stimd_c"))
-        else:
-            raise ValueError("Falta 'stimd_c' y no existe 'stimd_n' para mapear.")
-
-    if "ttype_c" not in df.columns:
-        if "ttype_n" in df.columns:
-            df = df.with_columns(pl.col("ttype_n").replace(cfg["encoding"]["ttype"], default=None).alias("ttype_c"))
-        else:
-            raise ValueError("Falta 'ttype_c' y no existe 'ttype_n' para mapear.")
-
-    return df
+    return process.prepare_predictions_df(df_pred, cfg=cfg)
 
 
 def plot_cat_panel(ax, df, group_col, order, title, xlabel, ylabel=None, palette=None, labels=None):
@@ -569,7 +244,7 @@ def plot_categorical_performance_by_state(
 
     df = df.with_columns(pl.col("state_rank").cast(pl.Int64).alias("_state_k"))
 
-    state_colors = {k: _state_color(state_labels.get(k, f"State {k}"), k) for k in range(K)}
+    state_colors = {k: get_state_color(state_labels.get(k, f"State {k}"), k, K=K) for k in range(K)}
 
     fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharey=True)
     ax1, ax2, ax3 = axes
@@ -637,7 +312,6 @@ def plot_categorical_performance_by_state(
         legend_labels.append(f"{label} model")
 
     ax3.legend(legend_handles, legend_labels, fontsize=8, frameon=False, bbox_to_anchor=(1.01, 1), loc="upper left")
-    sns.despine(fig=fig)
     fig.tight_layout()
     return fig, axes
 
@@ -687,7 +361,6 @@ def plot_categorical_performance_all(
         palette=cfg["plots"]["delay"]["palette"],
         labels=cfg["plots"]["delay"]["labels"],
     )
-    sns.despine()
     fig.tight_layout()
     return fig, axes
 
@@ -779,7 +452,6 @@ def plot_delay_or_stim_1d_on_ax(ax, df, subject, n_bins, which):
     ax.set_ylabel("Frac. correct responses", fontsize=12)
     ax.set_title(f"{subject}", fontsize=12)
     ax.tick_params(labelsize=12)
-    sns.despine()
     return True
 
 
@@ -864,7 +536,6 @@ def plot_categorical_strat_by_side(
     ax.set_ylabel("Frac. correct responses")
     ax.set_xlabel("Trial difficulty")
     ax.set_title(f"{subject}")
-    sns.despine()
     fig.tight_layout()
     return fig, ax
 
@@ -958,7 +629,6 @@ def plot_delay_binned_1d(df, model_name, subject=None, n_bins=7):
     ax.set_ylabel("Frac. correct responses")
     title_subj = subject if subject is not None else "All subjects"
     ax.set_title(f"{title_subj} - Delay (1D)")
-    sns.despine()
     fig_delay.tight_layout()
 
     fig_stim, ax = plt.subplots(figsize=(5, 5))
@@ -992,7 +662,6 @@ def plot_delay_binned_1d(df, model_name, subject=None, n_bins=7):
     ax.set_xlabel("Stimulus duration (s, binned)")
     ax.set_ylabel("Frac. correct responses")
     ax.set_title(f"{title_subj} - Stimulus (1D)")
-    sns.despine()
     fig_stim.tight_layout()
 
     return fig_delay, fig_stim

@@ -3,31 +3,16 @@ nuo_auditory.py
 ───────────────
 Plotting utilities for the Nuo auditory 2AFC task.
 
-This is the task-owned Nuo auditory plotting module exposed via
-``TaskAdapter.get_plots()``. Its public API mirrors the task plot interface
-used by the analysis notebooks.
+This module keeps only Nuo auditory task-owned plotting helpers. General model
+diagnostics live in ``glmhmmt.plots`` and should be imported from there.
 
-High-level functions:
-  - plot_emission_weights
-  - plot_posterior_probs
-  - plot_state_accuracy
-  - plot_session_trajectories
-  - plot_state_occupancy
-  - plot_state_dwell_times
-  - plot_psychometric_all        (≡ plot_categorical_performance_all)
-  - plot_psychometric_by_state   (≡ plot_categorical_performance_by_state)
+Task-owned high-level functions:
+  - plot_categorical_performance_all
+  - plot_categorical_performance_by_state
   - plot_regressor_psychometric_by_state
-  - plot_trans_mat               (already homologous)
-  - plot_trans_mat_boxplots      (already homologous)
-  - plot_model_comparison
-  - plot_model_comparison_diffs
-  - norm_ll
-
-Low-level primitives are kept for direct use:
+Task-specific primitives kept for direct use:
   - remap_states
-  - plot_weights / plot_weights_per_contrast / plot_weights_boxplot
-  - plot_occupancy / plot_occupancy_boxplot
-  - plot_ll
+  - plot_weights / plot_weights_per_contrast
 """
 
 from __future__ import annotations
@@ -39,45 +24,8 @@ import pandas as pd
 from matplotlib.lines import Line2D
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
-from glmhmmt.plots import (
-    plot_transition_matrix as _plot_transition_matrix_simple,
-    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
-    plot_weights_boxplot as _plot_weights_boxplot_simple,
-)
-from glmhmmt.postprocess import (
-    build_transition_matrix_by_subject_payload,
-    build_transition_matrix_payload,
-    build_weights_boxplot_payload,
-)
-from glmhmmt.model_plotting.legacy import (
-    norm_ll as _norm_ll,
-    plot_binary_emission_weights as _plot_binary_emission_weights,
-    plot_binary_emission_weights_by_subject as _plot_binary_emission_weights_by_subject,
-    plot_binary_emission_weights_summary as _plot_binary_emission_weights_summary,
-    plot_binary_emission_weights_summary_boxplot as _plot_binary_emission_weights_summary_boxplot,
-    plot_binary_emission_weights_summary_lineplot as _plot_binary_emission_weights_summary_lineplot,
-    plot_lapse_rates_boxplot as _plot_lapse_rates_boxplot,
-    plot_ll as _plot_ll,
-    plot_model_comparison as _plot_model_comparison,
-    plot_model_comparison_diffs as _plot_model_comparison_diffs,
-    plot_occupancy as _plot_occupancy,
-    plot_occupancy_boxplot as _plot_occupancy_boxplot,
-    plot_change_triggered_posteriors_by_subject as _plot_change_triggered_posteriors_by_subject,
-    plot_change_triggered_posteriors_summary as _plot_change_triggered_posteriors_summary,
-    plot_session_deepdive as _plot_session_deepdive,
-    plot_session_trajectories as _plot_session_trajectories,
-    plot_state_accuracy as _plot_state_accuracy,
-    plot_state_dwell_times as _plot_state_dwell_times,
-    plot_state_dwell_times_by_subject as _plot_state_dwell_times_by_subject,
-    plot_state_dwell_times_summary as _plot_state_dwell_times_summary,
-    plot_state_occupancy as _plot_state_occupancy,
-    plot_state_occupancy_overall_boxplot as _plot_state_occupancy_overall_boxplot,
-    plot_state_posterior_count_kde as _plot_state_posterior_count_kde,
-    plot_trans_mat as _plot_trans_mat,
-    plot_trans_mat_boxplots as _plot_trans_mat_boxplots,
-    plot_transition_weights,
-)
 from glmhmmt.views import get_state_color, get_state_palette
+from src.process import nuo_auditory as process
 from src.process.nuo_auditory import _stim_bin_centers, _stim_param_weight_map, EMISSION_REGRESSOR_LABELS
 from src.process.common import (
     REPEAT_EVIDENCE_TAIL_QUANTILES,
@@ -137,9 +85,7 @@ def _with_plot_choice_right(
     choice_col: str,
 ) -> Tuple[pd.DataFrame, str]:
     """Return a copy of *df* with a numeric plotting column for P(right)."""
-    out = df.copy()
-    out[_PLOT_CHOICE_RIGHT_COL] = pd.to_numeric(out[choice_col], errors="coerce")
-    return out, _PLOT_CHOICE_RIGHT_COL
+    return process.with_plot_choice_right(df, choice_col=choice_col)
 
 
 def _attach_natural_evidence_bins(
@@ -148,19 +94,11 @@ def _attach_natural_evidence_bins(
     evidence_col: str = _EVIDENCE_COL,
     bin_col: str = "_evidence_bin",
 ) -> tuple[pd.DataFrame | None, list[float]]:
-    df = df_pd.copy()
-    evidence = pd.to_numeric(df[evidence_col], errors="coerce")
-    valid = evidence.notna() & np.isfinite(evidence)
-    centers = _stim_bin_centers().astype(float)
-    if int(valid.sum()) == 0:
-        return None, centers.tolist()
-
-    mids = (centers[:-1] + centers[1:]) / 2.0
-    df[bin_col] = np.nan
-    bin_idx = np.digitize(evidence.loc[valid].to_numpy(dtype=float), mids, right=False)
-    bin_idx = np.clip(bin_idx, 0, len(centers) - 1)
-    df.loc[valid, bin_col] = centers[bin_idx]
-    return df, centers.tolist()
+    return process.attach_natural_evidence_bins(
+        df_pd,
+        evidence_col=evidence_col,
+        bin_col=bin_col,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -261,7 +199,6 @@ def plot_weights(
     ax.set_ylabel("Weight")
     ax.set_title(title)
     ax.legend(frameon=False)
-    sns.despine(ax=ax)
     fig.tight_layout()
     return fig
 
@@ -294,75 +231,10 @@ def plot_weights_per_contrast(
         ax.set_xticks(x)
         ax.set_xticklabels(_format_feature_labels(feature_names), rotation=0, ha="center")
         ax.set_title(cnames[c])
-        sns.despine(ax=ax)
     axes[0].set_ylabel("Weight")
     axes[-1].legend(frameon=False)
     fig.tight_layout()
     return fig
-
-
-def plot_weights_boxplot(
-    all_weights: np.ndarray,
-    feature_names: Sequence[str],
-    state_labels: Optional[Sequence[str]] = None,
-    title: str = "GLM-HMM weights (across subjects)",
-    figsize: Optional[Tuple[float, float]] = None,
-    connect_subjects: bool = True,
-    show_ttests: bool = True,
-) -> plt.Figure:
-    return _plot_weights_boxplot_simple(
-        **build_weights_boxplot_payload(
-            all_weights,
-            feature_names=feature_names,
-            state_labels=state_labels,
-        ),
-        title=title,
-        figsize=figsize,
-        connect_subjects=connect_subjects,
-        show_ttests=show_ttests,
-    )
-
-
-plot_trans_mat = _plot_trans_mat
-plot_trans_mat_boxplots = _plot_trans_mat_boxplots
-plot_occupancy = _plot_occupancy
-plot_occupancy_boxplot = _plot_occupancy_boxplot
-norm_ll = _norm_ll
-plot_ll = _plot_ll
-plot_model_comparison = _plot_model_comparison
-plot_model_comparison_diffs = _plot_model_comparison_diffs
-
-
-def plot_transition_matrix_by_subject(
-    arrays_store: dict,
-    state_labels: dict,
-    K: int,
-    subjects: list,
-):
-    return _plot_transition_matrix_by_subject_simple(
-        **build_transition_matrix_by_subject_payload(
-            arrays_store=arrays_store,
-            state_labels=state_labels,
-            K=K,
-            subjects=subjects,
-        )
-    )
-
-
-def plot_transition_matrix(
-    arrays_store: dict,
-    state_labels: dict,
-    K: int,
-    subjects: list,
-):
-    return _plot_transition_matrix_simple(
-        **build_transition_matrix_payload(
-            arrays_store=arrays_store,
-            state_labels=state_labels,
-            K=K,
-            subjects=subjects,
-        )
-    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1676,83 +1548,15 @@ def prepare_predictions_df(df_pred):
     -------
     DataFrame of the same type as the input (polars or pandas).
     """
-    try:
-        import polars as pl
-
-        _is_polars = hasattr(df_pred, "lazy")
-    except ImportError:
-        _is_polars = False
-
-    if _is_polars:
-        df = df_pred.clone()
-
-        required = {"stimulus", _RESPONSE_COL, _PERFORMANCE_COL, _EVIDENCE_COL}
-        missing = sorted(required.difference(df.columns))
-        if missing:
-            raise ValueError(f"Missing required Nuo auditory columns: {missing}")
-
-        if "correct_bool" not in df.columns:
-            df = df.with_columns(pl.col(_PERFORMANCE_COL).cast(pl.Boolean).alias("correct_bool"))
-
-        if "pL" not in df.columns or "pR" not in df.columns:
-            raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
-
-        df = df.with_columns(
-            pl.col("pR").alias("p_pred"),
-            pl.when(pl.col("stimulus") == 0).then(pl.col("pL")).otherwise(pl.col("pR")).alias("p_model_correct"),
-        )
-
-        return df
-
-    else:
-        # pandas path
-        df = df_pred.copy()
-
-        required = {"stimulus", _RESPONSE_COL, _PERFORMANCE_COL, _EVIDENCE_COL}
-        missing = sorted(required.difference(df.columns))
-        if missing:
-            raise ValueError(f"Missing required Nuo auditory columns: {missing}")
-
-        if "correct_bool" not in df.columns:
-            df["correct_bool"] = df[_PERFORMANCE_COL].astype(bool)
-
-        if "pL" not in df.columns or "pR" not in df.columns:
-            raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
-
-        df["p_pred"] = df["pR"]
-        df["p_model_correct"] = df.apply(lambda row: row["pL"] if row["stimulus"] == 0 else row["pR"], axis=1)
-
-        return df
+    return process.prepare_predictions_df(df_pred)
 
 
 def _prepare_compat_plot_df(plot_df) -> pd.DataFrame:
-    df_pd = to_pandas_df(plot_df)
-    if {"correct_bool", "p_model_correct"} - set(df_pd.columns):
-        df_pd = prepare_predictions_df(df_pd)
-        df_pd = to_pandas_df(df_pd)
-
-    df_pd = df_pd.copy()
-    if "pR" not in df_pd.columns:
-        if "p_pred" in df_pd.columns:
-            df_pd["pR"] = 1.0 - pd.to_numeric(df_pd["p_pred"], errors="coerce")
-        elif "pL" in df_pd.columns:
-            df_pd["pR"] = 1.0 - pd.to_numeric(df_pd["pL"], errors="coerce")
-    if "pL" not in df_pd.columns and "pR" in df_pd.columns:
-        df_pd["pL"] = 1.0 - pd.to_numeric(df_pd["pR"], errors="coerce")
-    return df_pd
+    return process.prepare_compat_plot_df(plot_df)
 
 
 def _ensure_previous_choice_column(df_pd: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
-    df = df_pd.copy()
-    group_cols = [col for col in ("subject", _SESSION_COL) if col in df.columns]
-    sort_cols = [col for col in ("subject", _SESSION_COL, _SORT_COL, "trial") if col in df.columns]
-    if group_cols and sort_cols and "response" in df.columns:
-        df = df.sort_values(sort_cols).copy()
-        df["_prev_choice_plot"] = df.groupby(group_cols, observed=True)["response"].shift(1)
-        return df, "_prev_choice_plot"
-    if "prev_choice" in df.columns:
-        return df, "prev_choice"
-    return df, None
+    return process.ensure_previous_choice_column(df_pd)
 
 
 def _build_simple_summary_from_feature(
@@ -1764,34 +1568,14 @@ def _build_simple_summary_from_feature(
     subj_col: str = "subject",
     n_bins: int = 10,
 ) -> tuple[pd.DataFrame | None, dict]:
-    summary = _binned_feature_summary(
+    return process.build_simple_summary_from_feature(
         df_pd,
         feature_col=feature_col,
-        choice_col=data_col,
-        pred_col=model_col,
+        data_col=data_col,
+        model_col=model_col,
         subj_col=subj_col,
         n_bins=n_bins,
     )
-    if summary is None:
-        return None, {}
-
-    subj_agg, _ = summary
-    overall = (
-        subj_agg.groupby("_x_bin", observed=True)
-        .agg(
-            x_center=("center", "median"),
-            data_mean=("data_mean", "mean"),
-            data_std=("data_mean", "std"),
-            data_count=("data_mean", "count"),
-            model_mean=("model_mean", "mean"),
-            model_std=("model_mean", "std"),
-        )
-        .reset_index(drop=True)
-        .sort_values("x_center")
-    )
-    overall["data_sem"] = overall["data_std"].fillna(0.0) / np.sqrt(overall["data_count"].clip(lower=1))
-    overall["model_sem"] = overall["model_std"].fillna(0.0) / np.sqrt(overall["data_count"].clip(lower=1))
-    return overall, {}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2369,333 +2153,6 @@ def plot_right_integration_map(
     )
 
 
-def plot_emission_weights_by_subject(
-    views: dict,
-    K: int,
-    save_path=None,
-) -> plt.Figure:
-    return _plot_binary_emission_weights_by_subject(
-        views,
-        K,
-        weight_sign=1.0,
-        feature_labeler=_feature_label,
-        save_path=save_path,
-    )
-
-
-def plot_emission_weights_summary(
-    views: dict,
-    K: int,
-) -> plt.Figure:
-    return _plot_binary_emission_weights_summary(
-        views,
-        K,
-        weight_sign=1.0,
-        feature_labeler=_feature_label,
-    )
-
-
-def plot_emission_weights_summary_lineplot(
-    views: dict,
-    K: int,
-) -> plt.Figure:
-    return _plot_binary_emission_weights_summary_lineplot(
-        views,
-        K,
-        weight_sign=1.0,
-        feature_labeler=_feature_label,
-    )
-
-
-def plot_emission_weights_summary_boxplot(
-    views: dict,
-    K: int,
-) -> plt.Figure:
-    return _plot_binary_emission_weights_summary_boxplot(
-        views,
-        K,
-        weight_sign=1.0,
-        feature_labeler=_feature_label,
-    )
-
-
-def plot_lapse_rates_boxplot(
-    views: dict,
-    K: int,
-) -> plt.Figure:
-    return _plot_lapse_rates_boxplot(
-        views,
-        K,
-        choice_labels=("Left", "Right"),
-        title=f"Lapse rates  (K={K})",
-    )
-
-
-def plot_emission_weights(
-    views: dict,
-    K: int,
-    save_path=None,
-) -> Tuple[plt.Figure, plt.Figure]:
-    return _plot_binary_emission_weights(
-        views,
-        K,
-        weight_sign=1.0,
-        feature_labeler=_feature_label,
-        save_path=save_path,
-    )
-
-def plot_posterior_probs(
-    views: dict,
-    K: int,
-    t0: int = 0,
-    t1: int = 199,
-) -> plt.Figure:
-    """Stacked-area posterior state probability plot.
-
-    Mirrors plots.plot_posterior_probs.
-
-    Returns
-    -------
-    fig
-    """
-    _selected = list(views.keys())
-    if not _selected:
-        fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, "No data", ha="center", va="center")
-        return fig
-
-    colors = _state_colors(K)
-    fig, axes = plt.subplots(len(_selected), 1, figsize=(14, 3 * len(_selected)), squeeze=False)
-
-    for i, subj in enumerate(_selected):
-        ax = axes[i, 0]
-        P = np.asarray(views[subj].smoothed_probs)
-        P_sub = P[t0 : min(t1, len(P))]
-        T_sub = P_sub.shape[0]
-
-        ax.stackplot(np.arange(T_sub), P_sub.T, colors=colors[:K], alpha=0.8)
-        slbls = views[subj].state_name_by_idx
-        legend_patches = [plt.matplotlib.patches.Patch(color=colors[k], label=slbls.get(k, f"S{k}")) for k in range(K)]
-        ax.legend(handles=legend_patches, frameon=False, bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=8)
-        ax.set_xlim(0, T_sub)
-        ax.set_ylim(0, 1)
-        ax.set_ylabel("P(state)")
-        ax.set_title(f"Subject {subj}")
-
-    axes[-1, 0].set_xlabel("Trial")
-    fig.tight_layout()
-    fig.subplots_adjust(right=0.85)
-    sns.despine(fig=fig)
-    return fig
-
-
-def plot_state_accuracy(
-    views: dict,
-    trial_df,
-    thresh: float = 0.5,
-    performance_col: str = _PERFORMANCE_COL,
-    **kwargs,
-) -> Tuple[plt.Figure, pd.DataFrame]:
-    return _plot_state_accuracy(
-        views,
-        trial_df,
-        thresh=thresh,
-        performance_col=performance_col,
-        **kwargs,
-    )
-
-
-def plot_session_trajectories(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_session_trajectories(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        **kwargs,
-    )
-
-
-def plot_state_posterior_count_kde(
-    views: dict,
-    thresh: float | None = None,
-    bins: int = 40,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_posterior_count_kde(
-        views,
-        thresh=thresh,
-        bins=bins,
-        **kwargs,
-    )
-
-
-def plot_change_triggered_posteriors_summary(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    switch_posterior_threshold: float | None = None,
-    window: int = 15,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_change_triggered_posteriors_summary(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        switch_posterior_threshold=switch_posterior_threshold,
-        window=window,
-        **kwargs,
-    )
-
-
-def plot_change_triggered_posteriors_by_subject(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    switch_posterior_threshold: float | None = None,
-    window: int = 15,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_change_triggered_posteriors_by_subject(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        switch_posterior_threshold=switch_posterior_threshold,
-        window=window,
-        **kwargs,
-    )
-
-
-def plot_state_occupancy(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_occupancy(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        **kwargs,
-    )
-
-
-def plot_state_occupancy_overall_boxplot(
-    views: dict,
-    trial_df,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_occupancy_overall_boxplot(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        **kwargs,
-    )
-
-
-def plot_state_dwell_times_by_subject(
-    views: dict,
-    trial_df,
-    session_col: str = "session",
-    sort_col: str = "trial_idx",
-    max_dwell: int | None = None,
-    ci_level: float = 0.68,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_dwell_times_by_subject(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        max_dwell=max_dwell,
-        ci_level=ci_level,
-        **kwargs,
-    )
-
-
-def plot_state_dwell_times_summary(
-    views: dict,
-    trial_df,
-    session_col: str = "session",
-    sort_col: str = "trial_idx",
-    max_dwell: int | None = None,
-    ci_level: float = 0.68,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_dwell_times_summary(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        max_dwell=max_dwell,
-        ci_level=ci_level,
-        **kwargs,
-    )
-
-
-def plot_state_dwell_times(
-    views: dict,
-    trial_df,
-    session_col: str = "session",
-    sort_col: str = "trial_idx",
-    max_dwell: int | None = None,
-    ci_level: float = 0.68,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_state_dwell_times(
-        views,
-        trial_df,
-        session_col=session_col,
-        sort_col=sort_col,
-        max_dwell=max_dwell,
-        ci_level=ci_level,
-        **kwargs,
-    )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Session deep-dive
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def plot_session_deepdive(
-    views: dict,
-    trial_df,
-    subj: str,
-    sess,
-    session_col: str = _SESSION_COL,
-    sort_col: str = _SORT_COL,
-    switch_posterior_threshold: float | None = None,
-    **kwargs,
-) -> plt.Figure:
-    return _plot_session_deepdive(
-        views,
-        trial_df,
-        subj,
-        sess,
-        session_col=session_col,
-        sort_col=sort_col,
-        switch_posterior_threshold=switch_posterior_threshold,
-        performance_col="correct_bool",
-        response_col=_RESPONSE_COL,
-        **kwargs,
-    )
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Psychometric performance helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2740,7 +2197,7 @@ def plot_categorical_performance_all(
         fig, ax = plt.subplots()
         ax.text(0.5, 0.5, "No valid psychometric data", ha="center", va="center")
         ax.axis("off")
-        return fig, None
+        return fig
 
     subj_agg, _ = summary
     agg = (
@@ -2811,10 +2268,9 @@ def plot_categorical_performance_all(
     ax.set_ylabel("P(Right)")
     ax.set_title("Overall psychometric")
     ax.legend(frameon=False, fontsize=8)
-    sns.despine(fig=fig)
     fig.suptitle(model_name, y=1.02)
     fig.tight_layout()
-    return fig, None
+    return fig
 
 
 def plot_categorical_performance_all_by_state(
@@ -3014,9 +2470,8 @@ def plot_categorical_performance_all_by_state(
                 ax.set_ylabel("")
 
     fig.suptitle(model_name, y=1.02)
-    sns.despine(fig=fig)
     fig.tight_layout()
-    return fig, None
+    return fig
 
 
 # Alias used by the analysis notebooks
@@ -3066,7 +2521,7 @@ def plot_regressor_psychometric_by_state(
         fig, ax = plt.subplots()
         ax.text(0.5, 0.5, f"No valid {feature_col} data", ha="center", va="center")
         ax.axis("off")
-        return fig, None
+        return fig
 
     if "state_rank" in df_pd.columns:
         _arr = df_pd["state_rank"].to_numpy().astype(int)
@@ -3237,6 +2692,5 @@ def plot_regressor_psychometric_by_state(
                 ax.set_ylabel("")
 
     fig.suptitle(f"{model_name} — {_feature_label(feature_col)} psychometric", y=1.02)
-    sns.despine(fig=fig)
     fig.tight_layout()
-    return fig, None
+    return fig

@@ -30,6 +30,49 @@ class LapseLogisticFit:
     success: bool = True
 
 
+@dataclass(frozen=True)
+class TaskPlotColumns:
+    """Canonical columns used by task-owned payload builders and plots."""
+
+    response_col: str = "response"
+    prediction_col: str = "p_pred"
+    correct_col: str = "correct_bool"
+    model_correct_col: str = "p_model_correct"
+    psychometric_x_col: str = "stimulus"
+    psychometric_x_label: str = "Stimulus"
+    subject_col: str = "subject"
+    response_mode: str = "pm1_or_prob"
+    baseline: float = 0.5
+
+
+def resolve_task_plot_columns(
+    adapter=None,
+    *,
+    response_col: str | None = None,
+    prediction_col: str | None = None,
+    correct_col: str | None = None,
+    model_correct_col: str | None = None,
+    psychometric_x_col: str | None = None,
+    psychometric_x_label: str | None = None,
+    subject_col: str | None = None,
+    response_mode: str | None = None,
+    baseline: float | None = None,
+) -> TaskPlotColumns:
+    """Resolve plotting columns from an adapter plus optional overrides."""
+
+    return TaskPlotColumns(
+        response_col=response_col or getattr(adapter, "response_col", "response"),
+        prediction_col=prediction_col or getattr(adapter, "prediction_col", "p_pred"),
+        correct_col=correct_col or getattr(adapter, "correct_bool_col", "correct_bool"),
+        model_correct_col=model_correct_col or getattr(adapter, "model_correct_col", "p_model_correct"),
+        psychometric_x_col=psychometric_x_col or getattr(adapter, "psychometric_x_col", "stimulus"),
+        psychometric_x_label=psychometric_x_label or getattr(adapter, "psychometric_x_label", "Stimulus"),
+        subject_col=subject_col or "subject",
+        response_mode=response_mode or getattr(adapter, "response_mode", "pm1_or_prob"),
+        baseline=float(baseline if baseline is not None else getattr(adapter, "baseline", 0.5)),
+    )
+
+
 def to_pandas_df(df_like) -> pd.DataFrame:
     if isinstance(df_like, pd.DataFrame):
         return df_like.copy()
