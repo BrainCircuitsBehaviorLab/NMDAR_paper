@@ -1,0 +1,9 @@
+# Despine
+axes.spines.top: False
+axes.spines.right: False
+
+# Grid off
+axes.grid: False
+
+# Savefig tight
+savefig.bbox: tight 

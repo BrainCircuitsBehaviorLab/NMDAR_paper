@@ -44,11 +44,7 @@ def _():
         build_emission_weights_df,
         build_weights_boxplot_payload,
     )
-    from glmhmmt.plots import (
-        # plot_emission_regressor_lr_boxplot,
-        plot_feature_boxplot,
-        plot_weights_boxplot,
-    )
+    import glmhmmt.plots as model_plots
     from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import get_state_color
@@ -68,7 +64,11 @@ def _():
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
     sns.set_context("notebook")
+
+    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+
     paths = get_runtime_paths()
+
     return (
         CoefficientEditorWidget,
         ModelCfg,

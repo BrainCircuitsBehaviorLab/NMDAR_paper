@@ -52,7 +52,7 @@ def _():
         build_transition_matrix_by_subject_payload,
         build_transition_matrix_payload,
     )
-    from glmhmmt.plots import plot_weights_boxplot
+    import glmhmmt.plots as model_plots
     from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
     from src.process import MCDR as process_mcdr
     from src.process import two_afc as process_two_afc
@@ -66,12 +66,14 @@ def _():
         return process_two_afc.prepare_predictions_df(df)
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
+
     sns.set_style("ticks")
     paths = get_runtime_paths()
     return (
         CoefficientEditorWidget,
         ModelCfg,
         ModelManagerWidget,
+        Path,
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
         build_change_triggered_posteriors_payload,
@@ -88,16 +90,15 @@ def _():
         build_trial_and_weights_df,
         build_trial_df,
         build_views,
-        build_weights_boxplot_payload,
         fit_main,
         get_adapter,
         load_fit_arrays,
         make_plot_saver,
         mo,
+        model_plots,
         np,
         paths,
         pl,
-        plot_weights_boxplot,
         plt,
         prepare_predictions_df,
         resolve_selected_model_id,
@@ -105,6 +106,12 @@ def _():
         sns,
         wrap_anywidget,
     )
+
+
+@app.cell
+def _(Path, plt):
+    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    return
 
 
 @app.cell
@@ -411,11 +418,9 @@ def _(mo):
 def _(
     K,
     build_emission_weights_df,
-    build_weights_boxplot_payload,
     mo,
+    model_plots,
     paths,
-    plot_weights_boxplot,
-    plots,
     save_plot,
     selected,
     views,
@@ -424,19 +429,15 @@ def _(
     _save_path = paths.RESULTS / "plots/GLMHMM/emissions_coefs.png"
     _views_sel = {s: views[s] for s in selected}
     _weights_df = build_emission_weights_df(_views_sel)
-    _fig_by_subject = plots.plot_emission_weights_by_subject(
+    _fig_by_subject = model_plots.emission_weights_by_subject(
         _weights_df,
         K=K,
     )
-
-    _subject_figs, _summary_figs = plots.plot_emission_weights(_weights_df, K=K)
-    _summary_figs = plot_weights_boxplot(
-        **build_weights_boxplot_payload(_weights_df)
-    )
+    _summary_figs = model_plots.emission_weights_summary_boxplot(_weights_df, connect_subjects=True)
     mo.vstack([
-               # _subject_figs,
-                # save_plot(_subject_figs, f"Emission Weights",
-                #                     stem=f"emissions_summary", location = (0,1)),
+               # _fig_by_subject,
+               #  save_plot(_fig_by_subject, f"Emission Weights",
+               #                      stem=f"emissions_summary", location = (0,1)),
                _summary_figs,
                mo.hstack([save_plot(_summary_figs, f"Emission Weights lineplot",
                                     stem=f"emissions_lineplot", location=(0,0)), 
@@ -461,7 +462,7 @@ def _(
     build_transition_matrix_by_subject_payload,
     build_transition_matrix_payload,
     mo,
-    plots,
+    model_plots,
     save_plot,
     selected,
     state_labels,
@@ -473,7 +474,7 @@ def _(
         K=K,
         subjects=selected,
     )
-    _fig_by_subject = plots.plot_transition_matrix_by_subject(**_by_subject_payload)
+    _fig_by_subject = model_plots.transition_matrix_by_subject(**_by_subject_payload)
 
     _summary_payload = build_transition_matrix_payload(
         arrays_store=arrays_store,
@@ -481,7 +482,7 @@ def _(
         K=K,
         subjects=selected,
     )
-    _fig_summary = plots.plot_transition_matrix(**_summary_payload)
+    _fig_summary = model_plots.transition_matrix(**_summary_payload)
     mo.vstack([_fig_summary, save_plot(_fig_summary, f"Mean Transition Matrix", stem=f"mean_transition_matrix",),], align="center")
     return
 
@@ -498,8 +499,8 @@ def _(mo):
 def _(
     build_state_dwell_times_payload,
     mo,
+    model_plots,
     pl,
-    plots,
     save_plot,
     selected,
     task_name,
@@ -516,10 +517,10 @@ def _(
         views=_views_sel,
         max_dwell=90 if str(task_name).lower().startswith("2afc") else None,
     )
-    _fig_dwell_summary = plots.plot_state_dwell_times_summary(
+    _fig_dwell_summary = model_plots.state_dwell_times_summary(
         _dwell_payload,
     )
-    _fig_dwell_by_subject = plots.plot_state_dwell_times_by_subject(
+    _fig_dwell_by_subject = model_plots.state_dwell_times_by_subject(
         _dwell_payload,
     )
     mo.vstack(
@@ -528,11 +529,6 @@ def _(
             save_plot(_fig_dwell_summary, "state dwell times summary", stem="state_dwell_times_summary"),
             _fig_dwell_by_subject,
             # save_plot(_fig_dwell_by_subject, "state dwell times by subject", stem="state_dwell_times_by_subject"),
-            mo.md(
-                "> Solid line: geometric dwell-time prediction from the fitted self-transition probability "
-                "`A_kk`. Dashed line: empirical MAP dwell distribution in 10-trial bins. Error bars: 68% CI. "
-                "The summary and by-subject plots share the same y-limit, computed from the by-subject panels."
-            ),
         ],
         align="center",
     )
@@ -1148,8 +1144,9 @@ def _(
     build_state_accuracy_payload,
     build_state_posterior_count_payload,
     mo,
+    model_plots,
     pl,
-    plots,
+    plt,
     save_plot,
     selected,
     trial_df,
@@ -1157,17 +1154,18 @@ def _(
     mo.stop(not selected, mo.md("No fitted subjects available."))
     _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
 
-    _fig_acc, _tbl = plots.plot_state_accuracy(
+    _fig_acc = model_plots.state_accuracy(
         build_state_accuracy_payload(
             _trial_df_sel,
             performance_col="correct_bool",
             chance_level=1.0 / adapter.num_classes,
         )
     )
-
-    _fig_post = plots.plot_state_posterior_count_kde(
-        build_state_posterior_count_payload(_trial_df_sel),
+    fig, ax = plt.subplots(figsize=(4,4))
+    _fig_post = model_plots.state_posterior_count_kde(
+        build_state_posterior_count_payload(_trial_df_sel), ax = ax
     )
+    ax.spines["right"].set_visible(True)
 
     mo.vstack([
         mo.hstack([
@@ -1191,7 +1189,6 @@ def _(
             ], align = "center"),
         ], align="center"),
         mo.md("**Trial counts & mean accuracy per label:**"),
-        mo.plain_text(_tbl.to_string()),
     ])
     return
 
@@ -1209,10 +1206,17 @@ def _(df_all, mo):
 
 
 @app.cell
-def _(build_session_trajectories_payload, mo, pl, plots, selected, trial_df):
+def _(
+    build_session_trajectories_payload,
+    mo,
+    model_plots,
+    pl,
+    selected,
+    trial_df,
+):
     mo.stop(not selected, mo.md("Select subjects above to view session trajectories."))
     _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-    _fig_traj = plots.plot_session_trajectories(
+    _fig_traj = model_plots.session_trajectories(
         build_session_trajectories_payload(
             _trial_df_sel,
             session_col="session",
@@ -1239,8 +1243,8 @@ def _(mo):
 def _(
     build_state_occupancy_payload,
     mo,
+    model_plots,
     pl,
-    plots,
     save_plot,
     selected,
     trial_df,
@@ -1252,12 +1256,12 @@ def _(
         session_col="session",
         sort_col="trial_idx",
     )
-    _fig_occ_overall_summary = plots.plot_state_occupancy_overall_summary(_occupancy_payload)
-    _fig_occ_overall_by_subject = plots.plot_state_occupancy_overall_by_subject(_occupancy_payload)
-    _fig_occ_sessions_summary = plots.plot_state_session_occupancy_summary(_occupancy_payload)
-    _fig_occ_sessions_by_subject = plots.plot_state_session_occupancy_by_subject(_occupancy_payload)
-    _fig_occ_switches_summary = plots.plot_state_switches_summary(_occupancy_payload)
-    _fig_occ_switches_by_subject = plots.plot_state_switches_by_subject(_occupancy_payload)
+    _fig_occ_overall_summary = model_plots.state_occupancy_overall_summary(_occupancy_payload)
+    _fig_occ_overall_by_subject = model_plots.state_occupancy_overall_by_subject(_occupancy_payload)
+    _fig_occ_sessions_summary = model_plots.state_session_occupancy_summary(_occupancy_payload)
+    _fig_occ_sessions_by_subject = model_plots.state_session_occupancy_by_subject(_occupancy_payload)
+    _fig_occ_switchessummary = model_plots.state_switches_summary(_occupancy_payload)
+    _fig_occ_switches_by_subject = model_plots.state_switches_by_subject(_occupancy_payload)
     mo.hstack([
         mo.vstack([
             mo.vstack([
@@ -1336,8 +1340,8 @@ def _(
     THRESH_ui,
     build_change_triggered_posteriors_payload,
     mo,
+    model_plots,
     pl,
-    plots,
     save_plot,
     selected,
     trial_df,
@@ -1350,10 +1354,10 @@ def _(
         sort_col="trial_idx",
         switch_posterior_threshold=THRESH_ui.amount,
     )
-    _fig_change_summary = plots.plot_change_triggered_posteriors_summary(
+    _fig_change_summary = model_plots.change_triggered_posteriors_summary(
         _change_payload,
     )
-    _fig_change_by_subject = plots.plot_change_triggered_posteriors_by_subject(
+    _fig_change_by_subject = model_plots.change_triggered_posteriors_by_subject(
         _change_payload,
     )
     mo.vstack([
@@ -1436,7 +1440,7 @@ def _(
     adapter,
     build_session_deepdive_payload,
     mo,
-    plots,
+    model_plots,
     save_plot,
     trial_df,
     ui_engaged_trace_mode,
@@ -1452,7 +1456,7 @@ def _(
     )
 
     _sess = int(ui_session_id.value) if str(ui_session_id.value).isdigit() else ui_session_id.value
-    _fig = plots.plot_session_deepdive(
+    _fig = model_plots.session_deepdive(
         build_session_deepdive_payload(
             trial_df,
             subject=_subj,
