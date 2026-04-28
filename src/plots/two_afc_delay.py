@@ -976,7 +976,6 @@ def _plot_delay_accuracy_panel(
     ax: plt.Axes,
     df_pd: pd.DataFrame,
     *,
-    title: str,
     color: str,
     delay_col: str = "delay",
     weight_col: str | None = None,
@@ -1422,6 +1421,10 @@ from src.process.common import (
     attach_rank_state_model_cols,
     binned_feature_summary,
     display_regressor_name as _display_regressor_name,
+    fit_lapse_logistic_by_group,
+    fit_lapse_logistic_by_subject_group,
+    format_lapse_logistic_fits,
+    lapse_logistic_label,
     mean_weighted_empirical_curve,
     pick_choice_history_regressor,
     prepare_evidence_curve,
@@ -1514,36 +1517,112 @@ def plot_binned_accuracy_figure(
     plot_df,
     *,
     regressor_col: str,
+    figsize: tuple[float, float] | None = None,
+    max_panels: int | None = None,
+    legend: bool = True,
+    fit_lapse_logistic: bool = False,
+    show_lapses_in_legend: bool = True,
+    print_lapse_fits: bool | None = None,
+    lapse_max: float = 0.4,
+    share_lapse_logistic_core: bool = False,
+    fit_lapse_by_subject: bool = True,
     **plot_kwargs,
 ):
     style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
     panels, legend_title = process.prepare_binned_accuracy_figure(
         plot_df,
         regressor_col=regressor_col,
     )
     if not panels:
         return None
+    if len(panels) > 1:
+        panels = panels[1:2]
+    if max_panels is not None:
+        panels = panels[:max_panels]
 
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=len(panels),
-        figsize=style.get("figsize", (4 * len(panels), 4)),
+        figsize=figsize_arg if figsize_arg is not None else (figsize if figsize is not None else (4 * len(panels), 4)),
         sharey=True,
     )
 
+    lapse_fit_reports: list[str] = []
     for ax, panel in zip(axes, panels, strict=False):
-        x_col = "_signed_delay_cat" if panel["meta"].get("categorical_x") else "delay"
+        meta = panel["meta"]
+        x_plot_col = meta.get("x_col", "_signed_delay_cat")
+        x_fit_col = meta.get("fit_x_col", x_plot_col)
+        fits = {}
+        label_map = None
+        if fit_lapse_logistic and panel["summary"] is not None and not panel["summary"].empty:
+            line_order = meta.get("line_order") or panel["summary"]["_reg_bin"].dropna().unique().tolist()
+            subject_summary = panel.get("subject_summary")
+            if fit_lapse_by_subject and subject_summary is not None and not subject_summary.empty:
+                fits = fit_lapse_logistic_by_subject_group(
+                    subject_summary,
+                    subject_col="subject",
+                    line_group_col="_reg_bin",
+                    x_col=x_fit_col,
+                    y_col="data_mean",
+                    weight_col="n_trials",
+                    line_order=line_order,
+                    lapse_max=lapse_max,
+                    shared_core=share_lapse_logistic_core,
+                )
+            else:
+                fits = fit_lapse_logistic_by_group(
+                    panel["summary"],
+                    line_group_col="_reg_bin",
+                    x_col=x_fit_col,
+                    y_col="md",
+                    weight_col="nd",
+                    line_order=line_order,
+                    lapse_max=lapse_max,
+                    shared_core=share_lapse_logistic_core,
+                )
+            if fits and show_lapses_in_legend:
+                label_map = {
+                    group_value: lapse_logistic_label(group_value, fits.get(group_value))
+                    for group_value in line_order
+                }
+            elif fits and (print_lapse_fits is None or print_lapse_fits):
+                title = panel.get("label") or meta.get("title") or "Binned psychometric lapse fits"
+                lapse_fit_reports.append(format_lapse_logistic_fits(fits, title=title))
+
         plot_grouped_summary(
             ax,
             panel["summary"],
             line_group_col="_reg_bin",
-            x_col=x_col,
-            meta=panel["meta"],
+            x_col=x_plot_col,
+            meta=meta,
+            label_map=label_map,
+            legend=legend,
         )
+        if fits:
+            line_order = meta.get("line_order") or list(fits)
+            default_palette = sns.color_palette("viridis", len(line_order))
+            for group_value, color in zip(line_order, default_palette, strict=False):
+                fit = fits.get(group_value)
+                if fit is None:
+                    continue
+                ax.plot(
+                    fit.x_fit,
+                    fit.y_fit,
+                    "--",
+                    color=color,
+                    lw=1.5,
+                    alpha=0.9,
+                    label="_nolegend_",
+                )
         if ax.legend_ is not None:
             ax.legend_.remove()
 
-    add_shared_figure_legend(fig, source_ax=axes[-1], title=legend_title)
+    if lapse_fit_reports:
+        print("\n\n".join(report for report in lapse_fit_reports if report))
+    add_shared_figure_legend(fig, source_ax=axes[-1], title=legend_title, legend=legend)
+    fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
     for ax in axes[: len(panels)]:
         apply_axis_style(ax, **style)
     return fig, axes[: len(panels)]
@@ -1556,6 +1635,11 @@ def plot_right_by_regressor(
     title: str | None = None,
     xlabel: str | None = None,
     n_bins: int = 10,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
+    group_labels: dict | None = None,
+    palette: dict | None = None,
+    legend: bool = True,
     **plot_kwargs,
 ):
     summary, meta = process.prepare_right_by_regressor(
@@ -1563,29 +1647,32 @@ def plot_right_by_regressor(
         regressor_col=regressor_col,
         xlabel=xlabel,
         n_bins=n_bins,
+        group_col=group_col,
+        group_order=group_order,
     )
     if summary is None or summary.empty:
         return None
 
     raw_line_order = meta.get("line_order") or []
-
-    # map fake categorical delay ordering into a numeric palette ordering
-    numeric_proxy = []
-    for value in raw_line_order:
-        if value == "0L":
-            numeric_proxy.append(-999.0)
-        elif value == "0R":
-            numeric_proxy.append(999.0)
-        else:
-            numeric_proxy.append(float(value))
-
-    numeric_palette = centered_numeric_group_palette(numeric_proxy)
-    palette = {}
-    for raw, proxy in zip(raw_line_order, numeric_proxy, strict=False):
-        palette[raw] = numeric_palette[proxy]
+    if palette is None and group_col is None:
+        palette = {}
+        _left_order = [
+            _value
+            for _value in raw_line_order
+            if _value == "0L" or (_value not in {"0R"} and float(_value) < 0)
+        ]
+        _right_order = [
+            _value
+            for _value in raw_line_order
+            if _value == "0R" or (_value not in {"0L"} and float(_value) > 0)
+        ]
+        _left_colors = sns.color_palette("Blues", len(_left_order) + 2)[1:-1]
+        _right_colors = list(reversed(sns.color_palette("Reds", len(_right_order) + 2)[1:-1]))
+        palette.update(dict(zip(_left_order, _left_colors, strict=False)))
+        palette.update(dict(zip(_right_order, _right_colors, strict=False)))
 
     line_labels = meta.get("line_labels") or []
-    label_map = dict(zip(raw_line_order, line_labels, strict=False)) if line_labels else {}
+    label_map = group_labels or (dict(zip(raw_line_order, line_labels, strict=False)) if line_labels else {})
 
     fig, ax = make_single_panel_figure(
         extra_right_legend=True,
@@ -1595,11 +1682,12 @@ def plot_right_by_regressor(
     plot_grouped_summary(
         ax,
         summary,
-        line_group_col="_signed_delay_cat",
+        line_group_col=meta.get("line_group_col", "_signed_delay_cat"),
         x_col="x_center",
         meta=meta,
         label_map=label_map,
         palette=palette,
+        legend=legend,
     )
     apply_axis_style(ax, **({"xlabel": xlabel} if xlabel is not None else {}))
     return ax
@@ -1674,6 +1762,11 @@ def plot_accuracy_by_total_evidence(
     *,
     adapter,
     views: dict,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
+    group_labels: dict | None = None,
+    palette: dict | None = None,
+    legend: bool = True,
     **plot_kwargs,
 ):
     df_pd = attach_total_fitted_evidence(
@@ -1693,14 +1786,36 @@ def plot_accuracy_by_total_evidence(
         baseline=0.5,
         xlabel="Correct-vs-rest fitted evidence",
         ylabel="Accuracy",
+        group_col=group_col,
+        group_order=group_order,
     )
-    return plot_simple_summary(summary, meta=meta, **plot_kwargs)
+    if group_col is None:
+        return plot_simple_summary(summary, meta=meta, **plot_kwargs)
+
+    fig, ax = make_single_panel_figure(
+        ax=plot_kwargs.get("ax"),
+        figsize=plot_kwargs.get("figsize", (3.0, 3.0)),
+    )
+    return plot_grouped_summary(
+        ax,
+        summary,
+        line_group_col=group_col,
+        x_col="x_center",
+        label_map=group_labels,
+        palette=palette,
+        meta=meta,
+    )
 
 
 def plot_repeat_by_repeat_evidence(
     plot_df,
     *,
     views: dict,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
+    group_labels: dict | None = None,
+    palette: dict | None = None,
+    legend: bool = True,
     **plot_kwargs,
 ):
     style = dict(plot_kwargs)
@@ -1722,6 +1837,8 @@ def plot_repeat_by_repeat_evidence(
         xlabel="Fitted evidence for repeating choice",
         ylabel="P(Repeat)",
         quantiles=REPEAT_EVIDENCE_TAIL_QUANTILES,
+        group_col=group_col,
+        group_order=group_order,
     )
     # Overlay theoretical pure logistic function (zero lapse)
     try:
@@ -1745,7 +1862,23 @@ def plot_repeat_by_repeat_evidence(
         model_dense = None
         title = None
 
-    ax = plot_simple_summary(summary, meta=meta, **style)
+    if group_col is None:
+        ax = plot_simple_summary(summary, meta=meta, legend=legend, **style)
+    else:
+        fig, ax = make_single_panel_figure(
+            ax=style.get("ax"),
+            figsize=style.get("figsize", (3.0, 3.0)),
+        )
+        ax = plot_grouped_summary(
+            ax,
+            summary,
+            line_group_col=group_col,
+            x_col="x_center",
+            label_map=group_labels,
+            palette=palette,
+            meta=meta,
+            legend=legend,
+        )
     if ax is not None and x_dense is not None and model_dense is not None:
         ax.plot(x_dense, model_dense, color="black", linewidth=1.0, linestyle=(0, (3, 1)), alpha=0.9, zorder=1)
     return ax

@@ -396,7 +396,7 @@ def _():
 
 
 @app.cell
-def _(pl):
+def _(get_adapter, pl):
     def subject_behavior_df(
         df_all,
         *,
@@ -406,19 +406,7 @@ def _(pl):
         task_name="2AFC",
         condition_filter="all",
     ):
-        if str(task_name).upper() == "2AFC_DRUG":
-            selected = str(condition_filter or "all").strip().lower()
-            if selected in {"saline", "drug"}:
-                if "Drug" not in df_all.columns:
-                    raise ValueError("2AFC_DRUG requires a 'Drug' column for condition filtering.")
-                target = 1 if selected == "drug" else 0
-                df_all = (
-                    df_all.with_columns(
-                        pl.col("Drug").fill_null(0).cast(pl.Int64, strict=False).alias("__drug_filter")
-                    )
-                    .filter(pl.col("__drug_filter") == target)
-                    .drop("__drug_filter")
-                )
+        df_all = get_adapter(task_name).filter_condition_df(df_all, condition_filter)
         df_sub = df_all.filter(pl.col("subject") == subject).sort(sort_col)
         if session_col in df_sub.columns:
             df_sub = df_sub.filter(

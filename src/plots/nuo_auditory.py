@@ -80,16 +80,25 @@ from glmhmmt.model_plotting.legacy import (
 from glmhmmt.views import get_state_color, get_state_palette
 from src.process.nuo_auditory import _stim_bin_centers, _stim_param_weight_map, EMISSION_REGRESSOR_LABELS
 from src.process.common import (
+    REPEAT_EVIDENCE_TAIL_QUANTILES,
     assign_quantile_bins,
     display_regressor_name as _display_regressor_name,
+    fit_lapse_logistic_by_group,
+    fit_lapse_logistic_by_subject_group,
+    format_lapse_logistic_fits,
+    lapse_logistic_label,
     p_right_label,
     pick_choice_history_regressor as _pick_choice_history_regressor,
     prepare_evidence_curve,
     prepare_right_integration_maps,
+    resolve_grouping,
+    summarize_grouped_panel,
     to_pandas_df,
 )
 from src.plots.common import (
+    add_shared_figure_legend,
     apply_axis_style,
+    centered_numeric_group_palette,
     make_single_panel_figure,
     plot_grouped_summary,
     plot_integration_map_panels,
@@ -103,7 +112,7 @@ _PERFORMANCE_COL = "performance"
 _EVIDENCE_COL = "total_evidence_strength"
 _CONDITION_COL = "difficulty"
 _EXPERIMENT_COL = "stimulus_modality"
-_PLOT_CHOICE_LEFT_COL = "_plot_choice_left"
+_PLOT_CHOICE_RIGHT_COL = "_plot_choice_right"
 
 # ── state colour palette ──────────────────────────────────────────────────────
 
@@ -123,14 +132,35 @@ def _default_labels(K: int, C: int = 2) -> List[str]:
     return [f"State {k}" for k in range(K)]
 
 
-def _with_plot_choice_left(
+def _with_plot_choice_right(
     df: pd.DataFrame,
     choice_col: str,
 ) -> Tuple[pd.DataFrame, str]:
-    """Return a copy of *df* with a plotting column for P(left)."""
+    """Return a copy of *df* with a numeric plotting column for P(right)."""
     out = df.copy()
-    out[_PLOT_CHOICE_LEFT_COL] = 1.0 - pd.to_numeric(out[choice_col], errors="coerce")
-    return out, _PLOT_CHOICE_LEFT_COL
+    out[_PLOT_CHOICE_RIGHT_COL] = pd.to_numeric(out[choice_col], errors="coerce")
+    return out, _PLOT_CHOICE_RIGHT_COL
+
+
+def _attach_natural_evidence_bins(
+    df_pd: pd.DataFrame,
+    *,
+    evidence_col: str = _EVIDENCE_COL,
+    bin_col: str = "_evidence_bin",
+) -> tuple[pd.DataFrame | None, list[float]]:
+    df = df_pd.copy()
+    evidence = pd.to_numeric(df[evidence_col], errors="coerce")
+    valid = evidence.notna() & np.isfinite(evidence)
+    centers = _stim_bin_centers().astype(float)
+    if int(valid.sum()) == 0:
+        return None, centers.tolist()
+
+    mids = (centers[:-1] + centers[1:]) / 2.0
+    df[bin_col] = np.nan
+    bin_idx = np.digitize(evidence.loc[valid].to_numpy(dtype=float), mids, right=False)
+    bin_idx = np.clip(bin_idx, 0, len(centers) - 1)
+    df.loc[valid, bin_col] = centers[bin_idx]
+    return df, centers.tolist()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -443,7 +473,7 @@ def eval_glm_on_ild_grid(
         name: float(center)
         for name, center in zip(stim_bin_names, stim_centers)
     }
-    stim_param_idx = next((i for i, n in enumerate(X_cols_list) if n == "stim_param"), None)
+    stim_param_idx = next((i for i, n in enumerate(X_cols_list) if n in {"stim_param", "evidence_param"}), None)
     stim_param_weights = _stim_param_weight_map() if stim_param_idx is not None else {}
 
     # Accept any of these as the stimulus / ILD column
@@ -654,7 +684,7 @@ def _mean_glm_curve(
     marginalised rather than fixed to 0.
 
     Returns:
-        ``(ild_grid, mean_p_left)`` or *None* if no valid fits are found.
+        ``(ild_grid, mean_p_right)`` or *None* if no valid fits are found.
     """
     all_p: list[np.ndarray] = []
     ild_g: Optional[np.ndarray] = None
@@ -701,7 +731,7 @@ def _mean_glm_curve(
                 if not np.any(_lr > 0):
                     _lr = None
             ig, pg = eval_glm_on_ild_grid(W, cols, ild_max=ild_max, lapse_rates=_lr, X_data=X_data)
-            pg = 1.0 - np.asarray(pg, dtype=float)
+            pg = np.asarray(pg, dtype=float)
         except Exception:
             continue
 
@@ -738,7 +768,7 @@ def _subject_glm_curves(
     ild_max: float,
     state_k: Optional[int] = None,
 ) -> dict:
-    """Return {subject: (ild_grid, p_left)} for per-subject psychometric backgrounds."""
+    """Return {subject: (ild_grid, p_right)} for per-subject psychometric backgrounds."""
     out: dict = {}
     for subj in subjects:
         curve = _mean_glm_curve(arrays_store, [subj], X_cols, ild_max=ild_max, state_k=state_k)
@@ -806,7 +836,7 @@ def _mean_glm_feature_curve(
                 lapse_rates=_lr,
                 X_data=X_data,
             )
-            pg = 1.0 - np.asarray(pg, dtype=float)
+            pg = np.asarray(pg, dtype=float)
         except Exception:
             continue
 
@@ -843,7 +873,7 @@ def _subject_glm_feature_curves(
     state_k: Optional[int] = None,
     n_grid: int = 300,
 ) -> dict:
-    """Return {subject: (feature_grid, p_left)} for per-subject feature backgrounds."""
+    """Return {subject: (feature_grid, p_right)} for per-subject feature backgrounds."""
     out: dict = {}
     for subj in subjects:
         curve = _mean_glm_feature_curve(
@@ -1226,7 +1256,7 @@ def _psych_panel(
     subject_curves: Optional[dict] = None,
     tick_ilds: Optional[Sequence[float]] = None,
 ) -> None:
-    """Draw a pooled psychometric curve (P(left) vs evidence strength) on ax.
+    """Draw a pooled psychometric curve (P(right) vs evidence strength) on ax.
 
     Style mirrors plot_pc_across_batches:
     - Per-subject individual traces drawn with low alpha.
@@ -1239,7 +1269,7 @@ def _psych_panel(
         return
 
     choice_col = _require_plot_col(df, choice_col)
-    df_plot, choice_col = _with_plot_choice_left(df, choice_col)
+    df_plot, choice_col = _with_plot_choice_right(df, choice_col)
 
     subj_agg = (
         df_plot.groupby([subj_col, ild_col], observed=True)
@@ -1328,12 +1358,12 @@ def _psych_state_panel(
     bin_points: bool = False,
     n_bins: int = 9,
 ) -> Tuple:
-    """Draw state-specific P(left) psychometric on ax. Returns (data_h, model_h)."""
+    """Draw state-specific P(right) psychometric on ax. Returns (data_h, model_h)."""
     if df_state.empty:
         return None, None
 
     choice_col = _require_plot_col(df_state, choice_col)
-    df_state, choice_col = _with_plot_choice_left(df_state, choice_col)
+    df_state, choice_col = _with_plot_choice_right(df_state, choice_col)
     empirical_smooth = None
     if weight_col is not None and weight_col in df_state.columns:
         empirical_smooth = _mean_weighted_empirical_curve(
@@ -1514,12 +1544,12 @@ def _regressor_state_panel(
     show_model_smooth: bool = True,
     model_line_mode: str = "smooth",
 ) -> Tuple:
-    """Draw state-specific P(left) vs arbitrary regressor on ax."""
+    """Draw state-specific P(right) vs arbitrary regressor on ax."""
     if df_state.empty:
         return None, None
 
     choice_col = _require_plot_col(df_state, choice_col)
-    df_state, choice_col = _with_plot_choice_left(df_state, choice_col)
+    df_state, choice_col = _with_plot_choice_right(df_state, choice_col)
     empirical_smooth = None
     if weight_col is not None and weight_col in df_state.columns:
         empirical_smooth = _mean_weighted_empirical_curve(
@@ -1639,7 +1669,7 @@ def prepare_predictions_df(df_pred):
     Added / ensured output columns
     ------------------------------
     correct_bool    : bool  - Trial accuracy
-    p_pred          : float - model P(left) used on the psychometric y-axis
+    p_pred          : float - model P(right) used on the psychometric y-axis
     p_model_correct : float - model P(correct stimulus)
 
     Returns
@@ -1668,7 +1698,7 @@ def prepare_predictions_df(df_pred):
             raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
 
         df = df.with_columns(
-            pl.col("pL").alias("p_pred"),
+            pl.col("pR").alias("p_pred"),
             pl.when(pl.col("stimulus") == 0).then(pl.col("pL")).otherwise(pl.col("pR")).alias("p_model_correct"),
         )
 
@@ -1689,7 +1719,7 @@ def prepare_predictions_df(df_pred):
         if "pL" not in df.columns or "pR" not in df.columns:
             raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
 
-        df["p_pred"] = df["pL"]
+        df["p_pred"] = df["pR"]
         df["p_model_correct"] = df.apply(lambda row: row["pL"] if row["stimulus"] == 0 else row["pR"], axis=1)
 
         return df
@@ -1823,10 +1853,16 @@ def plot_right_by_regressor(
     title: str | None = None,
     xlabel: str | None = None,
     n_bins: int = 10,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
+    group_labels: dict | None = None,
+    palette: dict | None = None,
     **plot_kwargs,
 ):
     df_pd = _prepare_compat_plot_df(plot_df)
     if regressor_col not in df_pd.columns or _EVIDENCE_COL not in df_pd.columns:
+        if group_col is not None:
+            raise ValueError(f"Missing evidence column {_EVIDENCE_COL!r}; grouped fallback is not supported.")
         return plot_right_by_regressor_simple(
             df_pd,
             regressor_col=regressor_col,
@@ -1835,6 +1871,11 @@ def plot_right_by_regressor(
             n_bins=n_bins,
             **plot_kwargs,
         )
+    resolved_group_col, resolved_group_order = resolve_grouping(
+        df_pd,
+        group_col=group_col,
+        group_order=group_order,
+    )
 
     df_pd = df_pd.copy()
     df_pd["_response_right"] = pd.to_numeric(df_pd[_RESPONSE_COL], errors="coerce")
@@ -1845,17 +1886,10 @@ def plot_right_by_regressor(
     if df_pd.empty:
         return None
 
-    line_labels, line_order = assign_quantile_bins(df_pd[_EVIDENCE_COL], max_bins=4)
-    if not line_order:
-        return plot_right_by_regressor_simple(
-            df_pd,
-            regressor_col=regressor_col,
-            title=title,
-            xlabel=xlabel,
-            n_bins=n_bins,
-            **plot_kwargs,
-        )
-    df_pd["_evidence_bin"] = line_labels
+    df_pd, line_order = _attach_natural_evidence_bins(df_pd)
+    if df_pd is None:
+        return None
+    df_pd["_evidence_bin"] = pd.to_numeric(df_pd["_evidence_bin"], errors="coerce")
     df_pd = df_pd[df_pd["_evidence_bin"].notna()].copy()
     if df_pd.empty:
         return None
@@ -1890,8 +1924,23 @@ def plot_right_by_regressor(
             .sort_values("x_center")
         )
 
+    if resolved_group_col is None:
+        subject_group_cols = ["_evidence_bin", "_x_bin", "subject"]
+        summary_group_cols = ["_evidence_bin", "_x_bin"]
+        line_group_col = "_evidence_bin"
+        line_order = line_order
+        legend_title = "Evidence bin"
+    else:
+        df_pd = df_pd[df_pd[resolved_group_col].notna()].copy()
+        df_pd = df_pd[df_pd[resolved_group_col].isin(resolved_group_order)].copy()
+        subject_group_cols = [resolved_group_col, "_x_bin", "subject"]
+        summary_group_cols = [resolved_group_col, "_x_bin"]
+        line_group_col = resolved_group_col
+        line_order = resolved_group_order
+        legend_title = resolved_group_col
+
     subj = (
-        df_pd.groupby(["_evidence_bin", "_x_bin", "subject"], observed=True)
+        df_pd.groupby(subject_group_cols, observed=True)
         .agg(
             md=("_response_right", "mean"),
             mm=("_p_right_model", "mean"),
@@ -1903,7 +1952,7 @@ def plot_right_by_regressor(
         return None
 
     summary = (
-        subj.groupby(["_evidence_bin", "_x_bin"], observed=True)
+        subj.groupby(summary_group_cols, observed=True)
         .agg(
             x_center=("x_center", "median"),
             md=("md", "mean"),
@@ -1912,7 +1961,7 @@ def plot_right_by_regressor(
             mm=("mm", "mean"),
         )
         .reset_index()
-        .sort_values(["_evidence_bin", "x_center"])
+        .sort_values([line_group_col, "x_center"])
     )
     summary["sem"] = summary["sd"].fillna(0.0) / np.sqrt(summary["nd"].clip(lower=1))
 
@@ -1926,15 +1975,20 @@ def plot_right_by_regressor(
         "ylabel": p_right_label(),
         "baseline": 0.5,
         "line_order": line_order,
-        "legend_title": "Evidence bin",
+        "legend_title": legend_title,
         "legend_outside": True,
     }
+    if palette is None and group_col is None:
+        palette = centered_numeric_group_palette(line_order)
     plot_grouped_summary(
         ax,
         summary,
-        line_group_col="_evidence_bin",
+        line_group_col=line_group_col,
         x_col="x_center",
         meta=meta,
+        line_order=line_order,
+        label_map=group_labels,
+        palette=palette,
     )
     if title is not None:
         ax.set_title(title)
@@ -1946,49 +2000,179 @@ def plot_binned_accuracy_figure(
     plot_df,
     *,
     regressor_col: str,
+    fit_lapse_logistic: bool = False,
+    show_lapses_in_legend: bool = True,
+    print_lapse_fits: bool | None = None,
+    lapse_max: float = 0.4,
+    share_lapse_logistic_core: bool = False,
+    fit_lapse_by_subject: bool = True,
     **plot_kwargs,
 ):
+    style = dict(plot_kwargs)
     df_pd = _prepare_compat_plot_df(plot_df)
     if regressor_col not in df_pd.columns or _EVIDENCE_COL not in df_pd.columns:
+        return None
+
+    df_pd = df_pd.copy()
+    df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
+    df_pd[_EVIDENCE_COL] = pd.to_numeric(df_pd[_EVIDENCE_COL], errors="coerce")
+    df_pd["_response_right"] = pd.to_numeric(df_pd[_RESPONSE_COL], errors="coerce")
+    df_pd["_p_right_model"] = pd.to_numeric(df_pd["pR"], errors="coerce")
+    df_pd = df_pd.dropna(subset=[regressor_col, _EVIDENCE_COL, "_response_right", "_p_right_model"])
+    if df_pd.empty:
         return None
 
     reg_labels, reg_order = assign_quantile_bins(df_pd[regressor_col], max_bins=4)
     if not reg_order:
         return None
 
-    df_pd = df_pd.copy()
     df_pd["_reg_bin"] = reg_labels
     df_pd = df_pd[df_pd["_reg_bin"].notna()].copy()
     if df_pd.empty:
         return None
 
-    panels: list[tuple[str, pd.DataFrame, dict]] = []
-    for label in reg_order:
-        df_panel = df_pd[df_pd["_reg_bin"] == label].copy()
-        summary, meta = prepare_evidence_curve(
-            df_panel,
-            evidence_col=_EVIDENCE_COL,
-            data_col="correct_bool",
-            model_col="p_model_correct",
-            baseline=0.5,
-            xlabel="Evidence strength",
-            ylabel="Accuracy",
+    df_pd, evidence_order = _attach_natural_evidence_bins(df_pd)
+    if df_pd is None:
+        return None
+    df_pd = df_pd[df_pd["_evidence_bin"].notna()].copy()
+    if df_pd.empty:
+        return None
+
+    xtick_labels = [f"{center:g}" for center in evidence_order]
+
+    def _panel_summary(*, subgroup_col: str | None = None, subgroup_value=None) -> pd.DataFrame:
+        return summarize_grouped_panel(
+            df_pd,
+            line_group_col="_reg_bin",
+            x_col="_evidence_bin",
+            subject_col="subject",
+            data_col="_response_right",
+            model_col="_p_right_model",
+            line_order=reg_order,
+            subgroup_col=subgroup_col,
+            subgroup_value=subgroup_value,
         )
-        if summary is None or summary.empty:
-            continue
-        panels.append((label, summary, meta))
+
+    def _subject_summary(*, subgroup_col: str | None = None, subgroup_value=None) -> pd.DataFrame:
+        plot_df = df_pd.copy()
+        if subgroup_col is not None:
+            plot_df = plot_df[plot_df[subgroup_col] == subgroup_value].copy()
+        plot_df = plot_df[
+            plot_df["_reg_bin"].notna()
+            & plot_df["_evidence_bin"].notna()
+            & plot_df["_reg_bin"].isin(reg_order)
+        ].copy()
+        if plot_df.empty:
+            return pd.DataFrame()
+        return (
+            plot_df.groupby(["_reg_bin", "subject", "_evidence_bin"], observed=True)
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=("_p_right_model", "mean"),
+                n_trials=("_response_right", "count"),
+            )
+            .reset_index()
+        )
+
+    panels: list[tuple[str, pd.DataFrame, dict]] = []
+    overall = _panel_summary()
+    overall_subject = _subject_summary()
+    if overall is not None and not overall.empty:
+        panels.append(
+            (
+                "Overall",
+                overall,
+                overall_subject,
+                {
+                    "xlabel": "Evidence strength",
+                    "ylabel": p_right_label(),
+                    "legend_title": display_regressor_name(regressor_col),
+                    "baseline": 0.5,
+                    "xticks": evidence_order,
+                    "x_tick_labels": xtick_labels,
+                    "line_order": reg_order,
+                },
+            )
+        )
 
     if not panels:
         return None
 
-    figsize = plot_kwargs.get("figsize", (4.0 * len(panels), 4.0))
-    fig, axes = plt.subplots(1, len(panels), figsize=figsize, sharey=True, constrained_layout=True)
+    figsize = style.get("figsize", (4.0 * len(panels), 4.0))
+    fig, axes = plt.subplots(1, len(panels), figsize=figsize, sharey=True)
     axes = np.atleast_1d(axes)
-    reg_label = display_regressor_name(regressor_col)
 
-    for ax, (panel_label, summary, meta) in zip(axes, panels, strict=False):
-        plot_simple_summary(summary, meta=meta, ax=ax)
-        ax.set_title(f"{reg_label} {panel_label}")
+    lapse_fit_reports: list[str] = []
+    for ax, (panel_label, summary, subject_summary, meta) in zip(axes, panels, strict=False):
+        fits = {}
+        label_map = None
+        if fit_lapse_logistic and summary is not None and not summary.empty:
+            line_order = meta.get("line_order") or summary["_reg_bin"].dropna().unique().tolist()
+            if fit_lapse_by_subject and subject_summary is not None and not subject_summary.empty:
+                fits = fit_lapse_logistic_by_subject_group(
+                    subject_summary,
+                    subject_col="subject",
+                    line_group_col="_reg_bin",
+                    x_col="_evidence_bin",
+                    y_col="data_mean",
+                    weight_col="n_trials",
+                    line_order=line_order,
+                    lapse_max=lapse_max,
+                    shared_core=share_lapse_logistic_core,
+                )
+            else:
+                fits = fit_lapse_logistic_by_group(
+                    summary,
+                    line_group_col="_reg_bin",
+                    x_col="_evidence_bin",
+                    y_col="md",
+                    weight_col="nd",
+                    line_order=line_order,
+                    lapse_max=lapse_max,
+                    shared_core=share_lapse_logistic_core,
+                )
+            if fits and show_lapses_in_legend:
+                label_map = {
+                    group_value: lapse_logistic_label(group_value, fits.get(group_value))
+                    for group_value in line_order
+                }
+            elif fits and (print_lapse_fits is None or print_lapse_fits):
+                lapse_fit_reports.append(format_lapse_logistic_fits(fits, title=panel_label))
+
+        plot_grouped_summary(
+            ax,
+            summary,
+            line_group_col="_reg_bin",
+            x_col="_evidence_bin",
+            meta=meta,
+            label_map=label_map,
+        )
+        if fits:
+            line_order = meta.get("line_order") or list(fits)
+            default_palette = sns.color_palette("viridis", len(line_order))
+            for group_value, color in zip(line_order, default_palette, strict=False):
+                fit = fits.get(group_value)
+                if fit is None:
+                    continue
+                ax.plot(
+                    fit.x_fit,
+                    fit.y_fit,
+                    "--",
+                    color=color,
+                    lw=1.5,
+                    alpha=0.9,
+                    label="_nolegend_",
+                )
+        if ax.legend_ is not None:
+            ax.legend_.remove()
+        ax.axvline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
+
+    if lapse_fit_reports:
+        print("\n\n".join(report for report in lapse_fit_reports if report))
+    add_shared_figure_legend(fig, source_ax=axes[-1])
+    fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
+    for ax in axes[: len(panels)]:
+        apply_axis_style(ax, **style)
 
     return fig, axes[: len(panels)]
 
@@ -1998,6 +2182,10 @@ def plot_accuracy_by_total_evidence(
     *,
     adapter,
     views: dict,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
+    group_labels: dict | None = None,
+    palette: dict | None = None,
     **plot_kwargs,
 ):
     _ = adapter, views
@@ -2018,17 +2206,42 @@ def plot_accuracy_by_total_evidence(
         baseline=0.5,
         xlabel="Correct-vs-rest fitted evidence",
         ylabel="Accuracy",
+        group_col=group_col,
+        group_order=group_order,
     )
-    return plot_simple_summary(summary, meta=meta, **plot_kwargs)
+    if group_col is None:
+        return plot_simple_summary(summary, meta=meta, **plot_kwargs)
+
+    fig, ax = make_single_panel_figure(
+        ax=plot_kwargs.get("ax"),
+        figsize=plot_kwargs.get("figsize", (3.0, 3.0)),
+    )
+    return plot_grouped_summary(
+        ax,
+        summary,
+        line_group_col=group_col,
+        x_col="x_center",
+        y_col="data_mean",
+        yerr_col="data_sem",
+        model_y_col="model_mean",
+        line_order=meta.get("line_order"),
+        label_map=group_labels,
+        palette=palette,
+        meta=meta,
+    )
 
 
 def plot_repeat_by_repeat_evidence(
     plot_df,
     *,
     views: dict,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
+    group_labels: dict | None = None,
+    palette: dict | None = None,
     **plot_kwargs,
 ):
-    _ = views
+    style = dict(plot_kwargs)
     df_pd = _prepare_compat_plot_df(plot_df)
     df_pd, prev_choice_col = _ensure_previous_choice_column(df_pd)
     if prev_choice_col is None or "pL" not in df_pd.columns or "pR" not in df_pd.columns:
@@ -2055,16 +2268,64 @@ def plot_repeat_by_repeat_evidence(
     df_pd["_p_repeat_model"] = p_repeat
     df_pd["_repeat_choice_evidence"] = np.log(p_repeat / (1.0 - p_repeat))
 
+    baseline = 1.0 / next(iter(views.values())).num_classes if views else 0.5
     summary, meta = prepare_evidence_curve(
         df_pd,
         evidence_col="_repeat_choice_evidence",
         data_col="_repeat_choice",
         model_col="_p_repeat_model",
-        baseline=0.5,
+        baseline=float(baseline),
         xlabel="Fitted evidence for repeating choice",
         ylabel="P(Repeat)",
+        quantiles=REPEAT_EVIDENCE_TAIL_QUANTILES,
+        group_col=group_col,
+        group_order=group_order,
     )
-    return plot_simple_summary(summary, meta=meta, **plot_kwargs)
+    try:
+        x = summary["x_center"].to_numpy(dtype=float)
+        if x.size >= 2:
+            x_min, x_max = float(np.nanmin(x)), float(np.nanmax(x))
+            pad = max(1.0, (x_max - x_min) * 0.2)
+            x_dense = np.linspace(x_min - pad, x_max + pad, 400)
+            model_dense = 1.0 / (1.0 + np.exp(-x_dense))
+        else:
+            x_dense = None
+            model_dense = None
+    except Exception:
+        x_dense = None
+        model_dense = None
+
+    if group_col is None:
+        ax = plot_simple_summary(summary, meta=meta, **style)
+    else:
+        fig, ax = make_single_panel_figure(
+            ax=style.get("ax"),
+            figsize=style.get("figsize", (3.0, 3.0)),
+        )
+        ax = plot_grouped_summary(
+            ax,
+            summary,
+            line_group_col=group_col,
+            x_col="x_center",
+            y_col="data_mean",
+            yerr_col="data_sem",
+            model_y_col="model_mean",
+            line_order=meta.get("line_order"),
+            label_map=group_labels,
+            palette=palette,
+            meta=meta,
+        )
+    if ax is not None and x_dense is not None and model_dense is not None:
+        ax.plot(
+            x_dense,
+            model_dense,
+            color="black",
+            linewidth=1.0,
+            linestyle=(0, (3, 1)),
+            alpha=0.9,
+            zorder=1,
+        )
+    return ax
 
 
 def plot_right_integration_map(
@@ -2082,11 +2343,12 @@ def plot_right_integration_map(
     **plot_kwargs,
 ):
     df_pd = _prepare_compat_plot_df(plot_df)
+    resolved_x_col = x_col or ("evidence_param" if "evidence_param" in df_pd.columns else None)
     panels, meta = prepare_right_integration_maps(
         df_pd,
         response_mode="pm1_or_prob",
         pred_col="pR",
-        x_col=x_col,
+        x_col=resolved_x_col,
         y_col=y_col,
         value_col=value_col,
         include_model=include_model,
@@ -2097,6 +2359,8 @@ def plot_right_integration_map(
         fill_empty=smooth,
         default_sigma_dx=5.0,
     )
+    if meta.get("x_col") in {_EVIDENCE_COL, "evidence_param"}:
+        meta = {**meta, "xlabel": "Evidence strength"}
     return plot_integration_map_panels(
         panels,
         meta=meta,
@@ -2452,7 +2716,7 @@ def plot_categorical_performance_all(
     background_style: str = "data",
     n_bins: int = 9,
 ) -> plt.Figure:
-    """Overall psychometric P(left) vs evidence strength.
+    """Overall psychometric P(right) vs evidence strength.
 
     The Nuo non-state view is a single pooled panel. Empirical means use the
     modeled response column and the data are binned over the evidence axis
@@ -2462,7 +2726,7 @@ def plot_categorical_performance_all(
         df_pd = df.to_pandas()
     else:
         df_pd = df.copy()
-    df_pd, choice_col = _with_plot_choice_left(df_pd, choice_col)
+    df_pd, choice_col = _with_plot_choice_right(df_pd, choice_col)
 
     summary = _binned_feature_summary(
         df_pd,
@@ -2544,7 +2808,7 @@ def plot_categorical_performance_all(
     ax.set_ylim(0, 1)
     ax.set_yticks([0, 0.5, 1])
     ax.set_xlabel("Evidence strength")
-    ax.set_ylabel("P(Left)")
+    ax.set_ylabel("P(Right)")
     ax.set_title("Overall psychometric")
     ax.legend(frameon=False, fontsize=8)
     sns.despine(fig=fig)
@@ -2575,7 +2839,7 @@ def plot_categorical_performance_all_by_state(
 ) -> plt.Figure:
     """Per-state psychometric grid (K panels, one per state).
 
-    Each state gets its own panel showing P(left) vs evidence strength; data (markers) and
+    Each state gets its own panel showing P(right) vs evidence strength; data (markers) and
     model prediction (lines) are drawn in the state's colour.
 
     Parameters
@@ -2615,7 +2879,7 @@ def plot_categorical_performance_all_by_state(
     df_pd["_state_k"] = _arr
     if state_assignment_mode == "weighted":
         df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
-        df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pL_state")
+        df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
 
     # Resolve labels: {rank: label} merged across all subjects
     slbls: dict[int, str] = {}
@@ -2684,7 +2948,7 @@ def plot_categorical_performance_all_by_state(
                 _df_state,
                 ild_col,
                 choice_col,
-                pred_col=f"_pL_state_rank_{k}" if state_assignment_mode == "weighted" else pred_col,
+                pred_col=f"_pR_state_rank_{k}" if state_assignment_mode == "weighted" else pred_col,
                 subj_col=subj_col,
                 color=color,
                 label=lbl,
@@ -2706,7 +2970,7 @@ def plot_categorical_performance_all_by_state(
         _ax_overlay.set_ylim(0, 1)
         _ax_overlay.set_yticks([0, 0.5, 1])
         _ax_overlay.set_xlabel("Evidence strength")
-        _ax_overlay.set_ylabel("p(left)")
+        _ax_overlay.set_ylabel("P(Right)")
         _ax_overlay.set_title("")
         _ax_overlay.legend(frameon=False, fontsize=8)
 
@@ -2723,7 +2987,7 @@ def plot_categorical_performance_all_by_state(
                 _df_state,
                 ild_col,
                 choice_col,
-                pred_col=f"_pL_state_rank_{k}" if state_assignment_mode == "weighted" else pred_col,
+                pred_col=f"_pR_state_rank_{k}" if state_assignment_mode == "weighted" else pred_col,
                 subj_col=subj_col,
                 color=color,
                 label=lbl,
@@ -2745,7 +3009,7 @@ def plot_categorical_performance_all_by_state(
             ax.set_xlabel("Evidence strength")
             ax.set_title(lbl)
             if k == 0:
-                ax.set_ylabel("P(Left)")
+                ax.set_ylabel("P(Right)")
             else:
                 ax.set_ylabel("")
 
@@ -2813,7 +3077,7 @@ def plot_regressor_psychometric_by_state(
     df_pd["_state_k"] = _arr
     if state_assignment_mode == "weighted":
         df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
-        df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pL_state")
+        df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
 
     if feature_min is None:
         feature_min = float(np.nanmin(df_pd[feature_col].to_numpy(dtype=float)))
@@ -2918,7 +3182,7 @@ def plot_regressor_psychometric_by_state(
                 _df_state,
                 feature_col,
                 choice_col,
-                pred_col=f"_pL_state_rank_{k}" if state_assignment_mode == "weighted" else "p_pred",
+                pred_col=f"_pR_state_rank_{k}" if state_assignment_mode == "weighted" else "p_pred",
                 subj_col=subj_col,
                 color=color,
                 label=lbl,
@@ -2934,7 +3198,7 @@ def plot_regressor_psychometric_by_state(
                 model_line_mode=model_line_mode,
             )
         _ax_overlay.set_xlabel(xlabel)
-        _ax_overlay.set_ylabel("p(left)")
+        _ax_overlay.set_ylabel("P(Right)")
         _ax_overlay.set_title("")
         _ax_overlay.legend(frameon=False, fontsize=8)
 
@@ -2951,7 +3215,7 @@ def plot_regressor_psychometric_by_state(
                 _df_state,
                 feature_col,
                 choice_col,
-                pred_col=f"_pL_state_rank_{k}" if state_assignment_mode == "weighted" else "p_pred",
+                pred_col=f"_pR_state_rank_{k}" if state_assignment_mode == "weighted" else "p_pred",
                 subj_col=subj_col,
                 color=color,
                 label=lbl,
@@ -2968,7 +3232,7 @@ def plot_regressor_psychometric_by_state(
             ax.set_xlabel(xlabel)
             ax.set_title(lbl)
             if k == 0:
-                ax.set_ylabel("P(Left)")
+                ax.set_ylabel("P(Right)")
             else:
                 ax.set_ylabel("")
 

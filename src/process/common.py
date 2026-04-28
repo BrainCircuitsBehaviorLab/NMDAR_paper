@@ -1,9 +1,33 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import polars as pl
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Literal, Optional, Sequence, Tuple
+
+
+@dataclass(frozen=True)
+class PreparedWeightFamilyPlot:
+    data: pd.DataFrame
+    plot_kind: Literal["box", "line"]
+    title: str
+    xlabel: str
+    ylabel: str = "Weight"
+    x_order: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class LapseLogisticFit:
+    group: object
+    slope: float
+    bias: float
+    lapse_left: float
+    lapse_right: float
+    x_fit: np.ndarray
+    y_fit: np.ndarray
+    n_points: int
+    success: bool = True
 
 
 def to_pandas_df(df_like) -> pd.DataFrame:
@@ -12,6 +36,93 @@ def to_pandas_df(df_like) -> pd.DataFrame:
     if hasattr(df_like, "to_pandas"):
         return df_like.to_pandas().copy()
     return pd.DataFrame(df_like).copy()
+
+
+def prepare_weight_family_base_df(
+    weights_df,
+    *,
+    weight_row_indices: Sequence[int] | None = None,
+) -> pd.DataFrame:
+    if weights_df is None or getattr(weights_df, "is_empty", lambda: False)():
+        return pd.DataFrame(columns=["subject", "feature", "weight"])
+
+    df = to_pandas_df(weights_df)
+    if df.empty:
+        return pd.DataFrame(columns=["subject", "feature", "weight"])
+
+    required = {"feature", "weight"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(
+            "weights dataframe must contain at least 'feature' and 'weight'. "
+            f"Missing: {sorted(missing)}."
+        )
+
+    df = df.copy()
+    df["feature"] = df["feature"].astype(str)
+    df["weight"] = pd.to_numeric(df["weight"], errors="coerce")
+    if "subject" not in df.columns:
+        df["subject"] = "subject-0"
+    else:
+        df["subject"] = df["subject"].astype(str)
+
+    if weight_row_indices is not None and "weight_row_idx" in df.columns:
+        df["weight_row_idx"] = pd.to_numeric(df["weight_row_idx"], errors="coerce")
+        df = df[df["weight_row_idx"].isin(list(weight_row_indices))].copy()
+
+    return df.dropna(subset=["feature", "weight"]).copy()
+
+
+def prepare_grouped_weight_family_plot(
+    weights_df,
+    *,
+    feature_groups: Sequence[tuple[str, Sequence[str]]],
+    title: str,
+    xlabel: str,
+    plot_kind: Literal["box", "line"] = "box",
+    ylabel: str = "Weight",
+    weight_row_indices: Sequence[int] | None = (0,),
+) -> PreparedWeightFamilyPlot | None:
+    feature_to_label: dict[str, str] = {}
+    x_order: list[str] = []
+    for label, features in feature_groups:
+        x_label = str(label)
+        x_order.append(x_label)
+        for feature in features:
+            feature_to_label[str(feature)] = x_label
+
+    if not feature_to_label:
+        return None
+
+    df = prepare_weight_family_base_df(
+        weights_df,
+        weight_row_indices=weight_row_indices,
+    )
+    if df.empty:
+        return None
+
+    df = df[df["feature"].isin(feature_to_label)].copy()
+    if df.empty:
+        return None
+
+    df["x_label"] = df["feature"].map(feature_to_label)
+    df = (
+        df.groupby(["subject", "x_label"], as_index=False, observed=False)["weight"]
+        .mean()
+    )
+    if df.empty:
+        return None
+
+    present = set(df["x_label"].astype(str))
+    resolved_order = tuple(label for label in x_order if label in present)
+    return PreparedWeightFamilyPlot(
+        data=df,
+        plot_kind=plot_kind,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        x_order=resolved_order or None,
+    )
 
 
 def display_regressor_name(regressor_col: str) -> str:
@@ -56,33 +167,7 @@ def add_choice_lag_summary_regressor(
     return df_pd
 
 
-REPEAT_EVIDENCE_TAIL_QUANTILES = (
-    0.0,
-    0.0025,
-    0.005,
-    0.01,
-    0.025,
-    0.05,
-    0.075,
-    0.10,
-    0.15,
-    0.20,
-    0.30,
-    0.40,
-    0.50,
-    0.60,
-    0.70,
-    0.80,
-    0.85,
-    0.90,
-    0.925,
-    0.95,
-    0.975,
-    0.99,
-    0.995,
-    0.9975,
-    1.0,
-)
+REPEAT_EVIDENCE_TAIL_QUANTILES = (0.0,0.0025,0.005,0.01,0.025,0.05,0.075,0.10,0.15,0.20,0.30,0.40,0.50,0.60,0.70,0.80,0.85,0.90,0.925,0.95,0.975,0.99,0.995,0.9975,1.0,)
 
 
 def assign_quantile_bins(
@@ -120,6 +205,436 @@ def assign_quantile_bins(
     return labels, resolved_labels
 
 
+def _stable_sigmoid(z) -> np.ndarray:
+    z_arr = np.asarray(z, dtype=float)
+    z_arr = np.clip(z_arr, -60.0, 60.0)
+    return 1.0 / (1.0 + np.exp(-z_arr))
+
+
+def lapse_logistic_probability(
+    x,
+    *,
+    slope: float,
+    bias: float,
+    lapse_left: float,
+    lapse_right: float,
+) -> np.ndarray:
+    return float(lapse_left) + (1.0 - float(lapse_left) - float(lapse_right)) * _stable_sigmoid(
+        float(slope) * (np.asarray(x, dtype=float) - float(bias))
+    )
+
+
+def fit_lapse_logistic_curve(
+    x,
+    y,
+    *,
+    weights=None,
+    group=None,
+    lapse_max: float = 0.4,
+    min_points: int = 4,
+    n_fit_points: int = 300,
+) -> LapseLogisticFit | None:
+    x_arr = np.asarray(x, dtype=float).reshape(-1)
+    y_arr = np.asarray(y, dtype=float).reshape(-1)
+    mask = np.isfinite(x_arr) & np.isfinite(y_arr)
+    if weights is not None:
+        w_arr = np.asarray(weights, dtype=float).reshape(-1)
+        if w_arr.shape != x_arr.shape:
+            w_arr = None
+        else:
+            mask &= np.isfinite(w_arr) & (w_arr > 0)
+    else:
+        w_arr = None
+
+    x_arr = x_arr[mask]
+    y_arr = np.clip(y_arr[mask], 1e-6, 1.0 - 1e-6)
+    if w_arr is not None:
+        w_arr = w_arr[mask]
+
+    if x_arr.size < min_points or np.unique(x_arr).size < min_points:
+        return None
+
+    order = np.argsort(x_arr)
+    x_arr = x_arr[order]
+    y_arr = y_arr[order]
+    if w_arr is not None:
+        w_arr = w_arr[order]
+
+    x_min = float(np.min(x_arr))
+    x_max = float(np.max(x_arr))
+    x_span = max(x_max - x_min, 1e-6)
+    pad = 0.25 * x_span
+    lapse_bound = float(np.clip(lapse_max, 0.0, 0.49))
+
+    slope0 = 4.0 / x_span
+    bias0 = float(x_arr[np.argmin(np.abs(y_arr - 0.5))])
+    lapse_left0 = float(np.clip(np.min(y_arr), 0.0, lapse_bound))
+    lapse_right0 = float(np.clip(1.0 - np.max(y_arr), 0.0, lapse_bound))
+
+    sqrt_w = None
+    if w_arr is not None:
+        sqrt_w = np.sqrt(w_arr / np.nanmean(w_arr))
+
+    def _residual(params):
+        slope, bias, lapse_left, lapse_right = params
+        pred = lapse_logistic_probability(
+            x_arr,
+            slope=slope,
+            bias=bias,
+            lapse_left=lapse_left,
+            lapse_right=lapse_right,
+        )
+        residual = pred - y_arr
+        return residual * sqrt_w if sqrt_w is not None else residual
+
+    try:
+        from scipy.optimize import least_squares
+
+        result = least_squares(
+            _residual,
+            x0=np.asarray([slope0, bias0, lapse_left0, lapse_right0], dtype=float),
+            bounds=(
+                np.asarray([1e-9, x_min - pad, 0.0, 0.0], dtype=float),
+                np.asarray([np.inf, x_max + pad, lapse_bound, lapse_bound], dtype=float),
+            ),
+            max_nfev=20000,
+        )
+    except Exception:
+        return None
+
+    if not result.success or not np.all(np.isfinite(result.x)):
+        return None
+
+    slope, bias, lapse_left, lapse_right = (float(v) for v in result.x)
+    x_fit = np.linspace(x_min, x_max, int(n_fit_points))
+    y_fit = lapse_logistic_probability(
+        x_fit,
+        slope=slope,
+        bias=bias,
+        lapse_left=lapse_left,
+        lapse_right=lapse_right,
+    )
+    return LapseLogisticFit(
+        group=group,
+        slope=slope,
+        bias=bias,
+        lapse_left=lapse_left,
+        lapse_right=lapse_right,
+        x_fit=x_fit,
+        y_fit=y_fit,
+        n_points=int(x_arr.size),
+    )
+
+
+def fit_lapse_logistic_by_group(
+    summary_df: pd.DataFrame,
+    *,
+    line_group_col: str,
+    x_col: str,
+    y_col: str = "md",
+    weight_col: str | None = "nd",
+    line_order: Sequence | None = None,
+    lapse_max: float = 0.4,
+    min_points: int = 4,
+    n_fit_points: int = 300,
+    shared_core: bool = False,
+) -> dict[object, LapseLogisticFit]:
+    if summary_df is None or summary_df.empty:
+        return {}
+    required = {line_group_col, x_col, y_col}
+    if not required.issubset(summary_df.columns):
+        return {}
+
+    order = list(line_order) if line_order is not None else list(summary_df[line_group_col].dropna().unique())
+    if shared_core:
+        return _fit_lapse_logistic_by_group_shared_core(
+            summary_df,
+            line_group_col=line_group_col,
+            x_col=x_col,
+            y_col=y_col,
+            weight_col=weight_col,
+            line_order=order,
+            lapse_max=lapse_max,
+            min_points=min_points,
+            n_fit_points=n_fit_points,
+        )
+
+    fits: dict[object, LapseLogisticFit] = {}
+    for group_value in order:
+        sub = summary_df[summary_df[line_group_col] == group_value].copy()
+        if sub.empty:
+            continue
+        weights = sub[weight_col].to_numpy(dtype=float) if weight_col is not None and weight_col in sub.columns else None
+        fit = fit_lapse_logistic_curve(
+            sub[x_col].to_numpy(dtype=float),
+            sub[y_col].to_numpy(dtype=float),
+            weights=weights,
+            group=group_value,
+            lapse_max=lapse_max,
+            min_points=min_points,
+            n_fit_points=n_fit_points,
+        )
+        if fit is not None:
+            fits[group_value] = fit
+    return fits
+
+
+def fit_lapse_logistic_by_subject_group(
+    subject_summary_df: pd.DataFrame,
+    *,
+    subject_col: str,
+    line_group_col: str,
+    x_col: str,
+    y_col: str = "data_mean",
+    weight_col: str | None = "n_trials",
+    line_order: Sequence | None = None,
+    lapse_max: float = 0.4,
+    min_points: int = 4,
+    n_fit_points: int = 300,
+    shared_core: bool = False,
+) -> dict[object, LapseLogisticFit]:
+    if subject_summary_df is None or subject_summary_df.empty:
+        return {}
+    required = {subject_col, line_group_col, x_col, y_col}
+    if not required.issubset(subject_summary_df.columns):
+        return {}
+
+    order = (
+        list(line_order)
+        if line_order is not None
+        else list(subject_summary_df[line_group_col].dropna().unique())
+    )
+    per_group: dict[object, list[LapseLogisticFit]] = {group_value: [] for group_value in order}
+
+    for _subject, subj_df in subject_summary_df.groupby(subject_col, observed=True):
+        subject_fits = fit_lapse_logistic_by_group(
+            subj_df,
+            line_group_col=line_group_col,
+            x_col=x_col,
+            y_col=y_col,
+            weight_col=weight_col,
+            line_order=order,
+            lapse_max=lapse_max,
+            min_points=min_points,
+            n_fit_points=n_fit_points,
+            shared_core=shared_core,
+        )
+        for group_value, fit in subject_fits.items():
+            if group_value in per_group:
+                per_group[group_value].append(fit)
+
+    averaged: dict[object, LapseLogisticFit] = {}
+    for group_value in order:
+        group_fits = per_group.get(group_value, [])
+        if not group_fits:
+            continue
+
+        group_rows = subject_summary_df[subject_summary_df[line_group_col] == group_value]
+        x_values = pd.to_numeric(group_rows[x_col], errors="coerce").to_numpy(dtype=float)
+        x_values = x_values[np.isfinite(x_values)]
+        if x_values.size == 0:
+            continue
+
+        slope = float(np.mean([fit.slope for fit in group_fits]))
+        bias = float(np.mean([fit.bias for fit in group_fits]))
+        lapse_left = float(np.mean([fit.lapse_left for fit in group_fits]))
+        lapse_right = float(np.mean([fit.lapse_right for fit in group_fits]))
+        x_fit = np.linspace(float(np.min(x_values)), float(np.max(x_values)), int(n_fit_points))
+        y_fit = lapse_logistic_probability(
+            x_fit,
+            slope=slope,
+            bias=bias,
+            lapse_left=lapse_left,
+            lapse_right=lapse_right,
+        )
+        averaged[group_value] = LapseLogisticFit(
+            group=group_value,
+            slope=slope,
+            bias=bias,
+            lapse_left=lapse_left,
+            lapse_right=lapse_right,
+            x_fit=x_fit,
+            y_fit=y_fit,
+            n_points=len(group_fits),
+        )
+    return averaged
+
+
+def _fit_lapse_logistic_by_group_shared_core(
+    summary_df: pd.DataFrame,
+    *,
+    line_group_col: str,
+    x_col: str,
+    y_col: str,
+    weight_col: str | None,
+    line_order: Sequence,
+    lapse_max: float,
+    min_points: int,
+    n_fit_points: int,
+) -> dict[object, LapseLogisticFit]:
+    groups: list[tuple[object, np.ndarray, np.ndarray, np.ndarray | None]] = []
+    for group_value in line_order:
+        sub = summary_df[summary_df[line_group_col] == group_value].copy()
+        if sub.empty:
+            continue
+
+        x_arr = pd.to_numeric(sub[x_col], errors="coerce").to_numpy(dtype=float)
+        y_arr = pd.to_numeric(sub[y_col], errors="coerce").to_numpy(dtype=float)
+        mask = np.isfinite(x_arr) & np.isfinite(y_arr)
+        w_arr = None
+        if weight_col is not None and weight_col in sub.columns:
+            candidate = pd.to_numeric(sub[weight_col], errors="coerce").to_numpy(dtype=float)
+            if candidate.shape == x_arr.shape:
+                mask &= np.isfinite(candidate) & (candidate > 0)
+                w_arr = candidate
+
+        x_arr = x_arr[mask]
+        y_arr = np.clip(y_arr[mask], 1e-6, 1.0 - 1e-6)
+        if w_arr is not None:
+            w_arr = w_arr[mask]
+
+        if x_arr.size < min_points or np.unique(x_arr).size < min_points:
+            continue
+        order = np.argsort(x_arr)
+        groups.append((group_value, x_arr[order], y_arr[order], w_arr[order] if w_arr is not None else None))
+
+    if not groups:
+        return {}
+
+    x_all = np.concatenate([x for _, x, _, _ in groups])
+    y_all = np.concatenate([y for _, _, y, _ in groups])
+    x_min = float(np.min(x_all))
+    x_max = float(np.max(x_all))
+    x_span = max(x_max - x_min, 1e-6)
+    pad = 0.25 * x_span
+    lapse_bound = float(np.clip(lapse_max, 0.0, 0.49))
+
+    pooled = fit_lapse_logistic_curve(
+        x_all,
+        y_all,
+        lapse_max=lapse_bound,
+        min_points=min_points,
+        n_fit_points=n_fit_points,
+    )
+    if pooled is not None:
+        slope0 = pooled.slope
+        bias0 = pooled.bias
+    else:
+        slope0 = 4.0 / x_span
+        bias0 = float(x_all[np.argmin(np.abs(y_all - 0.5))])
+
+    initial = [slope0, bias0]
+    lower = [1e-9, x_min - pad]
+    upper = [np.inf, x_max + pad]
+    for _group_value, _x, y_arr, _w in groups:
+        initial.extend(
+            [
+                float(np.clip(np.min(y_arr), 0.0, lapse_bound)),
+                float(np.clip(1.0 - np.max(y_arr), 0.0, lapse_bound)),
+            ]
+        )
+        lower.extend([0.0, 0.0])
+        upper.extend([lapse_bound, lapse_bound])
+
+    def _residual(params):
+        slope = float(params[0])
+        bias = float(params[1])
+        residuals = []
+        for group_idx, (_group_value, x_arr, y_arr, w_arr) in enumerate(groups):
+            lapse_left = float(params[2 + 2 * group_idx])
+            lapse_right = float(params[3 + 2 * group_idx])
+            pred = lapse_logistic_probability(
+                x_arr,
+                slope=slope,
+                bias=bias,
+                lapse_left=lapse_left,
+                lapse_right=lapse_right,
+            )
+            resid = pred - y_arr
+            if w_arr is not None:
+                mean_w = float(np.nanmean(w_arr))
+                if np.isfinite(mean_w) and mean_w > 0:
+                    resid = resid * np.sqrt(w_arr / mean_w)
+            residuals.append(resid)
+        return np.concatenate(residuals)
+
+    try:
+        from scipy.optimize import least_squares
+
+        result = least_squares(
+            _residual,
+            x0=np.asarray(initial, dtype=float),
+            bounds=(np.asarray(lower, dtype=float), np.asarray(upper, dtype=float)),
+            max_nfev=30000,
+        )
+    except Exception:
+        return {}
+
+    if not result.success or not np.all(np.isfinite(result.x)):
+        return {}
+
+    slope = float(result.x[0])
+    bias = float(result.x[1])
+    fits: dict[object, LapseLogisticFit] = {}
+    for group_idx, (group_value, x_arr, _y_arr, _w_arr) in enumerate(groups):
+        lapse_left = float(result.x[2 + 2 * group_idx])
+        lapse_right = float(result.x[3 + 2 * group_idx])
+        x_fit = np.linspace(float(np.min(x_arr)), float(np.max(x_arr)), int(n_fit_points))
+        y_fit = lapse_logistic_probability(
+            x_fit,
+            slope=slope,
+            bias=bias,
+            lapse_left=lapse_left,
+            lapse_right=lapse_right,
+        )
+        fits[group_value] = LapseLogisticFit(
+            group=group_value,
+            slope=slope,
+            bias=bias,
+            lapse_left=lapse_left,
+            lapse_right=lapse_right,
+            x_fit=x_fit,
+            y_fit=y_fit,
+            n_points=int(x_arr.size),
+        )
+    return fits
+
+
+def lapse_logistic_label(
+    label,
+    fit: LapseLogisticFit | None,
+    *,
+    decimals: int = 2,
+) -> str:
+    if fit is None:
+        return str(label)
+    return (
+        f"{label} (L={fit.lapse_left:.{decimals}f}, "
+        f"R={fit.lapse_right:.{decimals}f}, "
+        f"bias={fit.bias:.{decimals}f})"
+    )
+
+
+def format_lapse_logistic_fits(
+    fits: dict[object, LapseLogisticFit],
+    *,
+    title: str | None = None,
+    decimals: int = 3,
+) -> str:
+    if not fits:
+        return ""
+    lines = []
+    if title:
+        lines.append(str(title))
+    for group_value, fit in fits.items():
+        lines.append(
+            f"{group_value}: lapse_left={fit.lapse_left:.{decimals}f}, "
+            f"lapse_right={fit.lapse_right:.{decimals}f}, "
+            f"bias={fit.bias:.{decimals}f}, slope={fit.slope:.{decimals}f}"
+        )
+    return "\n".join(lines)
+
+
 def padded_numeric_limits(
     values,
     *,
@@ -146,6 +661,23 @@ def pick_choice_history_regressor(regressor_options: list[str]) -> str | None:
         if regressor in regressor_options:
             return regressor
     return None
+
+
+def resolve_grouping(
+    df: pd.DataFrame,
+    *,
+    group_col: str | None,
+    group_order: Sequence | None = None,
+) -> tuple[str | None, list]:
+    if group_col is None:
+        return None, []
+    if group_col not in df.columns:
+        raise ValueError(f"Missing group column {group_col!r}.")
+    if group_order is None:
+        order = list(pd.unique(df.loc[df[group_col].notna(), group_col]))
+    else:
+        order = list(group_order)
+    return group_col, order
 
 
 def attach_response_right_column(
@@ -772,16 +1304,26 @@ def build_trial_logits(view, *, is_mcdr: bool) -> np.ndarray:
     map_k = view.map_states()
     explicit_logits = logits_ce[np.arange(view.T), map_k, :]
     num_classes = view.num_classes
-    logits = np.zeros((view.T, num_classes), dtype=float)
+    baseline_class_idx = int(getattr(view, "baseline_class_idx", 0))
+    if not 0 <= baseline_class_idx < int(num_classes):
+        raise ValueError(
+            f"baseline_class_idx={baseline_class_idx} is invalid for num_classes={num_classes}."
+        )
+    if explicit_logits.shape[1] != num_classes - 1:
+        raise ValueError(
+            "Explicit emission logits have incompatible shape: "
+            f"expected {num_classes - 1} columns, got {explicit_logits.shape[1]}."
+        )
 
-    if is_mcdr and num_classes == 3 and explicit_logits.shape[1] == 2:
-        logits[:, 0] = explicit_logits[:, 0]
-        logits[:, 1] = 0.0
-        logits[:, 2] = explicit_logits[:, 1]
-        return logits
-
-    logits[:, : explicit_logits.shape[1]] = explicit_logits
-    return logits
+    zero = np.zeros((view.T, 1), dtype=float)
+    return np.concatenate(
+        [
+            explicit_logits[:, :baseline_class_idx],
+            zero,
+            explicit_logits[:, baseline_class_idx:],
+        ],
+        axis=1,
+    )
 
 
 def attach_total_fitted_evidence(
@@ -928,8 +1470,15 @@ def prepare_evidence_curve(
     ylabel: str,
     n_bins: int = 10,
     quantiles: Optional[Sequence[float]] = None,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
 ) -> tuple[pd.DataFrame | None, dict]:
     df = df_pd.copy()
+    resolved_group_col, resolved_group_order = resolve_grouping(
+        df,
+        group_col=group_col,
+        group_order=group_order,
+    )
     df[evidence_col] = pd.to_numeric(df[evidence_col], errors="coerce")
     df[data_col] = pd.to_numeric(df[data_col], errors="coerce")
     df[model_col] = pd.to_numeric(df[model_col], errors="coerce")
@@ -953,8 +1502,16 @@ def prepare_evidence_curve(
         return None, {}
     bin_order = bin_centers["_bin"].tolist()
 
+    subject_group_cols = ["subject", "_bin"]
+    summary_group_cols = ["_bin"]
+    if resolved_group_col is not None:
+        df = df[df[resolved_group_col].notna()].copy()
+        df = df[df[resolved_group_col].isin(resolved_group_order)].copy()
+        subject_group_cols.append(resolved_group_col)
+        summary_group_cols.append(resolved_group_col)
+
     subj = (
-        df.groupby(["subject", "_bin"], observed=True)
+        df.groupby(subject_group_cols, observed=True)
         .agg(
             data_mean=(data_col, "mean"),
             model_mean=(model_col, "mean"),
@@ -966,7 +1523,7 @@ def prepare_evidence_curve(
         return None, {}
 
     overall = (
-        subj.groupby("_bin", observed=True)
+        subj.groupby(summary_group_cols, observed=True)
         .agg(
             data_mean=("data_mean", "mean"),
             data_std=("data_mean", "std"),
@@ -990,6 +1547,9 @@ def prepare_evidence_curve(
         "ylabel": ylabel,
         "baseline": baseline,
     }
+    if resolved_group_col is not None:
+        meta["line_order"] = resolved_group_order
+        meta["legend_title"] = resolved_group_col
     return overall, meta
 
 

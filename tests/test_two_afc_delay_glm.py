@@ -4,6 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +90,30 @@ class TestTwoAfcDelayGlm(unittest.TestCase):
         self.assertEqual(X.shape, (2, 3))
         self.assertEqual(U.shape, (2, 0))
         self.assertEqual(names["X_cols"], ["bias_0", "choice_lag_01", "stim"])
+
+    def test_prepare_weight_family_plot_formats_delay_levels_from_adapter(self) -> None:
+        adapter = TwoAFCDelayAdapter()
+        weights_df = pl.DataFrame(
+            {
+                "subject": ["N1", "N1", "N1", "N1"],
+                "weight_row_idx": [0, 1, 0, 1],
+                "feature": [
+                    "stim_x_delay_hot_0p1",
+                    "stim_x_delay_hot_0p1",
+                    "stim_x_delay_hot_3",
+                    "stim_x_delay_hot_3",
+                ],
+                "weight": [0.25, 9.0, 1.25, 8.0],
+            }
+        )
+
+        prepared = adapter.prepare_weight_family_plot(weights_df, "stim_hot")
+
+        self.assertIsNotNone(prepared)
+        self.assertEqual(prepared.x_order, ("0", "3"))
+        data = prepared.data.sort_values("x_label").reset_index(drop=True)
+        self.assertEqual(data["x_label"].tolist(), ["0", "3"])
+        np.testing.assert_allclose(data["weight"].to_numpy(), [0.25, 1.25])
 
 
 if __name__ == "__main__":

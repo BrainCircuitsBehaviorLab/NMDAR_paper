@@ -108,27 +108,12 @@ def _():
 
 
 @app.cell
-def _(get_adapter, model_cfg, pl):
-    def filter_condition_df(df, task_name: str, condition_filter: str):
-        if str(task_name).upper() != "2AFC_DRUG":
-            return df
-        selected = str(condition_filter or "all").strip().lower()
-        if selected not in {"saline", "drug"}:
-            return df
-        if "Drug" not in df.columns:
-            raise ValueError("2AFC_DRUG requires a 'Drug' column for condition filtering.")
-        target = 1 if selected == "drug" else 0
-        return (
-            df.with_columns(pl.col("Drug").fill_null(0).cast(pl.Int64, strict=False).alias("__drug_filter"))
-            .filter(pl.col("__drug_filter") == target)
-            .drop("__drug_filter")
-        )
-
+def _(get_adapter, model_cfg):
     task_name = model_cfg.task
     adapter = get_adapter(task_name)
     df_all = adapter.read_dataset()
     df_all = adapter.subject_filter(df_all)
-    df_all = filter_condition_df(df_all, task_name, model_cfg.condition_filter)
+    df_all = adapter.filter_condition_df(df_all, model_cfg.condition_filter)
     is_2afc = adapter.num_classes == 2
     plots = adapter.get_plots()
     return adapter, df_all, is_2afc, plots, task_name
@@ -227,8 +212,8 @@ def _(current_hash, mo, save_plot, ui_model_manager):
 def _(
     current_hash,
     fit_main,
-    get_last_fit_click,
     get_adapter,
+    get_last_fit_click,
     mm_widget,
     mo,
     model_cfg,
@@ -541,7 +526,7 @@ def _(
         [
             _fig_dwell_summary,
             save_plot(_fig_dwell_summary, "state dwell times summary", stem="state_dwell_times_summary"),
-            # _fig_dwell_by_subject,
+            _fig_dwell_by_subject,
             # save_plot(_fig_dwell_by_subject, "state dwell times by subject", stem="state_dwell_times_by_subject"),
             mo.md(
                 "> Solid line: geometric dwell-time prediction from the fitted self-transition probability "

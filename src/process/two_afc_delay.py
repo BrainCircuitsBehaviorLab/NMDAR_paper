@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 import types
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -36,6 +36,12 @@ except ImportError:
             if col not in registered:
                 result.append({"key": col, "label": col, "members": {"N": col}})
         return result
+
+from src.process.common import (
+    PreparedWeightFamilyPlot,
+    prepare_grouped_weight_family_plot,
+    to_pandas_df,
+)
 
 _DELAY_HOT_COL_PREFIX = "delay_"
 _BIAS_HOT_COL_PREFIX = "bias_"
@@ -179,6 +185,15 @@ def _parse_delay_level_token(token: str) -> float | None:
         return float(token.replace("m", "-").replace("p", "."))
     except ValueError:
         return None
+
+
+def _format_delay_level_label(delay_value: float) -> str:
+    delay_value = float(delay_value)
+    if np.isclose(delay_value, 0.1):
+        return "0"
+    if delay_value.is_integer():
+        return str(int(delay_value))
+    return format(delay_value, "g")
 
 
 def _delay_param_weight_map() -> dict[float, float]:
@@ -465,6 +480,7 @@ from src.process.common import (
     mean_glm_ild_curve as _mean_glm_ild_curve,
     p_right_label,
     prepare_simple_regressor_curve,
+    resolve_grouping,
     summarize_grouped_panel,
     subject_glm_feature_curves as _subject_glm_feature_curves,
     subject_glm_ild_curves as _subject_glm_ild_curves,
@@ -746,6 +762,32 @@ def prepare_binned_accuracy_figure(
     exps = sorted(df_pd["experiment"].dropna().unique()) if "experiment" in df_pd.columns else []
     delay_ticks, delay_tick_labels = delay_ticks_from_df(df_pd)
 
+    def _subject_summary(
+        *,
+        x_col: str,
+        subgroup_col: str | None = None,
+        subgroup_value=None,
+    ) -> pd.DataFrame:
+        plot_df = df_pd.copy()
+        if subgroup_col is not None:
+            plot_df = plot_df[plot_df[subgroup_col] == subgroup_value].copy()
+        plot_df = plot_df[
+            plot_df["_reg_bin"].notna()
+            & plot_df[x_col].notna()
+            & plot_df["_reg_bin"].isin(reg_bin_labels)
+        ].copy()
+        if plot_df.empty:
+            return pd.DataFrame()
+        return (
+            plot_df.groupby(["_reg_bin", "subject", x_col], observed=True)
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=(PRED_COL, "mean"),
+                n_trials=("_response_right", "count"),
+            )
+            .reset_index()
+        )
+
     panels: list[dict] = []
 
     panels.append(
@@ -759,6 +801,7 @@ def prepare_binned_accuracy_figure(
                 model_col=PRED_COL,
                 line_order=reg_bin_labels,
             ),
+            "subject_summary": _subject_summary(x_col="delay"),
             "meta": {
                 "xlabel": "Delay",
                 "ylabel": p_right_label(),
@@ -766,24 +809,37 @@ def prepare_binned_accuracy_figure(
                 "baseline": BASELINE,
                 "xticks": delay_ticks,
                 "x_tick_labels": delay_tick_labels,
+                "x_col": "delay",
             },
         }
     )
 
     if "_signed_delay_cat" in df_pd.columns and df_pd["_signed_delay_cat"].notna().any():
         x_order, x_tick_labels = signed_delay_order_and_labels(df_pd)
+        signed_delay_code_col = "_signed_delay_code"
+        code_map = {value: idx for idx, value in enumerate(x_order)}
+        df_pd[signed_delay_code_col] = df_pd["_signed_delay_cat"].astype(str).map(code_map)
+        signed_summary = summarize_grouped_panel(
+            df_pd,
+            line_group_col="_reg_bin",
+            x_col="_signed_delay_cat",
+            subject_col="subject",
+            data_col="_response_right",
+            model_col=PRED_COL,
+            line_order=reg_bin_labels,
+            x_order=x_order,
+        )
+        if not signed_summary.empty:
+            signed_summary[signed_delay_code_col] = signed_summary["_signed_delay_cat"].astype(str).map(code_map)
+        signed_subject_summary = _subject_summary(x_col="_signed_delay_cat")
+        if not signed_subject_summary.empty:
+            signed_subject_summary[signed_delay_code_col] = (
+                signed_subject_summary["_signed_delay_cat"].astype(str).map(code_map)
+            )
         panels.append(
             {
-                "summary": summarize_grouped_panel(
-                    df_pd,
-                    line_group_col="_reg_bin",
-                    x_col="_signed_delay_cat",
-                    subject_col="subject",
-                    data_col="_response_right",
-                    model_col=PRED_COL,
-                    line_order=reg_bin_labels,
-                    x_order=x_order,
-                ),
+                "summary": signed_summary,
+                "subject_summary": signed_subject_summary,
                 "meta": {
                     "xlabel": "Signed delay",
                     "ylabel": p_right_label(),
@@ -792,6 +848,8 @@ def prepare_binned_accuracy_figure(
                     "x_order": x_order,
                     "x_tick_labels": x_tick_labels,
                     "categorical_x": True,
+                    "x_col": "_signed_delay_cat",
+                    "fit_x_col": signed_delay_code_col,
                 },
             }
         )
@@ -810,6 +868,11 @@ def prepare_binned_accuracy_figure(
                     subgroup_col="condition",
                     subgroup_value=cond,
                 ),
+                "subject_summary": _subject_summary(
+                    x_col="delay",
+                    subgroup_col="condition",
+                    subgroup_value=cond,
+                ),
                 "meta": {
                     "xlabel": "Delay",
                     "ylabel": p_right_label(),
@@ -817,6 +880,7 @@ def prepare_binned_accuracy_figure(
                     "baseline": BASELINE,
                     "xticks": delay_ticks,
                     "x_tick_labels": delay_tick_labels,
+                    "x_col": "delay",
                 },
             }
         )
@@ -835,6 +899,11 @@ def prepare_binned_accuracy_figure(
                     subgroup_col="experiment",
                     subgroup_value=exp,
                 ),
+                "subject_summary": _subject_summary(
+                    x_col="delay",
+                    subgroup_col="experiment",
+                    subgroup_value=exp,
+                ),
                 "meta": {
                     "xlabel": "Delay",
                     "ylabel": p_right_label(),
@@ -842,6 +911,7 @@ def prepare_binned_accuracy_figure(
                     "baseline": BASELINE,
                     "xticks": delay_ticks,
                     "x_tick_labels": delay_tick_labels,
+                    "x_col": "delay",
                 },
             }
         )
@@ -855,11 +925,18 @@ def prepare_right_by_regressor(
     regressor_col: str,
     xlabel: str | None = None,
     n_bins: int = 10,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
 ):
     df_pd = to_pandas_df(trial_df)
     required = {regressor_col, "response", PRED_COL, "subject"}
     if not required.issubset(df_pd.columns):
         return None, None
+    resolved_group_col, resolved_group_order = resolve_grouping(
+        df_pd,
+        group_col=group_col,
+        group_order=group_order,
+    )
 
     df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
     df_pd[PRED_COL] = pd.to_numeric(df_pd[PRED_COL], errors="coerce")
@@ -890,16 +967,54 @@ def prepare_right_by_regressor(
 
     delay_order, delay_labels = signed_delay_order_and_labels(df_pd)
 
-    summary = summarize_grouped_panel(
-        df_pd,
-        line_group_col="_signed_delay_cat",
-        x_col="_reg_bin",
-        subject_col="subject",
-        data_col="_response_right",
-        model_col=PRED_COL,
-        line_order=delay_order,
-        x_order=bin_order,
-    )
+    if resolved_group_col is None:
+        summary = summarize_grouped_panel(
+            df_pd,
+            line_group_col="_signed_delay_cat",
+            x_col="_reg_bin",
+            subject_col="subject",
+            data_col="_response_right",
+            model_col=PRED_COL,
+            line_order=delay_order,
+            x_order=bin_order,
+        )
+        line_group_col = "_signed_delay_cat"
+        line_order = delay_order
+        line_labels = delay_labels
+        legend_title = "Signed delay"
+    else:
+        df_pd = df_pd[df_pd[resolved_group_col].notna()].copy()
+        df_pd = df_pd[df_pd[resolved_group_col].isin(resolved_group_order)].copy()
+        subj = (
+            df_pd.groupby(["subject", resolved_group_col, "_reg_bin"], observed=True)
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=(PRED_COL, "mean"),
+            )
+            .reset_index()
+        )
+        summary = (
+            subj.groupby([resolved_group_col, "_reg_bin"], observed=True)
+            .agg(
+                md=("data_mean", "mean"),
+                sd=("data_mean", "std"),
+                nd=("data_mean", "count"),
+                mm=("model_mean", "mean"),
+            )
+            .reset_index()
+        )
+        summary["sem"] = summary["sd"].fillna(0.0) / np.sqrt(summary["nd"].clip(lower=1))
+        summary[resolved_group_col] = pd.Categorical(
+            summary[resolved_group_col],
+            categories=resolved_group_order,
+            ordered=True,
+        )
+        summary["_reg_bin"] = pd.Categorical(summary["_reg_bin"], categories=bin_order, ordered=True)
+        summary = summary.sort_values([resolved_group_col, "_reg_bin"])
+        line_group_col = resolved_group_col
+        line_order = resolved_group_order
+        line_labels = []
+        legend_title = resolved_group_col
     if summary.empty:
         return None, None
 
@@ -908,10 +1023,11 @@ def prepare_right_by_regressor(
     meta = {
         "xlabel": xlabel or display_regressor_name(regressor_col),
         "ylabel": p_right_label(),
-        "legend_title": "Signed delay",
+        "legend_title": legend_title,
         "baseline": BASELINE,
-        "line_order": delay_order,
-        "line_labels": delay_labels,
+        "line_group_col": line_group_col,
+        "line_order": line_order,
+        "line_labels": line_labels,
         "legend_outside": True,
     }
     return summary, meta
@@ -1296,6 +1412,89 @@ class TwoAFCDelayAdapter(TaskAdapter):
             if existing:
                 return existing
         return _choice_lag_names()
+
+    def weight_family_specs(self, weights_df=None) -> Dict[str, dict]:
+        df = to_pandas_df(weights_df) if weights_df is not None else None
+        feature_names = [] if df is None or df.empty or "feature" not in df.columns else pd.unique(df["feature"].astype(str)).tolist()
+        delay_cols = _delay_hot_cols(feature_names)
+        stim_x_delay_cols = _stim_x_delay_hot_cols(feature_names)
+        choice_cols = _choice_lag_cols(feature_names)
+        bias_cols = _bias_hot_cols(feature_names)
+
+        def _delay_groups(columns: list[str], prefix: str) -> list[tuple[str, list[str]]]:
+            groups: list[tuple[str, list[str]]] = []
+            for col in columns:
+                token = col.removeprefix(prefix)
+                parsed = _parse_delay_level_token(token)
+                if parsed is None:
+                    continue
+                groups.append((_format_delay_level_label(parsed), [col]))
+            return groups
+
+        return {
+            "stim_hot": {
+                "title": "stim×delay one-hot",
+                "xlabel": "delay level",
+                "plot_kind": "box",
+                "feature_groups": _delay_groups(stim_x_delay_cols, "stim_x_delay_hot_"),
+            },
+            "delay_hot": {
+                "title": "delay_hot",
+                "xlabel": "delay level",
+                "plot_kind": "box",
+                "feature_groups": _delay_groups(delay_cols, _DELAY_HOT_COL_PREFIX),
+            },
+            "stim_x_delay_hot": {
+                "title": "stim×delay one-hot",
+                "xlabel": "delay level",
+                "plot_kind": "box",
+                "feature_groups": _delay_groups(stim_x_delay_cols, "stim_x_delay_hot_"),
+            },
+            "stim_x_delay_one_hot": {
+                "title": "stim×delay one-hot",
+                "xlabel": "delay level",
+                "plot_kind": "box",
+                "feature_groups": _delay_groups(stim_x_delay_cols, "stim_x_delay_hot_"),
+            },
+            "choice_lag": {
+                "title": "choice_lag_*",
+                "xlabel": "Lag",
+                "plot_kind": "box",
+                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
+            },
+            "at_choice_lag": {
+                "title": "choice_lag_*",
+                "xlabel": "Lag",
+                "plot_kind": "box",
+                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
+            },
+            "bias_hot": {
+                "title": "bias_hot",
+                "xlabel": "Session index",
+                "plot_kind": "line",
+                "feature_groups": [(col.removeprefix(_BIAS_HOT_COL_PREFIX), [col]) for col in bias_cols],
+            },
+        }
+
+    def prepare_weight_family_plot(
+        self,
+        weights_df,
+        family_key: str,
+        *,
+        variant: str | None = None,
+    ) -> PreparedWeightFamilyPlot | None:
+        del variant
+        spec = self.weight_family_specs(weights_df).get(family_key)
+        if spec is None:
+            return None
+        return prepare_grouped_weight_family_plot(
+            weights_df,
+            feature_groups=spec["feature_groups"],
+            title=spec["title"],
+            xlabel=spec["xlabel"],
+            plot_kind=spec["plot_kind"],
+            weight_row_indices=(0,),
+        )
 
     def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_emission_groups(list(available_cols))

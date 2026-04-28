@@ -6,6 +6,7 @@ from typing import Any, List, Tuple, Dict
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import polars as pl
 
 from glmhmmt.tasks.fitted_regressors import (
@@ -14,6 +15,11 @@ from glmhmmt.tasks.fitted_regressors import (
     weighted_sum_regressor,
 )
 from glmhmmt.tasks import TaskAdapter, _register, resolve_plots_module
+from src.process.common import (
+    PreparedWeightFamilyPlot,
+    prepare_grouped_weight_family_plot,
+    to_pandas_df,
+)
 
 try:
     from glmhmmt.tasks import build_selector_groups as _build_selector_groups
@@ -39,6 +45,7 @@ _CHOICE_LAG_PREFIX = "choice_lag_"
 _DIFFICULTY_COL_PREFIX = "difficulty_"
 _BIAS_HOT_COL_PREFIX = "bias_"
 _STIM_PARAM_COL = "stim_param"
+_EVIDENCE_PARAM_COL = "evidence_param"
 _DIFFICULTY_PARAM_COL = "difficulty_param"
 _AT_CHOICE_PARAM_COL = "at_choice_param"
 _DIFFICULTY_LEVELS = ("easy", "medium", "hard")
@@ -96,6 +103,15 @@ _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     source_features=tuple(_STIM_BIN_COLS),
 )
 
+_EVIDENCE_PARAM_SPEC = FittedWeightRegressorSpec(
+    target_name="evidence_param",
+    fit_task="nuo_auditory",
+    fit_model_kind="glm",
+    fit_model_id="one hot lapses",
+    arrays_suffix="glm_arrays.npz",
+    source_features=tuple(_STIM_BIN_COLS),
+)
+
 _BIAS_PARAM_SPEC = FittedWeightRegressorSpec(
     target_name="bias_param",
     fit_task="nuo_auditory",
@@ -127,6 +143,7 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "stim_vals": r"$\mathrm{Stimulus}$",
     "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
     "stim_param": r"$\mathrm{Stimulus}_{\mathrm{param}}$",
+    "evidence_param": r"$\mathrm{Evidence}_{\mathrm{param}}$",
     "difficulty_param": r"$\mathrm{Difficulty}_{\mathrm{param}}$",
     "difficulty_easy": r"$\mathrm{Easy}$",
     "difficulty_medium": r"$\mathrm{Medium}$",
@@ -148,6 +165,7 @@ _EMISSION_GROUPS: list[dict] = [
     {"key": "bias_param", "label": "bias param", "members": {"N": "bias_param"}},
     {"key": "stim_vals", "label": "stim vals", "members": {"N": "stim_vals"}},
     {"key": "stim_param", "label": "stim param", "members": {"N": "stim_param"}},
+    {"key": "evidence_param", "label": "evidence param", "members": {"N": "evidence_param"}},
     {"key": "difficulty_param", "label": "difficulty param", "members": {"N": "difficulty_param"}},
     {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
     {"key": "at_choice_param", "label": "choice param", "members": {"N": "at_choice_param"}},
@@ -263,15 +281,15 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
     for group in _EMISSION_GROUPS:
         add_scalar(group)
         if group["key"] == "stim_param" and stim_bin_cols:
-            result.append(
-                {
-                    "key": "stim_hot",
-                    "label": "stim_hot",
-                    "members": {},
-                    "toggle_members": list(stim_bin_cols),
-                    "hide_members": True,
-                }
-            )
+            stim_hot_group = {
+                "key": "stim_hot",
+                "label": "stim_hot",
+                "members": {},
+                "toggle_members": list(stim_bin_cols),
+                "hide_members": True,
+            }
+            result.append(stim_hot_group)
+            result.append({**stim_hot_group, "key": "evidence_one_hot", "label": "evidence one-hot"})
             registered.update(stim_bin_cols)
         if group["key"] == "bias_param" and bias_hot_cols:
             result.append(
@@ -332,6 +350,9 @@ class NuoAuditoryAdapter(TaskAdapter):
         "stim_param (w)": [("stim_param", "pos")],
         "stim_param (-w)": [("stim_param", "pos")],
         "stim_param (|w|)": [("stim_param", "abs")],
+        "evidence_param (w)": [("evidence_param", "pos")],
+        "evidence_param (-w)": [("evidence_param", "pos")],
+        "evidence_param (|w|)": [("evidence_param", "abs")],
         "at_choice (|w|)": [("at_choice", "abs")],
         "wsls (|w|)": [("wsls", "abs")],
         "bias (|w|)": [("bias", "abs")],
@@ -475,6 +496,7 @@ class NuoAuditoryAdapter(TaskAdapter):
 
         bias_param = _safe_weighted_sum_regressor(df_sub, _BIAS_PARAM_SPEC)
         stim_param = _safe_weighted_sum_regressor(df_sub, _STIM_PARAM_SPEC)
+        evidence_param = _safe_weighted_sum_regressor(df_sub, _EVIDENCE_PARAM_SPEC)
         difficulty_param = _safe_weighted_sum_regressor(df_sub, _DIFFICULTY_PARAM_SPEC)
         at_choice_param = _safe_weighted_sum_regressor(df_sub, _AT_CHOICE_PARAM_SPEC)
         df_sub = df_sub.with_columns(
@@ -497,6 +519,11 @@ class NuoAuditoryAdapter(TaskAdapter):
                     pl.Series(_STIM_PARAM_COL, stim_param)
                     if stim_param is not None
                     else pl.col("stim_vals").cast(pl.Float32).alias(_STIM_PARAM_COL)
+                ),
+                (
+                    pl.Series(_EVIDENCE_PARAM_COL, evidence_param)
+                    if evidence_param is not None
+                    else pl.col("stim_vals").cast(pl.Float32).alias(_EVIDENCE_PARAM_COL)
                 ),
                 (
                     pl.Series(_DIFFICULTY_PARAM_COL, difficulty_param)
@@ -591,7 +618,8 @@ class NuoAuditoryAdapter(TaskAdapter):
         return list(TRANSITION_COLS)
 
     def available_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        return list(EMISSION_COLS) + self._dynamic_emission_cols(df)
+        available_cols = list(EMISSION_COLS) + [_EVIDENCE_PARAM_COL]
+        return list(dict.fromkeys(available_cols + self._dynamic_emission_cols(df)))
 
     def available_transition_cols(self) -> List[str]:
         return list(TRANSITION_COLS)
@@ -602,6 +630,79 @@ class NuoAuditoryAdapter(TaskAdapter):
     def build_transition_groups(self, available_cols: List[str]) -> list[dict]:
         del available_cols
         return []
+
+    def weight_family_specs(self, weights_df=None) -> Dict[str, dict]:
+        df = to_pandas_df(weights_df) if weights_df is not None else None
+        feature_names = [] if df is None or df.empty or "feature" not in df.columns else pd.unique(df["feature"].astype(str)).tolist()
+        stim_cols = [col for col in feature_names if col in _STIM_BIN_COLS]
+        difficulty_cols = [col for col in feature_names if col in _DIFFICULTY_COLS]
+        choice_cols = [col for col in feature_names if col in _CHOICE_LAG_COLS]
+        bias_cols = _bias_hot_cols(feature_names)
+        stim_groups = [
+            (str(idx), [col])
+            for idx, col in enumerate(stim_cols)
+        ]
+        return {
+            "stim_hot": {
+                "title": "stim_hot",
+                "xlabel": "stimulus bin",
+                "plot_kind": "box",
+                "feature_groups": stim_groups,
+            },
+            "evidence_one_hot": {
+                "title": "evidence one-hot",
+                "xlabel": "stimulus bin",
+                "plot_kind": "box",
+                "feature_groups": stim_groups,
+            },
+            "difficulty_hot": {
+                "title": "difficulty_hot",
+                "xlabel": "Difficulty",
+                "plot_kind": "box",
+                "feature_groups": [
+                    (col.removeprefix(_DIFFICULTY_COL_PREFIX), [col])
+                    for col in difficulty_cols
+                ],
+            },
+            "choice_lag": {
+                "title": "choice_lag_*",
+                "xlabel": "Lag",
+                "plot_kind": "box",
+                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_PREFIX))), [col]) for col in choice_cols],
+            },
+            "at_choice_lag": {
+                "title": "choice_lag_*",
+                "xlabel": "Lag",
+                "plot_kind": "box",
+                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_PREFIX))), [col]) for col in choice_cols],
+            },
+            "bias_hot": {
+                "title": "bias_hot",
+                "xlabel": "Session index",
+                "plot_kind": "line",
+                "feature_groups": [(col.removeprefix(_BIAS_HOT_COL_PREFIX), [col]) for col in bias_cols],
+            },
+        }
+
+    def prepare_weight_family_plot(
+        self,
+        weights_df,
+        family_key: str,
+        *,
+        variant: str | None = None,
+    ) -> PreparedWeightFamilyPlot | None:
+        del variant
+        spec = self.weight_family_specs(weights_df).get(family_key)
+        if spec is None:
+            return None
+        return prepare_grouped_weight_family_plot(
+            weights_df,
+            feature_groups=spec["feature_groups"],
+            title=spec["title"],
+            xlabel=spec["xlabel"],
+            plot_kind=spec["plot_kind"],
+            weight_row_indices=(0,),
+        )
 
     def resolve_design_names(
         self,

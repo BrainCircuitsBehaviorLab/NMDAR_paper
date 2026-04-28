@@ -45,6 +45,23 @@ from glmhmmt.model_plots import (
     plot_tau_sweep,
     plot_transition_weights,
 )
+from src.process import MCDR as process
+from src.process.common import (
+    REPEAT_EVIDENCE_TAIL_QUANTILES,
+    add_choice_lag_summary_regressor,
+    attach_repeat_choice_evidence,
+    display_regressor_name,
+    pick_choice_history_regressor,
+    prepare_evidence_curve,
+)
+from src.plots.common import (
+    add_shared_figure_legend,
+    apply_axis_style,
+    make_single_panel_figure,
+    plot_grouped_summary,
+    plot_simple_summary,
+    resolve_axes,
+)
 
 sns.set_style("white")
 
@@ -979,3 +996,160 @@ def plot_delay_binned_1d(df, model_name, subject=None, n_bins=7):
     fig_stim.tight_layout()
 
     return fig_delay, fig_stim
+
+
+def plot_right_by_regressor_simple(
+    plot_df,
+    *,
+    regressor_col: str,
+    title: str | None = None,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+):
+    _ = title
+    summary, meta = process.prepare_right_by_regressor_simple(
+        plot_df,
+        regressor_col=regressor_col,
+        xlabel=xlabel,
+        n_bins=n_bins,
+    )
+    style = {}
+    if xlabel is not None:
+        style["xlabel"] = xlabel
+    return plot_simple_summary(summary, meta=meta, **style)
+
+
+def plot_binned_accuracy_figure(
+    plot_df,
+    *,
+    regressor_col: str,
+    figsize: tuple[float, float] | None = None,
+    max_panels: int | None = None,
+    legend: bool = True,
+    **plot_kwargs,
+):
+    style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
+    panels, legend_title = process.prepare_binned_accuracy_figure(
+        plot_df,
+        regressor_col=regressor_col,
+        cfg=cfg,
+    )
+    if not panels:
+        return None
+    if max_panels is not None:
+        panels = panels[:max_panels]
+
+    fig, axes = resolve_axes(
+        axes_arg,
+        n_axes=len(panels),
+        figsize=figsize_arg if figsize_arg is not None else (figsize if figsize is not None else (4 * len(panels), 4)),
+        sharey=True,
+    )
+
+    for ax, panel in zip(axes, panels, strict=False):
+        plot_grouped_summary(
+            ax,
+            panel["summary"],
+            line_group_col="_reg_bin",
+            x_col="x_center",
+            meta=panel["meta"],
+            legend=legend,
+        )
+        if ax.legend_ is not None:
+            ax.legend_.remove()
+    add_shared_figure_legend(fig, source_ax=axes[-1], title=legend_title, legend=legend)
+    fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
+    for ax in axes[: len(panels)]:
+        apply_axis_style(ax, **style)
+    return fig, axes[: len(panels)]
+
+
+def plot_right_by_regressor(
+    plot_df,
+    *,
+    regressor_col: str,
+    title: str | None = None,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+    legend: bool = True,
+    **plot_kwargs,
+):
+    _ = title
+    summary, meta = process.prepare_right_by_regressor(
+        plot_df,
+        regressor_col=regressor_col,
+        cfg=cfg,
+        xlabel=xlabel,
+        n_bins=n_bins,
+    )
+    if summary is None or summary.empty:
+        return None
+
+    _, ax = make_single_panel_figure(
+        extra_right_legend=True,
+        ax=plot_kwargs.get("ax"),
+        figsize=plot_kwargs.get("figsize", (3.0, 3.0)),
+    )
+    return plot_grouped_summary(
+        ax,
+        summary,
+        line_group_col=meta.get("line_group_col", "ttype_c"),
+        x_col="x_center",
+        meta=meta,
+        legend=legend,
+    )
+
+
+def plot_repeat_by_repeat_evidence(
+    plot_df,
+    *,
+    views: dict,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
+    group_labels: dict | None = None,
+    palette: dict | None = None,
+    legend: bool = True,
+    **plot_kwargs,
+):
+    style = dict(plot_kwargs)
+    df_pd = attach_repeat_choice_evidence(
+        plot_df,
+        views=views,
+        is_mcdr=True,
+    )
+    if df_pd.empty:
+        return None
+
+    baseline = 1.0 / next(iter(views.values())).num_classes if views else 1.0 / 3.0
+    summary, meta = prepare_evidence_curve(
+        df_pd,
+        evidence_col="_repeat_choice_evidence",
+        data_col="_repeat_choice",
+        model_col="_p_repeat_model",
+        baseline=float(baseline),
+        xlabel="Fitted evidence for repeating choice",
+        ylabel="P(Repeat)",
+        quantiles=REPEAT_EVIDENCE_TAIL_QUANTILES,
+        group_col=group_col,
+        group_order=group_order,
+    )
+
+    if group_col is None:
+        return plot_simple_summary(summary, meta=meta, legend=legend, **style)
+
+    _, ax = make_single_panel_figure(
+        ax=style.get("ax"),
+        figsize=style.get("figsize", (3.0, 3.0)),
+    )
+    return plot_grouped_summary(
+        ax,
+        summary,
+        line_group_col=group_col,
+        x_col="x_center",
+        label_map=group_labels,
+        palette=palette,
+        meta=meta,
+        legend=legend,
+    )

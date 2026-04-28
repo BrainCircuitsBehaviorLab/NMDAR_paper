@@ -111,6 +111,25 @@ class TestTwoAfcGlm(unittest.TestCase):
         self.assertEqual(U.shape, (3, 0))
         self.assertEqual(names["X_cols"], ["bias", "bias_0", "stim_vals"])
 
+    def test_prepare_weight_family_plot_uses_weight_row_idx_zero(self) -> None:
+        adapter = TwoAFCAdapter()
+        weights_df = pl.DataFrame(
+            {
+                "subject": ["911", "911", "911", "911"],
+                "weight_row_idx": [0, 1, 0, 1],
+                "feature": ["stim_2", "stim_2", "stim_4", "stim_4"],
+                "weight": [0.5, 9.5, 1.5, 8.5],
+            }
+        )
+
+        prepared = adapter.prepare_weight_family_plot(weights_df, "stim_hot")
+
+        self.assertIsNotNone(prepared)
+        self.assertEqual(prepared.x_order, ("2", "4"))
+        data = prepared.data.sort_values("x_label").reset_index(drop=True)
+        self.assertEqual(data["x_label"].tolist(), ["2", "4"])
+        np.testing.assert_allclose(data["weight"].to_numpy(), [0.5, 1.5])
+
 
 if __name__ == "__main__":
     unittest.main()

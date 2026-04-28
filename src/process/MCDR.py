@@ -402,11 +402,14 @@ def _resolve_choice_action_half_life(
 
 
 from src.process.common import (
+    PreparedWeightFamilyPlot,
     attach_group_quantile_bin_column,
     attach_quantile_bin_column,
     attach_response_right_column,
     display_regressor_name,
     p_right_label,
+    prepare_grouped_weight_family_plot,
+    prepare_weight_family_base_df,
     prepare_simple_regressor_curve,
     summarize_grouped_panel,
     to_pandas_df,
@@ -458,6 +461,123 @@ def prepare_predictions_df(df_pred: pl.DataFrame, *, cfg) -> pl.DataFrame:
             raise ValueError("Falta 'ttype_c' y no existe 'ttype_n' para mapear.")
 
     return df
+
+
+def _prepare_mcdr_side_family_plot(
+    weights_df,
+    *,
+    level_groups: list[tuple[str, dict[str, str]]],
+    title: str,
+    xlabel: str,
+    variant: str = "folded",
+    positive_label: str = "coh",
+    neutral_label: str = "C",
+    negative_label: str = "incoh",
+) -> PreparedWeightFamilyPlot | None:
+    df = prepare_weight_family_base_df(weights_df, weight_row_indices=(0, 1))
+    if df.empty or "weight_row_idx" not in df.columns:
+        return None
+
+    feature_meta: dict[str, tuple[str, str]] = {}
+    level_order: list[str] = []
+    for level_label, members in level_groups:
+        level_key = str(level_label)
+        level_order.append(level_key)
+        for side, feature in members.items():
+            feature_meta[str(feature)] = (level_key, str(side))
+
+    if not feature_meta:
+        return None
+
+    df = df[df["feature"].isin(feature_meta)].copy()
+    if df.empty:
+        return None
+
+    df[["x_label", "side"]] = df["feature"].map(feature_meta).apply(pd.Series)
+    df["weight_row_idx"] = pd.to_numeric(df["weight_row_idx"], errors="coerce")
+    df = df[df["weight_row_idx"].isin([0, 1])].copy()
+    if df.empty:
+        return None
+
+    pivoted = (
+        df.groupby(["subject", "x_label", "side", "weight_row_idx"], as_index=False, observed=False)["weight"]
+        .mean()
+        .pivot(index=["subject", "x_label", "side"], columns="weight_row_idx", values="weight")
+        .reset_index()
+    )
+    for row_idx in (0, 1):
+        if row_idx not in pivoted.columns:
+            pivoted[row_idx] = np.nan
+    pivoted = pivoted.dropna(subset=[0, 1]).copy()
+    if pivoted.empty:
+        return None
+
+    records: list[dict[str, object]] = []
+    for _, row in pivoted.iterrows():
+        subject = str(row["subject"])
+        x_label = str(row["x_label"])
+        side = str(row["side"])
+        left_weight = float(row[0])
+        right_weight = float(row[1])
+        if side == "L":
+            records.append({"subject": subject, "x_label": x_label, "group": positive_label, "weight": left_weight})
+            records.append({"subject": subject, "x_label": x_label, "group": negative_label, "weight": right_weight})
+        elif side == "R":
+            records.append({"subject": subject, "x_label": x_label, "group": positive_label, "weight": right_weight})
+            records.append({"subject": subject, "x_label": x_label, "group": negative_label, "weight": left_weight})
+        elif side == "C":
+            records.append({"subject": subject, "x_label": x_label, "group": neutral_label, "weight": (left_weight + right_weight) / 2.0})
+
+    if not records:
+        return None
+
+    out = pd.DataFrame.from_records(records)
+    if out.empty:
+        return None
+
+    if variant == "split":
+        split_order = [
+            f"{x_label} {group}"
+            for x_label in level_order
+            for group in (positive_label, neutral_label, negative_label)
+        ]
+        out["x_label"] = out["x_label"].astype(str) + " " + out["group"].astype(str)
+        out = (
+            out.groupby(["subject", "x_label"], as_index=False, observed=False)["weight"]
+            .mean()
+        )
+        present = set(out["x_label"].astype(str))
+        return PreparedWeightFamilyPlot(
+            data=out,
+            plot_kind="box",
+            title=f"{title} (split {positive_label}/{neutral_label}/{negative_label})",
+            xlabel=xlabel,
+            x_order=tuple(label for label in split_order if label in present),
+        )
+
+    if variant != "folded":
+        raise ValueError(f"Unknown MCDR one-hot variant {variant!r}.")
+
+    out = out[out["group"].isin([positive_label, negative_label])].copy()
+    if out.empty:
+        return None
+    out["weight"] = np.where(
+        out["group"] == negative_label,
+        -out["weight"].to_numpy(dtype=float),
+        out["weight"].to_numpy(dtype=float),
+    )
+    out = (
+        out.groupby(["subject", "x_label"], as_index=False, observed=False)["weight"]
+        .mean()
+    )
+    present = set(out["x_label"].astype(str))
+    return PreparedWeightFamilyPlot(
+        data=out,
+        plot_kind="box",
+        title=f"{title} (folded {positive_label}/{negative_label})",
+        xlabel=xlabel,
+        x_order=tuple(label for label in level_order if label in present),
+    )
 
 
 def prepare_right_by_regressor_simple(
@@ -1175,6 +1295,83 @@ class MCDRAdapter(TaskAdapter):
             return list(_STIM_HOT_COLS)
         existing = _stim_hot_cols(list(df.columns))
         return existing if existing else list(_STIM_HOT_COLS)
+
+    def weight_family_specs(self, weights_df=None) -> Dict[str, dict]:
+        df = to_pandas_df(weights_df) if weights_df is not None else None
+        feature_names = [] if df is None or df.empty or "feature" not in df.columns else pd.unique(df["feature"].astype(str)).tolist()
+        stim_cols = _stim_hot_cols(feature_names)
+        choice_cols = _reference_coded_choice_lag_cols(feature_names)
+        bias_cols = _bias_hot_cols(feature_names)
+
+        def _group_by_level(columns: list[str], prefix: str) -> list[tuple[str, dict[str, str]]]:
+            grouped: dict[str, dict[str, str]] = {}
+            for col in columns:
+                suffix = col.removeprefix(prefix)
+                if len(suffix) < 2:
+                    continue
+                lag_token, side = suffix[:-1], suffix[-1]
+                grouped.setdefault(str(int(lag_token)), {})[side] = col
+            return [(level, grouped[level]) for level in sorted(grouped, key=int)]
+
+        return {
+            "stim_hot": {
+                "title": "stim one-hot",
+                "xlabel": "Stimulus window",
+                "levels": _group_by_level(stim_cols, "stim"),
+                "variants": ("folded", "split"),
+            },
+            "stim_one_hot": {
+                "title": "stim one-hot",
+                "xlabel": "Stimulus window",
+                "levels": _group_by_level(stim_cols, "stim"),
+                "variants": ("folded", "split"),
+            },
+            "choice_lag": {
+                "title": "choice_lag_*",
+                "xlabel": "Lag",
+                "levels": _group_by_level(choice_cols, _CHOICE_LAG_COL_PREFIX),
+                "variants": ("folded", "split"),
+                "positive_label": "repeat",
+                "neutral_label": "C",
+                "negative_label": "switch",
+            },
+            "bias_hot": {
+                "title": "bias_hot",
+                "xlabel": "Session index",
+                "plot_kind": "line",
+                "feature_groups": [(col.removeprefix(_BIAS_HOT_COL_PREFIX), [col]) for col in bias_cols],
+            },
+        }
+
+    def prepare_weight_family_plot(
+        self,
+        weights_df,
+        family_key: str,
+        *,
+        variant: str | None = None,
+    ) -> PreparedWeightFamilyPlot | None:
+        spec = self.weight_family_specs(weights_df).get(family_key)
+        if spec is None:
+            return None
+        if "levels" in spec:
+            return _prepare_mcdr_side_family_plot(
+                weights_df,
+                level_groups=spec["levels"],
+                title=spec["title"],
+                xlabel=spec["xlabel"],
+                variant=variant or "folded",
+                positive_label=spec.get("positive_label", "coh"),
+                neutral_label=spec.get("neutral_label", "C"),
+                negative_label=spec.get("negative_label", "incoh"),
+            )
+        return prepare_grouped_weight_family_plot(
+            weights_df,
+            feature_groups=spec["feature_groups"],
+            title=spec["title"],
+            xlabel=spec["xlabel"],
+            plot_kind=spec["plot_kind"],
+            weight_row_indices=(0,),
+        )
 
     def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_emission_groups(list(available_cols))

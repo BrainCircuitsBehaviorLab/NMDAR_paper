@@ -38,19 +38,25 @@ def _():
         select_subject_behavior_df,
     )
     from glmhmmt.cli.fit_glm import main as fit_main, generate_model_id
+    from glmhmmt.glm import fit_glm
     from glmhmmt.postprocess import (
         build_trial_df,
         build_emission_weights_df,
         build_weights_boxplot_payload,
     )
-    from glmhmmt.plots import plot_feature_boxplot, plot_weights_boxplot
+    from glmhmmt.plots import (
+        # plot_emission_regressor_lr_boxplot,
+        plot_feature_boxplot,
+        plot_weights_boxplot,
+    )
     from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import get_state_color
+    from src.plots.common import plot_prepared_weight_family, plot_regressor_net_impact
     from src.process import MCDR as process_mcdr
     from src.process import two_afc as process_two_afc
     from src.process import two_afc_delay as process_two_afc_delay
-    from src.process.common import add_choice_lag_summary_regressor
+    from src.process.common import add_choice_lag_summary_regressor, display_regressor_name
 
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
@@ -71,10 +77,10 @@ def _():
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
         build_editor_payload,
-        build_emission_weights_df,
         build_trial_and_weights_df,
         build_trial_df,
-        build_weights_boxplot_payload,
+        display_regressor_name,
+        fit_glm,
         fit_main,
         generate_model_id,
         get_adapter,
@@ -85,8 +91,8 @@ def _():
         paths,
         pd,
         pl,
-        plot_feature_boxplot,
-        plot_weights_boxplot,
+        plot_prepared_weight_family,
+        plot_regressor_net_impact,
         plt,
         prepare_predictions_df,
         resolve_selected_model_id,
@@ -157,13 +163,14 @@ def _(mo):
 
 
 @app.cell
-def _(generate_model_id, model_cfg, task_name):
+def _(adapter, generate_model_id, model_cfg, task_name):
     current_hash = generate_model_id(
         task_name,
         model_cfg.tau,
         model_cfg.emission_cols,
         lapse_mode=model_cfg.lapse_mode,
         lapse_max=model_cfg.lapse_max,
+        baseline_class_idx=adapter.baseline_class_idx,
     )
     return (current_hash,)
 
@@ -210,6 +217,7 @@ def _(current_hash, mo, save_plot, ui_model_manager):
 
 @app.cell
 def _(
+    adapter,
     current_hash,
     fit_main,
     get_last_fit_click,
@@ -279,7 +287,7 @@ def _(
                 n_restarts=_n_restarts,
                 verbose=True,
                 progress_callback=_on_progress,
-                baseline_class_idx=1,
+                baseline_class_idx=adapter.baseline_class_idx,
             )
         mm_widget.saved_model_name = _selected_id
         mm_widget.alias_error = ""
@@ -308,18 +316,6 @@ def _(
     task_name,
 ):
     def _normalize_glm_arrays(arrays: dict) -> dict:
-        # ── Backward-compatibility: old fit_glm.py saved W_R at index 0.
-        # New convention stores W_L (negative stim weight) at index 0.
-        _weights = arrays.get("emission_weights")
-        if _weights is None:
-            return arrays
-
-        stim_idx = next(
-            (idx for idx, col in enumerate(arrays.get("X_cols", [])) if col in {"stim_vals", "stim_d", "ild_norm"}),
-            None,
-        )
-        if stim_idx is not None and float(_weights[0, 0, stim_idx]) > 0:
-            arrays["emission_weights"] = -_weights
         return arrays
 
 
@@ -365,386 +361,32 @@ def _(mo):
 
 
 @app.cell
-def _(is_2afc, np, pd, plot_feature_boxplot, plt, sns, task_name):
-    import re
-
-    is_mcdr = task_name == "MCDR"
-    flip_binary_one_hot = task_name in {"2AFC"}
-    is_2afc_delay = task_name == "2AFC_delay"
-    _stim_pattern = (
-        re.compile(r"^stim_x_delay_hot_(m?\d+(?:p\d+)?)$")
-        if is_2afc_delay
-        else re.compile(r"^stim_(\d+)$")
-    )
-    _choice_lag_pattern = re.compile(r"^choice_lag_(\d+)$")
-    _bias_pattern = re.compile(r"^bias_(\d+)$")
-    _mcdr_stim_pattern = re.compile(r"^stim(?P<x_value>\d+)(?P<side>[LCR])$")
-    _mcdr_choice_lag_pattern = re.compile(r"^choice_lag_(?P<x_value>\d+)(?P<side>[LCR])$")
-
-    def _parse_feature_level_token(token: str) -> float | int | None:
-        if is_2afc_delay:
-            try:
-                return float(token.replace("m", "-").replace("p", "."))
-            except ValueError:
-                return None
-        try:
-            return int(token)
-        except ValueError:
-            return None
-
-    def _format_feature_level_label(value) -> str:
-        if isinstance(value, str):
-            return value
-        if is_2afc_delay:
-            value = float(value)
-            if np.isclose(value, 0.1):
-                return "0"
-            if value.is_integer():
-                return str(int(value))
-            return format(value, "g")
-        return str(int(value))
-
-    def _weights_df_to_plot_df(
-        weights_df,
-        *,
-        class_idx: int | None = 0,
-        flip_sign: bool = False,
-    ) -> pd.DataFrame:
-        if weights_df is None or getattr(weights_df, "is_empty", lambda: False)():
-            return pd.DataFrame()
-
-        df_plot = weights_df.to_pandas() if hasattr(weights_df, "to_pandas") else pd.DataFrame(weights_df)
-        if df_plot.empty:
-            return df_plot
-
-        if class_idx is not None and "class_idx" in df_plot.columns:
-            df_plot = df_plot[df_plot["class_idx"] == class_idx].copy()
-        else:
-            df_plot = df_plot.copy()
-
-        if df_plot.empty:
-            return df_plot
-
-        df_plot["feature"] = df_plot["feature"].astype(str)
-        df_plot["weight"] = pd.to_numeric(df_plot["weight"], errors="coerce")
-        if "class_idx" in df_plot.columns:
-            df_plot["class_idx"] = pd.to_numeric(df_plot["class_idx"], errors="coerce")
-        if flip_sign:
-            df_plot["weight"] = -df_plot["weight"]
-        if "state_rank" not in df_plot.columns:
-            df_plot["state_rank"] = 0
-        if "state_label" not in df_plot.columns:
-            df_plot["state_label"] = "State 0"
-        return df_plot.dropna(subset=["weight"]).copy()
-
-    def _plot_grouped_boxplot(
-        grouped_df: pd.DataFrame,
-        *,
-        value_col: str,
-        title: str,
-        xlabel: str,
-        ylabel: str = "Weight",
-        x_col: str = "x_value",
-        order: list | None = None,
-    ) -> plt.Figure | None:
-        if grouped_df.empty:
-            return None
-
-        ordered_values = order or sorted(pd.unique(grouped_df[x_col]).tolist())
-        grouped_df = grouped_df[grouped_df[x_col].isin(ordered_values)].copy()
-        if grouped_df.empty:
-            return None
-
-        subject_order = pd.unique(grouped_df["subject"]).tolist()
-        per_feature_values: list[np.ndarray] = []
-        subject_lines = np.full((len(subject_order), len(ordered_values)), np.nan, dtype=float)
-
-        for feature_idx, x_value in enumerate(ordered_values):
-            feature_df = grouped_df[grouped_df[x_col] == x_value].copy()
-            if feature_df.empty:
-                per_feature_values.append(np.asarray([], dtype=float))
-                continue
-            by_subject = (
-                feature_df.groupby("subject", observed=False)[value_col]
-                .mean()
-                .reindex(subject_order)
-            )
-            subject_lines[:, feature_idx] = by_subject.to_numpy(dtype=float)
-            per_feature_values.append(by_subject.dropna().to_numpy(dtype=float))
-
-        if not any(values.size for values in per_feature_values):
-            return None
-
-        return plot_feature_boxplot(
-            per_feature_values,
-            [_format_feature_level_label(value) for value in ordered_values],
-            subject_lines=subject_lines,
-            figsize=(max(5.0, 0.8 * len(ordered_values)), 4.0),
-            title=title,
-            xlabel=xlabel,
-            ylabel=ylabel,
-        )
-
-    def plot_feature_rule_boxplot(
-        weights_df,
-        *,
-        pattern,
-        title: str,
-        xlabel: str,
-        order: list[int] | None = None,
-    ) -> plt.Figure | None:
-        df_plot = _weights_df_to_plot_df(
-            weights_df,
-            class_idx=0,
-            flip_sign=flip_binary_one_hot,
-        )
-        if df_plot.empty:
-            return None
-        df_plot["x_value"] = df_plot["feature"].str.extract(pattern, expand=False)
-        df_plot = df_plot[df_plot["x_value"].notna()].copy()
-        if df_plot.empty:
-            return None
-        df_plot["x_value"] = df_plot["x_value"].map(_parse_feature_level_token)
-        df_plot = df_plot[df_plot["x_value"].notna()].copy()
-        if df_plot.empty:
-            return None
-        return _plot_grouped_boxplot(
-            df_plot,
-            value_col="weight",
-            title=title,
-            xlabel=xlabel,
-            order=order,
-        )
-
-    def plot_mcdr_folded_boxplot(
-        weights_df,
-        *,
-        pattern,
-        title: str,
-        xlabel: str,
-        mode: str = "folded",
-        order: list[int] | None = None,
-        positive_label: str = "coh",
-        neutral_label: str = "C",
-        negative_label: str = "incoh",
-    ) -> plt.Figure | None:
-        df_plot = _weights_df_to_plot_df(weights_df, class_idx=None, flip_sign=False)
-        if df_plot.empty or "class_idx" not in df_plot.columns:
-            return None
-
-        parsed = df_plot["feature"].str.extract(pattern)
-        df_plot = pd.concat([df_plot, parsed], axis=1)
-        df_plot = df_plot[df_plot["x_value"].notna() & df_plot["side"].notna()].copy()
-        if df_plot.empty:
-            return None
-
-        df_plot["x_value"] = df_plot["x_value"].astype(int)
-        df_plot["class_idx"] = pd.to_numeric(df_plot["class_idx"], errors="coerce")
-        df_plot = df_plot[df_plot["class_idx"].isin([0, 1])].copy()
-        if df_plot.empty:
-            return None
-
-        pivoted = (
-            df_plot.groupby(["subject", "x_value", "side", "class_idx"], as_index=False, observed=False)["weight"]
-            .mean()
-            .pivot(index=["subject", "x_value", "side"], columns="class_idx", values="weight")
-            .reset_index()
-        )
-        for class_idx in (0, 1):
-            if class_idx not in pivoted.columns:
-                pivoted[class_idx] = np.nan
-        pivoted = pivoted.dropna(subset=[0, 1]).copy()
-        if pivoted.empty:
-            return None
-        pivoted = pivoted.rename(columns={0: "weight_0", 1: "weight_1"})
-
-        records: list[dict[str, object]] = []
-        for row in pivoted.itertuples(index=False):
-            subject = str(row.subject)
-            x_value = int(row.x_value)
-            side = str(row.side)
-            weight_0 = float(row.weight_0)
-            weight_1 = float(row.weight_1)
-            if side == "L":
-                records.append({"subject": subject, "x_value": x_value, "group": positive_label, "value": weight_0})
-                records.append({"subject": subject, "x_value": x_value, "group": negative_label, "value": weight_1})
-            elif side == "R":
-                records.append({"subject": subject, "x_value": x_value, "group": positive_label, "value": weight_1})
-                records.append({"subject": subject, "x_value": x_value, "group": negative_label, "value": weight_0})
-            elif side == "C":
-                records.append({"subject": subject, "x_value": x_value, "group": neutral_label, "value": (weight_0 + weight_1) / 2.0})
-
-        if not records:
-            return None
-
-        grouped_df = pd.DataFrame.from_records(records)
-        if grouped_df.empty:
-            return None
-
-        if mode == "split":
-            split_df = grouped_df[grouped_df["group"].isin([positive_label, neutral_label, negative_label])].copy()
-            if split_df.empty:
-                return None
-            split_df = (
-                split_df.groupby(["subject", "x_value", "group"], as_index=False, observed=False)["value"]
-                .mean()
-            )
-            ordered_values = order or sorted(pd.unique(split_df["x_value"]).tolist())
-            label_order = [
-                f"{value} {group}"
-                for value in ordered_values
-                for group in (positive_label, neutral_label, negative_label)
-            ]
-            label_order = [label for label in label_order if label.split(" ", 1)[1] in set(split_df["group"])]
-            split_df["x_label"] = (
-                split_df["x_value"].astype(int).astype(str)
-                + " "
-                + split_df["group"].astype(str)
-            )
-            return _plot_grouped_boxplot(
-                split_df,
-                value_col="value",
-                title=f"{title} (split {positive_label}/{neutral_label}/{negative_label})",
-                xlabel=xlabel,
-                ylabel="Weight",
-                x_col="x_label",
-                order=label_order,
-            )
-
-        folded_df = grouped_df[grouped_df["group"].isin([positive_label, negative_label])].copy()
-        if folded_df.empty:
-            return None
-        folded_df["value"] = np.where(
-            folded_df["group"] == negative_label,
-            -folded_df["value"].to_numpy(dtype=float),
-            folded_df["value"].to_numpy(dtype=float),
-        )
-        folded_df = (
-            folded_df.groupby(["subject", "x_value", "group"], as_index=False, observed=False)["value"]
-            .mean()
-        )
-        folded_df = (
-            folded_df.groupby(["subject", "x_value"], as_index=False, observed=False)["value"]
-            .mean()
-        )
-        return _plot_grouped_boxplot(
-            folded_df,
-            value_col="value",
-            title=f"{title} (folded {positive_label}/{negative_label})",
-            xlabel=xlabel,
-            ylabel="Weight",
-            order=order,
-        )
-
-    def plot_feature_rule_lineplot(
-        weights_df,
-        *,
-        pattern,
-        title: str,
-        xlabel: str,
-        order: list[int] | None = None,
-    ) -> plt.Figure | None:
-        df_plot = _weights_df_to_plot_df(
-            weights_df,
-            class_idx=0,
-            flip_sign=flip_binary_one_hot,
-        )
-        if df_plot.empty:
-            return None
-        df_plot["x_value"] = df_plot["feature"].str.extract(pattern, expand=False)
-        df_plot = df_plot[df_plot["x_value"].notna()].copy()
-        if df_plot.empty:
-            return None
-        df_plot["x_value"] = df_plot["x_value"].map(_parse_feature_level_token)
-        df_plot = df_plot[df_plot["x_value"].notna()].copy()
-        if df_plot.empty:
-            return None
-        ordered_values = order or sorted(pd.unique(df_plot["x_value"]).tolist())
-        df_plot = df_plot[df_plot["x_value"].isin(ordered_values)].copy()
-        if df_plot.empty:
-            return None
-        df_plot["x_value"] = pd.Categorical(
-            df_plot["x_value"],
-            categories=ordered_values,
-            ordered=True,
-        )
-        summary = (
-            df_plot.groupby("x_value", as_index=False, observed=False)["weight"]
-            .mean()
-            .sort_values("x_value")
-        )
-        if summary.empty:
-            return None
-
-        positions = np.arange(len(summary))
-        fig, ax = plt.subplots(figsize=(max(5.0, 0.8 * len(summary)), 4.0))
-        ax.plot(
-            positions,
-            summary["weight"],
-            color="#1f77b4",
-            marker="o",
-            linewidth=2.0,
-            markersize=6,
-        )
-        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel("Weight")
-        ax.set_xticks(positions)
-        ax.set_xticklabels(
-            [_format_feature_level_label(value) for value in summary["x_value"].tolist()]
-        )
-        sns.despine(ax=ax)
-        fig.tight_layout()
-        return fig
-
+def _(adapter, fit_glm, np, pd, plot_prepared_weight_family, plt, sns):
     def plot_stim_hot_weights(weights_df, *, mcdr_mode: str = "folded") -> plt.Figure | None:
-        if is_mcdr:
-            return plot_mcdr_folded_boxplot(
+        return plot_prepared_weight_family(
+            adapter.prepare_weight_family_plot(
                 weights_df,
-                pattern=_mcdr_stim_pattern,
-                title="stim one-hot",
-                xlabel="Stimulus window",
-                mode=mcdr_mode,
-                order=[1, 2, 3, 4],
+                "stim_hot",
+                variant=mcdr_mode,
             )
-        return plot_feature_rule_boxplot(
-            weights_df,
-            pattern=_stim_pattern,
-            title="stim_hot" if task_name == "2AFC" else "stim×delay one-hot",
-            xlabel="stimulus level" if task_name == "2AFC" else "delay level",
         )
 
     def plot_choice_lag_weights(weights_df, *, mcdr_mode: str = "folded") -> plt.Figure | None:
-        if is_mcdr:
-            return plot_mcdr_folded_boxplot(
+        return plot_prepared_weight_family(
+            adapter.prepare_weight_family_plot(
                 weights_df,
-                pattern=_mcdr_choice_lag_pattern,
-                title="choice_lag_*",
-                xlabel="Lag",
-                mode=mcdr_mode,
-                positive_label="repeat",
-                neutral_label="C",
-                negative_label="switch",
+                "choice_lag",
+                variant=mcdr_mode,
             )
-        return plot_feature_rule_boxplot(
-            weights_df,
-            pattern=_choice_lag_pattern,
-            title="choice_lag_*",
-            xlabel="Lag",
         )
 
     def plot_bias_hot_weights(weights_df) -> plt.Figure | None:
-        return plot_feature_rule_lineplot(
-            weights_df,
-            pattern=_bias_pattern,
-            title="bias_hot",
-            xlabel="Session index",
+        return plot_prepared_weight_family(
+            adapter.prepare_weight_family_plot(weights_df, "bias_hot")
         )
 
     def plot_sequence_feature_weights(weights_df) -> plt.Figure | None:
         """Plot only sequential stimulus features (s_i / sf_i) from the canonical weights df."""
-        feature_pattern = re.compile(r"^(?:s|sf)_(\d+)$")
         if weights_df is None or getattr(weights_df, "is_empty", lambda: False)():
             return None
 
@@ -753,16 +395,13 @@ def _(is_2afc, np, pd, plot_feature_boxplot, plt, sns, task_name):
             return None
 
         df_plot["feature_name"] = df_plot["feature"].astype(str)
-        df_plot["seq_idx"] = df_plot["feature_name"].str.extract(feature_pattern, expand=False)
+        seq_pattern = r"^(?:s|sf)_(\d+)$"
+        df_plot["seq_idx"] = df_plot["feature_name"].str.extract(seq_pattern, expand=False)
         df_plot = df_plot[df_plot["seq_idx"].notna()].copy()
         if df_plot.empty:
             return None
 
         df_plot["seq_idx"] = df_plot["seq_idx"].astype(int)
-        if is_2afc:
-            # Binary fits store logit(Left); flip sign so the plot keeps the intuitive rightward convention.
-            df_plot["weight"] = -df_plot["weight"]
-
         # Collapse across class_idx so each subject/state/feature contributes one value.
         df_plot = (
             df_plot.groupby(
@@ -838,7 +477,93 @@ def _(is_2afc, np, pd, plot_feature_boxplot, plt, sns, task_name):
         fig.suptitle("s_i / sf_i coefficients", y=1.02)
         fig.tight_layout()
         return fig
-    _stim_pattern
+
+    def build_regressor_lr_df(
+        arrays_store,
+        *,
+        lapse_max: float = 0.2,
+        seed: int = 0,
+    ) -> pd.DataFrame:
+        """Build per-subject likelihood-ratio chi2 values for each regressor.
+
+        The statistic is computed as ``2 * (LL_full - LL_reduced)`` where the
+        full-model log-likelihood comes from the stored fitted predictive
+        probabilities and the reduced model is re-fit after dropping one
+        regressor column for the current subject.
+        """
+        records: list[dict[str, object]] = []
+
+        for subject, arrays in arrays_store.items():
+            x_raw = arrays.get("X")
+            y_raw = arrays.get("y")
+            weights_raw = arrays.get("emission_weights")
+            x_cols_raw = arrays.get("X_cols")
+            p_pred_raw = arrays.get("p_pred")
+            if (
+                x_raw is None
+                or y_raw is None
+                or weights_raw is None
+                or x_cols_raw is None
+                or p_pred_raw is None
+            ):
+                continue
+
+            X = np.asarray(x_raw, dtype=float)
+            y = np.asarray(y_raw, dtype=int).reshape(-1)
+            emission_weights = np.asarray(weights_raw, dtype=float)
+            p_pred = np.asarray(p_pred_raw, dtype=float)
+            if X.ndim != 2 or emission_weights.ndim != 3 or emission_weights.shape[0] == 0:
+                continue
+            if p_pred.ndim != 2 or p_pred.shape[0] != X.shape[0] or y.shape[0] != X.shape[0]:
+                continue
+
+            feature_names = [str(col) for col in np.asarray(x_cols_raw).tolist()]
+            if X.shape[1] != len(feature_names):
+                continue
+
+            if len(feature_names) <= 1:
+                continue
+
+            num_classes = int(p_pred.shape[1])
+            baseline_class_idx = int(np.asarray(arrays.get("baseline_class_idx", 0)).reshape(()))
+            lapse_mode = str(arrays.get("lapse_mode", "none"))
+
+            full_probs = np.clip(p_pred, 1e-10, 1.0)
+            full_probs /= full_probs.sum(axis=1, keepdims=True)
+            full_ll = float(np.sum(np.log(full_probs[np.arange(y.shape[0]), y])))
+
+            for feat_idx, feature_name in enumerate(feature_names):
+                X_reduced = np.delete(X, feat_idx, axis=1)
+                if X_reduced.shape[1] == 0:
+                    continue
+
+                reduced_fit = fit_glm(
+                    X_reduced,
+                    y,
+                    num_classes=num_classes,
+                    baseline_class_idx=baseline_class_idx,
+                    lapse_mode=lapse_mode,
+                    lapse_max=float(lapse_max),
+                    n_restarts=1,
+                    restart_noise_scale=0.0,
+                    seed=seed,
+                )
+                reduced_probs = np.asarray(reduced_fit.predictive_probs, dtype=float)
+                reduced_probs = np.clip(reduced_probs, 1e-10, 1.0)
+                reduced_probs /= reduced_probs.sum(axis=1, keepdims=True)
+                reduced_ll = float(np.sum(np.log(reduced_probs[np.arange(y.shape[0]), y])))
+                lr_chi2 = max(0.0, 2.0 * (full_ll - reduced_ll))
+
+                records.append(
+                    {
+                        "subject": str(subject),
+                        "feature": feature_name,
+                        "lr_chi2": lr_chi2 if np.isfinite(lr_chi2) else np.nan,
+                    }
+                )
+
+        return pd.DataFrame.from_records(records, columns=["subject", "feature", "lr_chi2"])
+
     return (
         plot_bias_hot_weights,
         plot_choice_lag_weights,
@@ -882,28 +607,30 @@ def _(weights_df):
 
 
 @app.cell
+def _(arrays_store, mo, selected, views):
+    mo.stop(not arrays_store, mo.md("No results loaded."))
+    views_sel = {s: views[s] for s in selected}
+    return (views_sel,)
+
+
+@app.cell
 def _(
     K,
-    arrays_store,
-    build_emission_weights_df,
-    build_weights_boxplot_payload,
     mo,
     pl,
     plot_bias_hot_weights,
     plot_choice_lag_weights,
     plot_sequence_feature_weights,
     plot_stim_hot_weights,
-    plot_weights_boxplot,
     plots,
     save_plot,
     selected,
     task_name,
     ui_mcdr_one_hot_mode,
-    views,
+    views_sel,
     weights_df,
 ):
-    mo.stop(not arrays_store, mo.md("No results loaded."))
-    views_sel = {s: views[s] for s in selected}
+
     _weights_df_sel = weights_df.filter(pl.col("subject").is_in(selected))
     _mcdr_mode = ui_mcdr_one_hot_mode.value if task_name == "MCDR" else "folded"
 
@@ -912,7 +639,21 @@ def _(
     #     K=K,
     # )
 
-    _fig_summary = plot_weights_boxplot(**build_weights_boxplot_payload(build_emission_weights_df(views_sel)))
+    # _fig_summary = plot_weights_boxplot(**build_weights_boxplot_payload(build_emission_weights_df(views_sel)))
+    # _lr_df = build_regressor_lr_df(
+    #     {s: arrays_store[s] for s in selected},
+    #     lapse_max=model_cfg.lapse_max,
+    # )
+    # _ax_lr = (
+    #     None
+    #     if _lr_df.empty
+    #     else plot_emission_regressor_lr_boxplot(
+    #         _lr_df,
+    #         feature_order=list(model_cfg.emission_cols) if model_cfg.emission_cols else None,
+    #         title="Regressor LR chi2",
+    #     )
+    # )
+    _fig_lr = None if _ax_lr is None else _ax_lr.figure
     _fig_stim_hot = plot_stim_hot_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
     _fig_choice_lag = plot_choice_lag_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
     _fig_bias_hot = plot_bias_hot_weights(_weights_df_sel)
@@ -934,6 +675,13 @@ def _(
         _summary_cards.append(
             mo.vstack(
                 [_fig_summary, save_plot(_fig_summary, "emission weights", stem="emission_weights")],
+                align="center",
+            )
+        )
+    if _fig_lr is not None:
+        _summary_cards.append(
+            mo.vstack(
+                [_fig_lr, save_plot(_fig_lr, "regressor LR chi2", stem="regressor_lr_chi2")],
                 align="center",
             )
         )
@@ -988,7 +736,7 @@ def _(
             ]
         )
     mo.vstack(_items, align="center")
-    return (views_sel,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -1017,10 +765,10 @@ def _(mo):
     As we take a class to be the reference, the fitted logits are:
 
     $$
-    (\eta_L, 0),
+    (0, \eta_R),
     $$
 
-    so the other logit is always fixed to zero. Therefore the total evidence for the correct choice is just the signed fitted logit:
+    so the baseline-class logit is fixed to zero. Therefore the total evidence for the correct choice is just the signed fitted logit:
 
     $$
     E_{\mathrm{tot}} = \eta_{\mathrm{correct}}
@@ -1074,9 +822,21 @@ def _(adapter, mo, task_name, trial_df, views):
     if _choice_lag_cols:
         regressor_options.append("choice_lag_one_hot_sum")
 
+    _net_impact_options = []
+    for _col in list(getattr(adapter, "emission_cols", []) or []) + _view_feature_names:
+        _col = str(_col)
+        if _col in _available_cols and _col not in _net_impact_options:
+            _net_impact_options.append(_col)
+    if _choice_lag_cols and "choice_lag_one_hot_sum" not in _net_impact_options:
+        _net_impact_options.append("choice_lag_one_hot_sum")
+
     if not regressor_options:
         ui_accuracy_binning = None
         ui_accuracy_regressor = None
+        ui_fit_lapse_by_subject = None
+        ui_fit_lapse_logistic = None
+        ui_share_lapse_logistic_core = None
+        ui_show_lapses_in_legend = None
     else:
         ui_accuracy_binning = mo.ui.checkbox(value=False, label="Enable")
         ui_accuracy_regressor = mo.ui.dropdown(
@@ -1084,7 +844,40 @@ def _(adapter, mo, task_name, trial_df, views):
             value=regressor_options[0],
             label="Regressor",
         )
-    return regressor_options, ui_accuracy_regressor
+        ui_fit_lapse_logistic = mo.ui.checkbox(value=False, label="Fit lapse logistic")
+        ui_fit_lapse_by_subject = mo.ui.checkbox(value=True, label="Fit by animal")
+        ui_share_lapse_logistic_core = mo.ui.checkbox(value=False, label="Fix bias/slope across quartiles")
+        ui_show_lapses_in_legend = mo.ui.checkbox(value=True, label="Show lapses in legend")
+
+    if not _net_impact_options:
+        ui_net_impact_x_axis = None
+        ui_net_impact_y_axis = None
+    else:
+        _x_default = _net_impact_options[0]
+        _y_default = next(
+            (_col for _col in _net_impact_options if _col != _x_default),
+            _x_default,
+        )
+        ui_net_impact_x_axis = mo.ui.dropdown(
+            options=_net_impact_options,
+            value=_x_default,
+            label="Magnitude regressor",
+        )
+        ui_net_impact_y_axis = mo.ui.dropdown(
+            options=_net_impact_options,
+            value=_y_default,
+            label="Impact regressor",
+        )
+    return (
+        regressor_options,
+        ui_accuracy_regressor,
+        ui_fit_lapse_by_subject,
+        ui_fit_lapse_logistic,
+        ui_net_impact_x_axis,
+        ui_net_impact_y_axis,
+        ui_share_lapse_logistic_core,
+        ui_show_lapses_in_legend,
+    )
 
 
 @app.cell
@@ -1125,8 +918,23 @@ def _(
 
 
 @app.cell
-def _(ui_accuracy_regressor):
-    ui_accuracy_regressor
+def _(
+    mo,
+    ui_accuracy_regressor,
+    ui_fit_lapse_by_subject,
+    ui_fit_lapse_logistic,
+    ui_share_lapse_logistic_core,
+    ui_show_lapses_in_legend,
+):
+    mo.hstack(
+        [
+            ui_accuracy_regressor,
+            ui_fit_lapse_logistic,
+            ui_fit_lapse_by_subject,
+            ui_share_lapse_logistic_core,
+            ui_show_lapses_in_legend,
+        ]
+    )
     return
 
 
@@ -1232,19 +1040,38 @@ def _(adapter, mo, plot_df_all, plots, save_plot, views_sel):
 
 
 @app.cell
+def _(ui_accuracy_regressor):
+    ui_accuracy_regressor.value
+    return
+
+
+@app.cell
 def _(
     mo,
     plot_df_all,
     plots,
+    plt,
     regressor_options,
     save_plot,
     ui_accuracy_regressor,
+    ui_fit_lapse_by_subject,
+    ui_fit_lapse_logistic,
+    ui_share_lapse_logistic_core,
+    ui_show_lapses_in_legend,
 ):
     _selected_regressor_label = plots.display_regressor_name(ui_accuracy_regressor.value)
+
+    _fig, _ax = plt.subplots(1,1,figsize=(4,3))
 
     _fig_binned = plots.plot_binned_accuracy_figure(
         plot_df_all,
         regressor_col=ui_accuracy_regressor.value,
+        fit_lapse_logistic=bool(ui_fit_lapse_logistic.value),
+        fit_lapse_by_subject=bool(ui_fit_lapse_by_subject.value),
+        share_lapse_logistic_core=bool(ui_share_lapse_logistic_core.value),
+        show_lapses_in_legend=bool(ui_show_lapses_in_legend.value),
+        print_lapse_fits=not bool(ui_show_lapses_in_legend.value),
+        figsize = (3,3)
     )
     _secondary_regressor = plots.pick_choice_history_regressor(regressor_options)
     mo.stop(_secondary_regressor is None, mo.md("No choice-history regressor available."))
@@ -1254,20 +1081,29 @@ def _(
         plot_df_all,
         regressor_col=_secondary_regressor,
         title=None,
+        figsize=(4,3)
     )
 
     mo.stop(_fig_binned is None, mo.md(f"No binned accuracy plot available for {_selected_regressor_label}."))
 
     mo.vstack(
         [
-            ui_accuracy_regressor,
+            mo.hstack(
+                [
+                    ui_accuracy_regressor,
+                    ui_fit_lapse_logistic,
+                    ui_fit_lapse_by_subject,
+                    ui_share_lapse_logistic_core,
+                    ui_show_lapses_in_legend,
+                ]
+            ),
             mo.hstack(
                 [
                     mo.vstack(
                         [
                             _fig_binned,
                             save_plot(
-                                _fig_binned,
+                                _fig_binned[0],
                                 f"binned accuracy {_selected_regressor_label}",
                                 stem=f"accuracy_binned_{ui_accuracy_regressor.value}",
                             ),
@@ -1278,7 +1114,7 @@ def _(
                         [
                             _fig_secondary_right,
                             save_plot(
-                                _fig_secondary_right,
+                                _fig_secondary_right.figure,
                                 f"p(right) by {_secondary_regressor_label}",
                                 stem=f"psychometric_binned_{_secondary_regressor}",
                             ),
@@ -1294,8 +1130,46 @@ def _(
 
 
 @app.cell
-def _(mo, plot_df_all, plots, save_plot, zmo):
-    zmo.stop(
+def _(
+    mo,
+    plot_df_all,
+    plot_regressor_net_impact,
+    plt,
+    save_plot,
+    ui_net_impact_x_axis,
+    ui_net_impact_y_axis,
+):
+    mo.stop(
+        ui_net_impact_x_axis is None or ui_net_impact_y_axis is None,
+        mo.md("No regressor pair is available for the net-impact plot."),
+    )
+    _x_axis = ui_net_impact_x_axis.value
+    _y_axis = ui_net_impact_y_axis.value
+    _fig_net_impact, _ax_net_impact = plt.subplots(1, 1, figsize=(4, 3), layout="constrained")
+    plot_regressor_net_impact(
+        plot_df_all,
+        x_axis=_x_axis,
+        y_axis=_y_axis,
+        axes=[_ax_net_impact],
+    )
+    mo.vstack(
+        [
+            mo.hstack([ui_net_impact_x_axis, ui_net_impact_y_axis], justify="center"),
+            _fig_net_impact,
+            save_plot(
+                _fig_net_impact,
+                f"net impact {_y_axis} by {_x_axis}",
+                stem=f"net_impact_{_y_axis}_by_{_x_axis}",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(mo, plot_df_all, plots, save_plot):
+    mo.stop(
         not hasattr(plots, "plot_right_integration_map"),
         mo.md("No p(right) integration map helper is available for this task."),
     )
@@ -1322,16 +1196,37 @@ def _(mo, plot_df_all, plots, save_plot, zmo):
 
 
 @app.cell
-def _(plot_df_all, plots, plt):
+def _(adapter, plot_df_all, plots, plt, views_sel):
     fig, axd = plt.subplot_mosaic(
         [["a", "b"], ["c", "d"]],
         figsize=(7, 5),
         layout="constrained",
     )   
     plots.plot_right_by_regressor(plot_df_all, regressor_col="choice_lag_one_hot_sum", ax=axd["a"])
-    plots.plot_right_integration_map(plot_df_all, ax=axd["b"])
+    # plots.plot_right_integration_map(
+    #     plot_df_all,
+    #     ax=axd["b"],
+    #     x_col="evidence_param",
+    #     xlabel="Evidence strength",
+    # )
     plots.plot_right_by_regressor(plot_df_all, regressor_col="choice_lag_one_hot_sum", ax=axd["d"])
-    plots.plot_right_integration_map(plot_df_all, ax=axd["c"])
+    # plots.plot_right_integration_map(
+    #     plot_df_all,
+    #     ax=axd["c"],
+    #     x_col="evidence_param",
+    #     xlabel="Evidence strength",
+    # )
+    plots.plot_accuracy_by_total_evidence(
+        plot_df_all,
+        adapter=adapter,
+        views=views_sel,
+        ax = axd["a"],
+    )
+    plots.plot_repeat_by_repeat_evidence(
+        plot_df_all,
+        views=views_sel,
+        ax = axd["c"],
+    )
     for label, ax in zip("abcd", axd.values()):
         ax.text(
             -0.25, 1.1, label,
@@ -1341,7 +1236,7 @@ def _(plot_df_all, plots, plt):
             va="top",
             ha="right",
         )
-        # ax.set_box_aspect(1)
+        ax.set_box_aspect(1)
     fig
     return
 

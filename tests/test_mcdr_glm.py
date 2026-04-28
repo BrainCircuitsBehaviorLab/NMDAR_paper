@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(ROOT) not in sys.path:
@@ -140,6 +142,35 @@ class TestMcdrGlm(unittest.TestCase):
         self.assertEqual(X.shape, (2, 3))
         self.assertEqual(U.shape, (2, 0))
         self.assertEqual(names["X_cols"], ["bias", "bias_0", "stim1L"])
+
+    def test_prepare_weight_family_plot_applies_mcdr_folded_and_split_semantics(self) -> None:
+        adapter = mcdr.MCDRAdapter()
+        weights_df = mcdr.pl.DataFrame(
+            {
+                "subject": ["A83"] * 6,
+                "weight_row_idx": [0, 1, 0, 1, 0, 1],
+                "feature": ["stim1L", "stim1L", "stim1C", "stim1C", "stim1R", "stim1R"],
+                "weight": [1.0, -4.0, 0.5, 1.5, -2.0, 3.0],
+            }
+        )
+
+        folded = adapter.prepare_weight_family_plot(weights_df, "stim_hot", variant="folded")
+        split = adapter.prepare_weight_family_plot(weights_df, "stim_hot", variant="split")
+
+        self.assertIsNotNone(folded)
+        self.assertEqual(folded.x_order, ("1",))
+        folded_data = folded.data.sort_values("x_label").reset_index(drop=True)
+        self.assertEqual(folded_data["x_label"].tolist(), ["1"])
+        np.testing.assert_allclose(folded_data["weight"].to_numpy(), [2.5])
+
+        self.assertIsNotNone(split)
+        self.assertEqual(split.x_order, ("1 coh", "1 C", "1 incoh"))
+        split_data = split.data.sort_values("x_label").reset_index(drop=True)
+        self.assertEqual(split_data["x_label"].tolist(), ["1 C", "1 coh", "1 incoh"])
+        np.testing.assert_allclose(
+            split_data["weight"].to_numpy(),
+            [1.0, 2.0, -3.0],
+        )
 
 
 if __name__ == "__main__":

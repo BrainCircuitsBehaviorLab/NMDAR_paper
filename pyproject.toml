@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11, <3.14"
 dependencies = [
     "bottleneck>=1.6.0",
-    "glmhmmt==0.2.1",
+    "glmhmmt==0.2.2",
     "marimo==0.23.2",
     "marimo-toml-editor>=0.1.1",
     "numexpr>=2.14.1",

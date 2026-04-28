@@ -4,6 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +90,30 @@ class TestNuoAuditoryGlm(unittest.TestCase):
         self.assertEqual(X.shape, (2, 3))
         self.assertEqual(U.shape, (2, 0))
         self.assertEqual(names["X_cols"], ["bias", "bias_0", "stim_vals"])
+
+    def test_prepare_weight_family_plot_uses_task_defined_difficulty_levels(self) -> None:
+        adapter = NuoAuditoryAdapter()
+        weights_df = pl.DataFrame(
+            {
+                "subject": ["A", "A", "A", "A"],
+                "weight_row_idx": [0, 1, 0, 1],
+                "feature": [
+                    "difficulty_easy",
+                    "difficulty_easy",
+                    "difficulty_hard",
+                    "difficulty_hard",
+                ],
+                "weight": [0.75, 9.0, -0.25, 7.0],
+            }
+        )
+
+        prepared = adapter.prepare_weight_family_plot(weights_df, "difficulty_hot")
+
+        self.assertIsNotNone(prepared)
+        self.assertEqual(prepared.x_order, ("easy", "hard"))
+        data = prepared.data.sort_values("x_label").reset_index(drop=True)
+        self.assertEqual(data["x_label"].tolist(), ["easy", "hard"])
+        np.testing.assert_allclose(data["weight"].to_numpy(), [0.75, -0.25])
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 import types
-from typing import List, Tuple, Dict, Any
+from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -38,13 +38,16 @@ except ImportError:
         return result
     
 from src.process.common import (
+    PreparedWeightFamilyPlot,
     attach_quantile_bin_column,
     attach_response_right_column,
     display_regressor_name,
     mean_glm_feature_curve as _mean_glm_feature_curve,
     mean_glm_ild_curve as _mean_glm_ild_curve,
     p_right_label,
+    prepare_grouped_weight_family_plot,
     prepare_simple_regressor_curve,
+    resolve_grouping,
     summarize_grouped_panel,
     subject_glm_feature_curves as _subject_glm_feature_curves,
     subject_glm_ild_curves as _subject_glm_ild_curves,
@@ -338,21 +341,29 @@ def _stim_param_weight_map() -> dict[int, float]:
     }
 
 
-def _build_stim_param(part: pd.DataFrame, stim_abs_levels: list[int]) -> np.ndarray:
+def _build_stim_param_from_spec(
+    part: pd.DataFrame,
+    stim_abs_levels: list[int],
+    spec: FittedWeightRegressorSpec,
+) -> np.ndarray:
     """Return the pooled one-hot stimulus contribution for each trial."""
     required_features = {
         f"{_STIM_ABS_COL_PREFIX}{stim_abs}"
         for stim_abs in stim_abs_levels
         if stim_abs != 0
     }
-    source_features = set(resolved_source_features(_STIM_PARAM_SPEC))
+    source_features = set(resolved_source_features(spec))
     missing = sorted(required_features - source_features)
     if missing:
         raise ValueError(
             "stim_param is missing pooled weights for absolute ILD levels "
             f"{missing}. Available fitted features: {sorted(source_features)}"
         )
-    return weighted_sum_regressor(part, _STIM_PARAM_SPEC, dtype=np.float32)
+    return weighted_sum_regressor(part, spec, dtype=np.float32)
+
+
+def _build_stim_param(part: pd.DataFrame, stim_abs_levels: list[int]) -> np.ndarray:
+    return _build_stim_param_from_spec(part, stim_abs_levels, _STIM_PARAM_SPEC)
 
 PRED_COL = "p_pred"
 RESPONSE_MODE = "pm1_or_prob"
@@ -538,6 +549,27 @@ def prepare_binned_accuracy_figure(
 
     panels: list[dict] = []
 
+    def _subject_summary(*, subgroup_col: str | None = None, subgroup_value=None) -> pd.DataFrame:
+        plot_df = df_pd.copy()
+        if subgroup_col is not None:
+            plot_df = plot_df[plot_df[subgroup_col] == subgroup_value].copy()
+        plot_df = plot_df[
+            plot_df["_reg_bin"].notna()
+            & plot_df["ILD"].notna()
+            & plot_df["_reg_bin"].isin(reg_bin_labels)
+        ].copy()
+        if plot_df.empty:
+            return pd.DataFrame()
+        return (
+            plot_df.groupby(["_reg_bin", "subject", "ILD"], observed=True)
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=(PRED_COL, "mean"),
+                n_trials=("_response_right", "count"),
+            )
+            .reset_index()
+        )
+
     panels.append(
         {
             "summary": summarize_grouped_panel(
@@ -549,6 +581,7 @@ def prepare_binned_accuracy_figure(
                 model_col=PRED_COL,
                 line_order=reg_bin_labels,
             ),
+            "subject_summary": _subject_summary(),
             "meta": {
                 "xlabel": "ILD (dB)",
                 "ylabel": p_right_label(),
@@ -571,6 +604,10 @@ def prepare_binned_accuracy_figure(
                     data_col="_response_right",
                     model_col=PRED_COL,
                     line_order=reg_bin_labels,
+                    subgroup_col="condition",
+                    subgroup_value=cond,
+                ),
+                "subject_summary": _subject_summary(
                     subgroup_col="condition",
                     subgroup_value=cond,
                 ),
@@ -599,6 +636,10 @@ def prepare_binned_accuracy_figure(
                     subgroup_col="experiment",
                     subgroup_value=exp,
                 ),
+                "subject_summary": _subject_summary(
+                    subgroup_col="experiment",
+                    subgroup_value=exp,
+                ),
                 "meta": {
                     "xlabel": "ILD (dB)",
                     "ylabel": p_right_label(),
@@ -619,11 +660,18 @@ def prepare_right_by_regressor(
     regressor_col: str,
     xlabel: str | None = None,
     n_bins: int = 10,
+    group_col: str | None = None,
+    group_order: Sequence | None = None,
 ):
     df_pd = to_pandas_df(trial_df)
     required = {regressor_col, "response", PRED_COL, "subject", "ILD"}
     if not required.issubset(df_pd.columns):
         return None, None
+    resolved_group_col, resolved_group_order = resolve_grouping(
+        df_pd,
+        group_col=group_col,
+        group_order=group_order,
+    )
 
     df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
     df_pd[PRED_COL] = pd.to_numeric(df_pd[PRED_COL], errors="coerce")
@@ -651,16 +699,52 @@ def prepare_right_by_regressor(
 
     ild_order = sorted(df_pd["ILD"].dropna().unique().tolist())
 
-    summary = summarize_grouped_panel(
-        df_pd,
-        line_group_col="ILD",
-        x_col="_reg_bin",
-        subject_col="subject",
-        data_col="_response_right",
-        model_col=PRED_COL,
-        line_order=ild_order,
-        x_order=bin_order,
-    )
+    if resolved_group_col is None:
+        summary = summarize_grouped_panel(
+            df_pd,
+            line_group_col="ILD",
+            x_col="_reg_bin",
+            subject_col="subject",
+            data_col="_response_right",
+            model_col=PRED_COL,
+            line_order=ild_order,
+            x_order=bin_order,
+        )
+        line_group_col = "ILD"
+        line_order = ild_order
+        legend_title = "Signed ILD"
+    else:
+        df_pd = df_pd[df_pd[resolved_group_col].notna()].copy()
+        df_pd = df_pd[df_pd[resolved_group_col].isin(resolved_group_order)].copy()
+        subj = (
+            df_pd.groupby(["subject", resolved_group_col, "_reg_bin"], observed=True)
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=(PRED_COL, "mean"),
+            )
+            .reset_index()
+        )
+        summary = (
+            subj.groupby([resolved_group_col, "_reg_bin"], observed=True)
+            .agg(
+                md=("data_mean", "mean"),
+                sd=("data_mean", "std"),
+                nd=("data_mean", "count"),
+                mm=("model_mean", "mean"),
+            )
+            .reset_index()
+        )
+        summary["sem"] = summary["sd"].fillna(0.0) / np.sqrt(summary["nd"].clip(lower=1))
+        summary[resolved_group_col] = pd.Categorical(
+            summary[resolved_group_col],
+            categories=resolved_group_order,
+            ordered=True,
+        )
+        summary["_reg_bin"] = pd.Categorical(summary["_reg_bin"], categories=bin_order, ordered=True)
+        summary = summary.sort_values([resolved_group_col, "_reg_bin"])
+        line_group_col = resolved_group_col
+        line_order = resolved_group_order
+        legend_title = resolved_group_col
     if summary.empty:
         return None, None
 
@@ -669,9 +753,10 @@ def prepare_right_by_regressor(
     meta = {
         "xlabel": xlabel or display_regressor_name(regressor_col),
         "ylabel": p_right_label(),
-        "legend_title": "Signed ILD",
+        "legend_title": legend_title,
         "baseline": BASELINE,
-        "line_order": ild_order,
+        "line_group_col": line_group_col,
+        "line_order": line_order,
         "legend_outside": True,
     }
     return summary, meta
@@ -692,6 +777,11 @@ class TwoAFCAdapter(TaskAdapter):
     # per-session concatenation order used during fitting.
     sort_col         = ["Session", "Trial"]
     session_col: str = "Session"
+    emission_cols: list[str] = EMISSION_COLS
+    transition_cols: list[str] = TRANSITION_COLS
+    stim_param_spec: FittedWeightRegressorSpec = _STIM_PARAM_SPEC
+    bias_param_spec: FittedWeightRegressorSpec = _BIAS_PARAM_SPEC
+    at_choice_param_spec: FittedWeightRegressorSpec = _AT_CHOICE_PARAM_SPEC
 
     # ── state-scoring options ────────────────────────────────────────────────
     # For 2AFC the weight matrix is (K, 1, M) where W[k,0,:] is the
@@ -719,6 +809,38 @@ class TwoAFCAdapter(TaskAdapter):
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
         return df.filter(pl.col("Experiment").is_in(_KEEP_EXPERIMENTS))
 
+    def condition_filter_options(self) -> list[str]:
+        return ["all"]
+
+    def filter_condition_df(
+        self,
+        df: pl.DataFrame | pd.DataFrame,
+        condition_filter: str = "all",
+    ) -> pl.DataFrame | pd.DataFrame:
+        selected = str(condition_filter or "all").strip().lower()
+        if selected in {"all", ""}:
+            return df
+        raise ValueError(
+            f"Unknown 2AFC condition filter {condition_filter!r}. "
+            "Expected one of: all."
+        )
+
+    def _emission_cols(self) -> list[str]:
+        return list(self.emission_cols)
+
+    def _transition_cols(self) -> list[str]:
+        return list(self.transition_cols)
+
+    def _build_stim_param(self, part: pd.DataFrame, stim_abs_levels: list[int]) -> np.ndarray:
+        return _build_stim_param_from_spec(part, stim_abs_levels, self.stim_param_spec)
+
+    def choice_half_life(self, subject: str | None) -> float | None:
+        return load_subject_choice_half_life(
+            task_key=self.task_key,
+            fit_model_id=_RAW_PARAM_MODEL_ID,
+            subject=subject,
+        )
+
     def _build_feature_df(
         self,
         df_sub: pl.DataFrame,
@@ -735,10 +857,8 @@ class TwoAFCAdapter(TaskAdapter):
         df_pd = df_pd.sort_values(["Session", "Trial"]).reset_index(drop=True)
         if df_pd.empty:
             return pl.from_pandas(df_pd)
-        subject_half_life = load_subject_choice_half_life(
-            task_key=self.task_key,
-            fit_model_id=_RAW_PARAM_MODEL_ID,
-            subject=str(df_pd["subject"].iloc[0]) if "subject" in df_pd.columns and len(df_pd) else None,
+        subject_half_life = self.choice_half_life(
+            str(df_pd["subject"].iloc[0]) if "subject" in df_pd.columns and len(df_pd) else None
         )
 
         stim_scale = float(df_pd["ILD"].abs().max() or 0.0)
@@ -810,7 +930,7 @@ class TwoAFCAdapter(TaskAdapter):
                 axis=1,
             )
             if include_stim_param:
-                part[_STIM_PARAM_COL] = _build_stim_param(part, stim_abs_levels)
+                part[_STIM_PARAM_COL] = self._build_stim_param(part, stim_abs_levels)
 
             existing_sf_cols = [
                 c for c in part.columns if str(c).startswith(_SF_COL_PREFIX)
@@ -852,11 +972,11 @@ class TwoAFCAdapter(TaskAdapter):
             part = pd.concat([part, derived_cols], axis=1)
             if include_bias_param:
                 try:
-                    bias_param = weighted_sum_regressor(part, _BIAS_PARAM_SPEC, dtype=np.float32)
+                    bias_param = weighted_sum_regressor(part, self.bias_param_spec, dtype=np.float32)
                 except (FileNotFoundError, ValueError) as exc:
                     raise ValueError(
-                        f"Cannot build {_BIAS_PARAM_SPEC.target_name!r}; pooled fitted weights are unavailable "
-                        f"for {_BIAS_PARAM_SPEC.fit_task}/{_BIAS_PARAM_SPEC.fit_model_kind}/{_BIAS_PARAM_SPEC.fit_model_id}."
+                        f"Cannot build {self.bias_param_spec.target_name!r}; pooled fitted weights are unavailable "
+                        f"for {self.bias_param_spec.fit_task}/{self.bias_param_spec.fit_model_kind}/{self.bias_param_spec.fit_model_id}."
                     ) from exc
                 part = pd.concat(
                     [part, pd.DataFrame({"bias_param": bias_param}, index=part.index)],
@@ -864,11 +984,11 @@ class TwoAFCAdapter(TaskAdapter):
                 )
             if include_at_choice_param:
                 try:
-                    at_choice_param = weighted_sum_regressor(part, _AT_CHOICE_PARAM_SPEC, dtype=np.float32)
+                    at_choice_param = weighted_sum_regressor(part, self.at_choice_param_spec, dtype=np.float32)
                 except (FileNotFoundError, ValueError) as exc:
                     raise ValueError(
-                        f"Cannot build {_AT_CHOICE_PARAM_SPEC.target_name!r}; pooled fitted weights are unavailable "
-                        f"for {_AT_CHOICE_PARAM_SPEC.fit_task}/{_AT_CHOICE_PARAM_SPEC.fit_model_kind}/{_AT_CHOICE_PARAM_SPEC.fit_model_id}."
+                        f"Cannot build {self.at_choice_param_spec.target_name!r}; pooled fitted weights are unavailable "
+                        f"for {self.at_choice_param_spec.fit_task}/{self.at_choice_param_spec.fit_model_kind}/{self.at_choice_param_spec.fit_model_id}."
                     ) from exc
                 part = pd.concat(
                     [part, pd.DataFrame({"at_choice_param": at_choice_param}, index=part.index)],
@@ -905,7 +1025,7 @@ class TwoAFCAdapter(TaskAdapter):
                 if not dynamic_sf_cols:
                     raise ValueError(
                         "Requested emission col 'stim_strength', but no frame-level "
-                        f"'{_SF_COL_PREFIX}*' columns are available for 2AFC."
+                        f"'{_SF_COL_PREFIX}*' columns are available for {self.task_key}."
                     )
                 resolved.extend(dynamic_sf_cols)
             else:
@@ -953,12 +1073,13 @@ class TwoAFCAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(feature_df))
         ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        bad_u = [c for c in ucols if c not in TRANSITION_COLS]
+        allowed_ucols = self._transition_cols()
+        bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
         if bad_u:
             raise ValueError(
-                f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}"
+                f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
 
         y = jnp.asarray(feature_df["Choice"].to_numpy().astype(np.int32))
@@ -981,7 +1102,7 @@ class TwoAFCAdapter(TaskAdapter):
     def default_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
         default_cols = [
             c
-            for c in EMISSION_COLS
+            for c in self._emission_cols()
             if c not in {"stim_strength", _STIM_PARAM_COL, "bias_param", "at_choice_param"}
         ]
         if df is not None:
@@ -989,10 +1110,10 @@ class TwoAFCAdapter(TaskAdapter):
         return list(dict.fromkeys(default_cols))
 
     def default_transition_cols(self) -> List[str]:
-        return list(TRANSITION_COLS)
+        return self._transition_cols()
 
     def available_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        available_cols = list(EMISSION_COLS)
+        available_cols = self._emission_cols()
         if df is not None:
             available_cols.extend(self.sf_cols(df))
             available_cols.extend(self.stim_abs_cols(df))
@@ -1001,7 +1122,7 @@ class TwoAFCAdapter(TaskAdapter):
         return list(dict.fromkeys(available_cols))
 
     def available_transition_cols(self) -> List[str]:
-        return list(TRANSITION_COLS)
+        return self._transition_cols()
 
     def resolve_design_names(
         self,
@@ -1028,12 +1149,13 @@ class TwoAFCAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(df))
         resolved_ecols = _drop_unavailable_bias_hot_cols(resolved_ecols, allowed_ecols)
         bad_e = [c for c in resolved_ecols if c not in allowed_ecols]
-        bad_u = [c for c in requested_ucols if c not in TRANSITION_COLS]
+        allowed_ucols = self._transition_cols()
+        bad_u = [c for c in requested_ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(f"Unknown emission_cols: {bad_e}. Available: {sorted(allowed_ecols)}")
         if bad_u:
             raise ValueError(
-                f"Unknown transition_cols: {bad_u}. Available: {TRANSITION_COLS}"
+                f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
         return {"X_cols": list(resolved_ecols), "U_cols": list(requested_ucols)}
 
@@ -1056,6 +1178,59 @@ class TwoAFCAdapter(TaskAdapter):
             if existing:
                 return existing
         return _choice_lag_names()
+
+    def weight_family_specs(self, weights_df=None) -> Dict[str, dict]:
+        df = to_pandas_df(weights_df) if weights_df is not None else None
+        feature_names = [] if df is None or df.empty or "feature" not in df.columns else pd.unique(df["feature"].astype(str)).tolist()
+        stim_cols = _stim_abs_cols(feature_names)
+        choice_cols = _choice_lag_cols(feature_names)
+        bias_cols = _bias_hot_cols(feature_names)
+        return {
+            "stim_hot": {
+                "title": "stim_hot",
+                "xlabel": "stimulus level",
+                "plot_kind": "box",
+                "feature_groups": [(col.removeprefix(_STIM_ABS_COL_PREFIX), [col]) for col in stim_cols],
+            },
+            "choice_lag": {
+                "title": "choice_lag_*",
+                "xlabel": "Lag",
+                "plot_kind": "box",
+                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
+            },
+            "at_choice_lag": {
+                "title": "choice_lag_*",
+                "xlabel": "Lag",
+                "plot_kind": "box",
+                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
+            },
+            "bias_hot": {
+                "title": "bias_hot",
+                "xlabel": "Session index",
+                "plot_kind": "line",
+                "feature_groups": [(col.removeprefix(_BIAS_HOT_COL_PREFIX), [col]) for col in bias_cols],
+            },
+        }
+
+    def prepare_weight_family_plot(
+        self,
+        weights_df,
+        family_key: str,
+        *,
+        variant: str | None = None,
+    ) -> PreparedWeightFamilyPlot | None:
+        del variant
+        spec = self.weight_family_specs(weights_df).get(family_key)
+        if spec is None:
+            return None
+        return prepare_grouped_weight_family_plot(
+            weights_df,
+            feature_groups=spec["feature_groups"],
+            title=spec["title"],
+            xlabel=spec["xlabel"],
+            plot_kind=spec["plot_kind"],
+            weight_row_indices=(0,),
+        )
 
     def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_emission_groups(list(available_cols))

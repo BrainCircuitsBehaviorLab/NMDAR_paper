@@ -4,12 +4,14 @@ from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 import seaborn as sns
 
 from glmhmmt.plots import (
     custom_boxplot,
+    plot_feature_boxplot,
     plot_transition_matrix as _plot_transition_matrix,
     plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject,
     plot_weights_boxplot as _plot_weights_boxplot,
@@ -18,6 +20,12 @@ from glmhmmt.postprocess import (
     build_transition_matrix_by_subject_payload,
     build_transition_matrix_payload,
     build_weights_boxplot_payload,
+)
+from src.process.common import (
+    PreparedWeightFamilyPlot,
+    attach_quantile_bin_column,
+    display_regressor_name,
+    to_pandas_df,
 )
 
 
@@ -89,6 +97,98 @@ def plot_weights_boxplot(
     for ax in fig.axes:
         apply_axis_style(ax, **style)
     return fig
+
+
+def plot_prepared_weight_family(
+    prepared: PreparedWeightFamilyPlot | None,
+):
+    if prepared is None:
+        return None
+
+    df = to_pandas_df(prepared.data)
+    if df.empty:
+        return None
+
+    required = {"subject", "x_label", "weight"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(
+            "Prepared weight family data must contain 'subject', 'x_label', and 'weight'. "
+            f"Missing: {sorted(missing)}."
+        )
+
+    df = df.copy()
+    df["subject"] = df["subject"].astype(str)
+    df["x_label"] = df["x_label"].astype(str)
+    df["weight"] = pd.to_numeric(df["weight"], errors="coerce")
+    df = df.dropna(subset=["weight"])
+    if df.empty:
+        return None
+
+    x_order = list(prepared.x_order) if prepared.x_order is not None else pd.unique(df["x_label"]).tolist()
+    df = df[df["x_label"].isin(x_order)].copy()
+    if df.empty:
+        return None
+
+    if prepared.plot_kind == "line":
+        summary = (
+            df.groupby("x_label", as_index=False, observed=False)["weight"]
+            .mean()
+        )
+        summary["x_label"] = pd.Categorical(summary["x_label"], categories=x_order, ordered=True)
+        summary = summary.sort_values("x_label")
+        if summary.empty:
+            return None
+
+        positions = np.arange(len(summary))
+        fig, ax = plt.subplots(figsize=(max(5.0, 0.8 * len(summary)), 4.0))
+        ax.plot(
+            positions,
+            summary["weight"],
+            color="#1f77b4",
+            marker="o",
+            linewidth=2.0,
+            markersize=6,
+        )
+        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.set_title(prepared.title)
+        ax.set_xlabel(prepared.xlabel)
+        ax.set_ylabel(prepared.ylabel)
+        ax.set_xticks(positions)
+        ax.set_xticklabels(summary["x_label"].astype(str).tolist())
+        sns.despine(ax=ax)
+        fig.tight_layout()
+        return fig
+
+    subject_order = pd.unique(df["subject"]).tolist()
+    per_feature_values: list[np.ndarray] = []
+    subject_lines = np.full((len(subject_order), len(x_order)), np.nan, dtype=float)
+
+    for feature_idx, x_label in enumerate(x_order):
+        feature_df = df[df["x_label"] == x_label].copy()
+        if feature_df.empty:
+            per_feature_values.append(np.asarray([], dtype=float))
+            continue
+        by_subject = (
+            feature_df.groupby("subject", observed=False)["weight"]
+            .mean()
+            .reindex(subject_order)
+        )
+        subject_lines[:, feature_idx] = by_subject.to_numpy(dtype=float)
+        per_feature_values.append(by_subject.dropna().to_numpy(dtype=float))
+
+    if not any(values.size for values in per_feature_values):
+        return None
+
+    return plot_feature_boxplot(
+        per_feature_values,
+        x_order,
+        subject_lines=subject_lines,
+        figsize=(max(5.0, 0.8 * len(x_order)), 4.0),
+        title=prepared.title,
+        xlabel=prepared.xlabel,
+        ylabel=prepared.ylabel,
+    )
 
 
 def plot_transition_matrix(
@@ -325,7 +425,10 @@ def add_shared_figure_legend(
     source_ax,
     title: str | None = None,
     bbox_x: float = 0.94,
+    legend: bool = True,
 ) -> None:
+    if not legend:
+        return
     handles, labels = source_ax.get_legend_handles_labels()
     if not handles:
         return
@@ -341,6 +444,179 @@ def add_shared_figure_legend(
         labelspacing=0.35,
         handlelength=2.0,
     )
+
+
+def _axes_from_plot_result(result):
+    if isinstance(result, tuple):
+        for item in result:
+            if isinstance(item, plt.Axes):
+                return item.figure, np.asarray([item], dtype=object)
+            if isinstance(item, (list, tuple, np.ndarray)):
+                axes = [ax for ax in np.asarray(item, dtype=object).ravel() if isinstance(ax, plt.Axes)]
+                if axes:
+                    return axes[0].figure, np.asarray(axes, dtype=object)
+            if isinstance(item, plt.Figure):
+                return item, np.asarray(item.axes, dtype=object)
+    if isinstance(result, plt.Axes):
+        return result.figure, np.asarray([result], dtype=object)
+    if isinstance(result, plt.Figure):
+        return result, np.asarray(result.axes, dtype=object)
+    raise TypeError("Could not resolve matplotlib axes from plot result.")
+
+
+def _axis_artist_snapshot(axes) -> dict[int, dict[str, set]]:
+    return {
+        id(ax): {
+            "lines": set(ax.lines),
+            "collections": set(ax.collections),
+            "patches": set(ax.patches),
+        }
+        for ax in np.asarray(axes, dtype=object).ravel()
+        if isinstance(ax, plt.Axes)
+    }
+
+
+def _style_axis_artists(ax, *, before: dict[str, set] | None, style: dict) -> None:
+    color = style.get("color")
+    linestyle = style.get("linestyle")
+    linewidth = style.get("linewidth")
+    alpha = style.get("alpha")
+    marker = style.get("marker")
+
+    new_lines = list(ax.lines) if before is None else [artist for artist in ax.lines if artist not in before["lines"]]
+    for line in new_lines:
+        if color is not None:
+            line.set_color(color)
+            line.set_markerfacecolor(color)
+            line.set_markeredgecolor(color)
+        if linestyle is not None and line.get_linestyle() not in {"None", "", " "}:
+            line.set_linestyle(linestyle)
+        if linewidth is not None:
+            line.set_linewidth(linewidth)
+        if alpha is not None:
+            line.set_alpha(alpha)
+        if marker is not None and line.get_marker() not in {None, "None", "", " "}:
+            line.set_marker(marker)
+
+    new_collections = (
+        list(ax.collections)
+        if before is None
+        else [artist for artist in ax.collections if artist not in before["collections"]]
+    )
+    for collection in new_collections:
+        if color is not None:
+            try:
+                collection.set_edgecolor(color)
+                collection.set_facecolor(color)
+            except Exception:
+                pass
+        if alpha is not None:
+            collection.set_alpha(alpha)
+
+    new_patches = list(ax.patches) if before is None else [artist for artist in ax.patches if artist not in before["patches"]]
+    for patch in new_patches:
+        if color is not None:
+            patch.set_edgecolor(color)
+            patch.set_facecolor(color)
+        if alpha is not None:
+            patch.set_alpha(alpha)
+
+
+def overlay_plot_by_group(
+    plot_fn,
+    df_like,
+    *,
+    group_col: str,
+    group_order: list | None = None,
+    group_labels: dict | None = None,
+    group_styles: dict | None = None,
+    use_default_colors: bool = True,
+    plot_kwargs: dict | None = None,
+    axes_kwarg: str = "axes",
+    legend_title: str | None = None,
+    legend_loc: str = "upper right",
+):
+    """Call an existing axes-aware plot once per group and overlay the result.
+
+    This keeps task plots unchanged: the wrapper filters the dataframe, reuses
+    the axes from the first call, and styles only the artists added by each
+    subsequent call.
+    """
+    df = to_pandas_df(df_like)
+    if group_col not in df.columns:
+        raise ValueError(f"Missing group column {group_col!r}.")
+    df = df[df[group_col].notna()].copy()
+    if df.empty:
+        return None, []
+
+    if group_order is None:
+        group_order = list(pd.unique(df[group_col]))
+    if group_labels is None:
+        group_labels = {}
+
+    default_colors = sns.color_palette("tab10", n_colors=max(1, len(group_order)))
+    default_styles = {}
+    for idx, value in enumerate(group_order):
+        style = {"linestyle": "-"}
+        if use_default_colors:
+            style["color"] = default_colors[idx]
+        default_styles[value] = style
+    if group_styles is not None:
+        for value, style in group_styles.items():
+            default_styles.setdefault(value, {}).update(style)
+
+    fig = None
+    axes = None
+    base_kwargs = dict(plot_kwargs or {})
+
+    for group_value in group_order:
+        sub = df[df[group_col] == group_value].copy()
+        if sub.empty:
+            continue
+
+        kwargs = dict(base_kwargs)
+        before = None
+        if axes is not None:
+            kwargs[axes_kwarg] = axes[0] if axes_kwarg == "ax" else axes
+            before = _axis_artist_snapshot(axes)
+
+        result = plot_fn(sub, **kwargs)
+        if result is None:
+            continue
+        fig, axes = _axes_from_plot_result(result)
+        style = default_styles.get(group_value, {})
+
+        for ax in np.asarray(axes, dtype=object).ravel():
+            if not isinstance(ax, plt.Axes):
+                continue
+            _style_axis_artists(
+                ax,
+                before=None if before is None else before.get(id(ax)),
+                style=style,
+            )
+            if ax.legend_ is not None:
+                ax.legend_.remove()
+
+    if fig is None or axes is None:
+        return None, []
+
+    handles = []
+    for group_value in group_order:
+        style = default_styles.get(group_value, {})
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                color=style.get("color", "black"),
+                linestyle=style.get("linestyle", "-"),
+                linewidth=style.get("linewidth", 2.0),
+                marker=style.get("marker", None),
+                label=group_labels.get(group_value, str(group_value)),
+            )
+        )
+    fig.legend(handles=handles, title=legend_title, loc=legend_loc, frameon=False)
+    fig.tight_layout()
+    return fig, axes
 
 
 def centered_numeric_group_palette(group_order: list) -> dict:
@@ -383,6 +659,7 @@ def plot_simple_summary(
     meta,
     ax: plt.Axes | None = None,
     figsize=(3.0, 3.0),
+    legend: bool = True,
     **style,
 ):
     if summary_df is None or summary_df.empty:
@@ -429,7 +706,10 @@ def plot_simple_summary(
     ax.axvline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
 
     _apply_summary_axis_style(ax, meta=meta, **style)
-    ax.legend(frameon=False, fontsize=8)
+    if legend:
+        ax.legend(frameon=False, fontsize=8)
+    elif ax.legend_ is not None:
+        ax.legend_.remove()
     return ax
 
 
@@ -442,6 +722,7 @@ def plot_grouped_summary(
     meta,
     label_map: dict | None = None,
     palette: dict | None = None,
+    legend: bool = True,
     **style,
 ):
     if summary_df is None or summary_df.empty:
@@ -471,7 +752,12 @@ def plot_grouped_summary(
         )
 
         if meta.get("categorical_x", False):
-            xpos = np.arange(len(sub), dtype=float)
+            x_order = meta.get("x_order")
+            if x_order is not None:
+                x_pos_map = {str(value): idx for idx, value in enumerate(x_order)}
+                xpos = sub[x_col].astype(str).map(x_pos_map).to_numpy(dtype=float)
+            else:
+                xpos = np.arange(len(sub), dtype=float)
         else:
             xpos = sub[x_col].to_numpy(dtype=float)
 
@@ -519,7 +805,136 @@ def plot_grouped_summary(
                 "handlelength": 2.0,
             }
         )
-    ax.legend(**legend_kwargs)
+    if legend:
+        ax.legend(**legend_kwargs)
+    elif ax.legend_ is not None:
+        ax.legend_.remove()
+    return ax
+
+
+def _summarize_regressor_by_regressor_magnitude(
+    df: pd.DataFrame,
+    *,
+    x_axis: str,
+    y_axis: str,
+    subject_col: str,
+    n_bins: int,
+    use_abs_x: bool,
+) -> pd.DataFrame | None:
+    required = {x_axis, y_axis, subject_col}
+    if not required.issubset(df.columns):
+        return None
+
+    df = df.copy()
+    df[x_axis] = pd.to_numeric(df[x_axis], errors="coerce")
+    df[y_axis] = pd.to_numeric(df[y_axis], errors="coerce")
+    df["_x_magnitude"] = np.abs(df[x_axis]) if use_abs_x else df[x_axis]
+    df = df[np.isfinite(df["_x_magnitude"]) & np.isfinite(df[y_axis])].copy()
+    if df.empty:
+        return None
+
+    df, centers = attach_quantile_bin_column(
+        df,
+        value_col="_x_magnitude",
+        bin_col="_x_bin",
+        max_bins=n_bins,
+        center_col="x_center",
+        center_agg="median",
+    )
+    if df is None or centers.empty:
+        return None
+
+    subject_summary = (
+        df.groupby([subject_col, "_x_bin"], observed=True)
+        .agg(y_mean=(y_axis, "mean"))
+        .reset_index()
+        .merge(centers[["_x_bin", "x_center"]], on="_x_bin", how="left")
+    )
+    if subject_summary.empty:
+        return None
+
+    summary = (
+        subject_summary.groupby("_x_bin", observed=True)
+        .agg(
+            x_center=("x_center", "mean"),
+            y_mean=("y_mean", "mean"),
+            y_std=("y_mean", "std"),
+            n_subjects=(subject_col, "count"),
+        )
+        .reset_index()
+        .sort_values("x_center")
+    )
+    summary["y_sem"] = summary["y_std"].fillna(0.0) / np.sqrt(summary["n_subjects"].clip(lower=1))
+    return summary
+
+
+def plot_regressor_net_impact(
+    plot_df,
+    *,
+    x_axis: str,
+    y_axis: str,
+    subject_col: str = "subject",
+    n_bins: int = 6,
+    use_abs_x: bool = True,
+    ax: plt.Axes | None = None,
+    axes: Sequence[plt.Axes] | None = None,
+    figsize=(3.4, 3.0),
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    color: str = "#2b7bba",
+    **style,
+):
+    """Plot one regressor's value across bins of another regressor's magnitude."""
+    if axes is not None:
+        axes = np.asarray(axes, dtype=object).ravel()
+        if len(axes) == 0:
+            raise ValueError("Expected at least one axis in `axes`.")
+        ax = axes[0]
+    fig, ax = resolve_single_axis(ax=ax, figsize=figsize)
+
+    df = to_pandas_df(plot_df)
+    summary = _summarize_regressor_by_regressor_magnitude(
+        df,
+        x_axis=x_axis,
+        y_axis=y_axis,
+        subject_col=subject_col,
+        n_bins=n_bins,
+        use_abs_x=use_abs_x,
+    )
+    if summary is None or summary.empty:
+        ax.text(0.5, 0.5, "No valid regressor data", ha="center", va="center", transform=ax.transAxes)
+        ax.axis("off")
+        apply_axis_style(ax, **style)
+        return ax
+
+    x = summary["x_center"].to_numpy(dtype=float)
+    y_mean = summary["y_mean"].to_numpy(dtype=float)
+    y_sem = summary["y_sem"].to_numpy(dtype=float)
+
+    ax.axhline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
+    ax.errorbar(
+        x,
+        y_mean,
+        yerr=y_sem,
+        fmt="o-",
+        color=color,
+        ecolor=color,
+        elinewidth=1.0,
+        linewidth=2.0,
+        markersize=5,
+        capsize=3,
+        zorder=3,
+    )
+
+    x_label = display_regressor_name(x_axis)
+    y_label = display_regressor_name(y_axis)
+    ax.set_xlabel(xlabel or (f"|{x_label}|" if use_abs_x else x_label))
+    ax.set_ylabel(ylabel or y_label)
+    if title is not None:
+        ax.set_title(title)
+    sns.despine(ax=ax)
+    apply_axis_style(ax, **style)
     return ax
 
 
@@ -646,8 +1061,10 @@ __all__ = [
     "custom_boxplot",
     "make_single_panel_figure",
     "plot_empirical_accuracy_curve",
+    "plot_prepared_weight_family",
     "plot_grouped_summary",
     "plot_integration_map_panels",
+    "plot_regressor_net_impact",
     "plot_simple_summary",
     "plot_transition_matrix",
     "plot_transition_matrix_by_subject",
