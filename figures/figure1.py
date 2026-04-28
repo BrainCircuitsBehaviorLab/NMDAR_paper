@@ -1,3 +1,9 @@
+# /// script
+# [tool.marimo.opengraph]
+# title = "Figure 1" 
+# description = " Figure 1: Behavioral performance across tasks."
+# ///
+
 import marimo
 
 __generated_with = "0.23.2"
@@ -23,10 +29,11 @@ def _():
 
 
 @app.cell
-def _(sns):
+def _(Path, plt, sns):
     # Set style
     sns.set_theme(style='ticks', context='notebook')
     # style_path = os.path.expanduser('~/PycharmProjects/alexis_style.mplstyle')
+    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
     # plt.style.use(style_path)
     return
 
@@ -62,7 +69,8 @@ def _(get_adapter):
 def _(MCDR, data_path, pl, two_afc, two_afc_delay):
     df_2AFC = two_afc.subject_filter(pl.read_parquet(data_path / "alexis_combined.parquet"))
     df_2AFC_delay = two_afc_delay.subject_filter(pl.read_parquet(data_path / "tiffany.parquet"))
-    df_MCDR = MCDR.subject_filter(pl.read_parquet(data_path / "df_filtered.parquet"))
+    df_MCDR = MCDR.subject_filter(pl.read_parquet(data_path / "MCDR_all.parquet"))
+    # df_MCDR = df_MCDR.filter(pl.col("batch") == "11B")
     return df_2AFC, df_2AFC_delay, df_MCDR
 
 
@@ -117,6 +125,18 @@ def _(MCDR_plots, df_MCDR, fig_size, plt):
     MCDR_plots.plot_rb(df_MCDR, figsize=fig_size(n_cols=3), title='')
     plt.savefig('MCDR_rb.svg')
     plt.show()
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+
+
     return
 
 

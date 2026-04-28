@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.22.5"
+__generated_with = "0.23.2"
 app = marimo.App()
 
 
@@ -33,7 +33,7 @@ def _():
 @app.cell
 def _(paths, pd):
     paths.show_paths()  # Verificar que las rutas se han configurado correctamente
-    all_df = pd.read_csv(paths.DATA_PATH/"MCDR_all.csv", sep = ";")
+    all_df = pd.read_csv("./data/raw/MCDR_all.csv", sep = ";")
     # df.to_parquet(paths.DATA_PATH/"MCDR_all.parquet")
     all_df
     return (all_df,)
@@ -80,6 +80,27 @@ def _(all_df, np, pd):
 
 
 @app.cell
+def _(df):
+    filtered_df = df.copy()
+    filtered_df['timepoint_1'] = filtered_df['STATE_Fixation2_START'] - filtered_df['STATE_Fixation1_START_last']
+    filtered_df['timepoint_2'] = filtered_df['STATE_Fixation3_START'] - filtered_df['STATE_Fixation1_START_last']
+    filtered_df['timepoint_3'] = filtered_df['STATE_Response_window_START'] - filtered_df['STATE_Fixation1_START_last']
+    filtered_df['timepoint_4'] = filtered_df['response_time_first'] - filtered_df['STATE_Fixation1_START_last']
+    filtered_df
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
 def _(df, pd):
     n_nan_original = df["bias_prob"].isna().sum()
     converted = pd.to_numeric(df["bias_prob"], errors="coerce")
@@ -103,22 +124,85 @@ def _(df):
 
 
 @app.cell
-def _(df, paths, pd):
-    to_plot= df.loc[((df['valids']==1) & (df['manipulation']==0) &(df['training_stage']=='DataCollection') & (df['stim_dur_dl'] == 0) | (df['stim_dur_dl'].isna()))] # Remove weird & 
+def _(df, np, paths, pd):
+    to_plot_mask = (
+        (df['valids'] == 1)
+        & (df['manipulation'] == 0)
+        & (df['training_stage'] == 'DataCollection')
+        & ((df['stim_dur_dl'] == 0) | (df['stim_dur_dl'].isna()))
+    )
+    to_plot = df.loc[to_plot_mask].copy()
     to_plot['trial_length'] = pd.to_numeric(to_plot['trial_length'], errors='coerce')
     to_plot['stim_d'] = to_plot['trial_length'] - to_plot['delay_abs']
-    to_plot = to_plot[to_plot["misses"] == 0]
+    to_plot = to_plot[to_plot["misses"] == 0].copy()
     to_plot['delay_d'] = to_plot['delay_abs']
-    response_code = {'L': 0, 'C': 1, 'R': 2}
-    to_plot['response'] = to_plot['r_c'].map(response_code)
-    to_plot['stimulus'] = to_plot['x_c'].map(response_code)
+    to_plot['timepoint_1'] = to_plot['STATE_Fixation2_START'] - to_plot['STATE_Fixation1_START_last']
+    to_plot['timepoint_2'] = to_plot['STATE_Fixation3_START'] - to_plot['STATE_Fixation1_START_last']
+    to_plot['timepoint_3'] = to_plot['STATE_Response_window_START'] - to_plot['STATE_Fixation1_START_last']
+    to_plot['timepoint_4'] = to_plot['response_time_first'] - to_plot['STATE_Fixation1_START_last']
+
+    stim_map  = {'SIL':0,'SS':1,'SM':2,'SL':3,'VG':4}
+    side_map  = {'L':0,'C':1,'R':2,'SIL':3}
+    resp_map  = {'L':0,'C':1,'R':2}
+    delay_map = {'VG':0,'DS':1,'DM':2, "DL" : 3}
+
+    stim_c = to_plot["stimd_c"].astype("string").str.strip().str.upper().fillna("")
+    ttype_c = to_plot["ttype_c"].astype("string").str.strip().str.upper().fillna("DS")
+    to_plot["stimd_code"] = stim_c.map(stim_map).astype("Int8")
+    to_plot["delay_code"] = ttype_c.map(delay_map).astype("Int8")
+    stim_code = to_plot["stimd_code"]
+    delay_code = to_plot["delay_code"]
+    as_bool_array = lambda condition: condition.fillna(False).to_numpy(dtype=bool)
+    tp1 = to_plot["timepoint_1"]
+    tp2 = to_plot["timepoint_2"]
+    tp3 = to_plot["timepoint_3"]
+    tp4 = to_plot["timepoint_4"]
+
+    onset_conditions = [
+        as_bool_array(stim_code == stim_map["VG"]),
+        as_bool_array((stim_code == stim_map["SS"]) & (delay_code == delay_map["DS"])),
+        as_bool_array((stim_code == stim_map["SS"]) & (delay_code == delay_map["DM"])),
+        as_bool_array((stim_code == stim_map["SS"]) & (delay_code == delay_map["DL"])),
+        as_bool_array((stim_code == stim_map["SM"]) & (delay_code == delay_map["DS"])),
+        as_bool_array((stim_code == stim_map["SM"]) & (delay_code != delay_map["DS"])),
+        as_bool_array(stim_code == stim_map["SL"]),
+        as_bool_array(stim_code == stim_map["SIL"]),
+    ]
+
+    to_plot["onset"] = np.select(
+        onset_conditions,
+        [0.0, tp2, tp1, 0.0, tp1, 0.0, 0.0, 0.0],
+        default=np.nan,
+    )
+    to_plot["offset"] = np.select(
+        onset_conditions,
+        [tp4, tp3, tp2, tp1, tp3, tp2, tp3, 0.0],
+        default=np.nan,
+    )
+
+    to_plot['response'] = to_plot['r_c'].map(resp_map)
+    to_plot['stimulus'] = to_plot['x_c'].map(side_map)
     to_plot.sort_values(['subject', 'session', 'trial', 'date'], inplace=True)
     to_plot['trial_idx'] = to_plot.groupby(['subject']).cumcount()
-    to_plot = to_plot[['subject', 'batch', 'trial', 'session', 'date', 'x_c', 'r_c', 'ttype_n', 'stimd_n', 'performance', 'bias_prob']]
+    to_plot = to_plot[[
+        'subject', 'batch', 'trial', 'session', 'date', 'x_c', 'r_c',
+        'ttype_n', 'ttype_c', 'delay_code', 'stimd_n', 'stimd_c', 'stimd_code', 'performance', 'bias_prob',
+        'trial_idx', 'trial_length', 'delay_abs', 'stim_d', 'delay_d',
+        'response', 'stimulus',
+        'timepoint_1', 'timepoint_2', 'timepoint_3', 'timepoint_4',
+        'onset', 'offset',
+    ]]
     to_plot = to_plot[to_plot["batch"].isin(["3B", "11B"])]
     to_plot.to_parquet(paths.DATA_PATH / "MCDR_all.parquet")
     to_plot.to_csv(paths.DATA_PATH / "MCDR_bad.csv")
+    to_plot
     return (to_plot,)
+
+
+@app.cell
+def _(to_plot):
+    to_plot[["stimd_c", "ttype_c", "timepoint_1", "timepoint_2", "timepoint_3", "timepoint_4", "onset", "offset"]]
+    return
 
 
 @app.cell

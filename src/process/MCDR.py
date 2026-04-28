@@ -327,7 +327,8 @@ def _infer_bias_hot_cols_from_df(df: pl.DataFrame) -> list[str]:
 
 @lru_cache(maxsize=1)
 def _max_subject_sessions() -> int:
-    dataset_path = get_data_dir() / "df_filtered.parquet"
+    # dataset_path = get_data_dir() / "df_filtered.parquet"
+    dataset_path = get_data_dir() / "MCDR_all.parquet"
     df = pl.read_parquet(dataset_path)
     df = df.filter(pl.col("subject") != "A84")
     return int(
@@ -639,6 +640,7 @@ def prepare_binned_accuracy_figure(
                 "ylabel":"Accuracy",
                 "legend_title":display_regressor_name(regressor_col),
                 "baseline":BASELINE,
+                "x_col":"ttype_c",
                 "x_order":list(cfg["plots"]["ttype"]["order"]),
                 "x_tick_labels":list(cfg["plots"]["ttype"]["labels"]),
                 "categorical_x":True,
@@ -664,6 +666,7 @@ def prepare_binned_accuracy_figure(
                 "ylabel":"Accuracy",
                 "legend_title":display_regressor_name(regressor_col),
                 "baseline":BASELINE,
+                "x_col":"stimd_c",
                 "x_order":list(cfg["plots"]["stimd"]["order"]),
                 "x_tick_labels":list(cfg["plots"]["stimd"]["labels"]),
                 "categorical_x":True,
@@ -689,6 +692,7 @@ def prepare_binned_accuracy_figure(
                 "ylabel":"Accuracy",
                 "legend_title":display_regressor_name(regressor_col),
                 "baseline":BASELINE,
+                "x_col":"ttype_c",
                 "x_order":list(cfg["plots"]["delay"]["order"]),
                 "x_tick_labels":list(cfg["plots"]["delay"]["labels"]),
                 "categorical_x":True,
@@ -1032,7 +1036,7 @@ class MCDRAdapter(TaskAdapter):
     task_label: str  = "MCDR"
     num_classes: int = 3
     baseline_class_idx: int = 1
-    data_file: str   = "df_filtered.parquet"
+    data_file: str   = "MCDR_all.parquet"
     sort_col: str    = "trial_idx"
     session_col: str = "session"
     prediction_col: str = PRED_COL

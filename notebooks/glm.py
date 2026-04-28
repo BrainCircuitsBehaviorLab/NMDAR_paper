@@ -68,7 +68,6 @@ def _():
     plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
 
     paths = get_runtime_paths()
-
     return (
         CoefficientEditorWidget,
         ModelCfg,
@@ -997,29 +996,29 @@ def _(
 
 
 @app.cell
-def _(adapter, mo, plot_df_all, plots, save_plot, views_sel):
-    _fig_total_evidence = plots.plot_accuracy_by_total_evidence(
-        plot_df_all,
-        adapter=adapter,
-        views=views_sel,
-    )
+def _(mo, plot_df_all, plots, save_plot, views_sel):
+    # _fig_total_evidence = plots.plot_accuracy_by_total_evidence(
+    #     plot_df_all,
+    #     adapter=adapter,
+    #     views=views_sel,
+    # )
     _fig_repeat_evidence = plots.plot_repeat_by_repeat_evidence(
         plot_df_all,
         views=views_sel,
     )
 
-    mo.stop(_fig_total_evidence is None, mo.md("Accuracy by fitted total evidence not available."))
+    # mo.stop(_fig_total_evidence is None, mo.md("Accuracy by fitted total evidence not available."))
 
     mo.hstack(
         [
             mo.vstack(
                 [
-                    _fig_total_evidence,
-                    save_plot(
-                        _fig_total_evidence,
-                        "accuracy by fitted total evidence",
-                        stem="accuracy_total_evidence",
-                    ),
+                    # _fig_total_evidence,
+                    # save_plot(
+                    #     _fig_total_evidence,
+                    #     "accuracy by fitted total evidence",
+                    #     stem="accuracy_total_evidence",
+                    # ),
                 ],
                 align="center",
             ),

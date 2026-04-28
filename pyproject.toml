@@ -9,11 +9,14 @@ description = "Analysis notebooks and task adapters for the NMDAR paper."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
 dependencies = [
+    "altair>=6.1.0",
+    "bcb-figure-layout",
     "bottleneck>=1.6.0",
     "glmhmmt==0.2.4",
     "marimo==0.23.2",
     "marimo-toml-editor>=0.1.1",
     "numexpr>=2.14.1",
+    "playwright>=1.58.0",
     "plot-saver==0.1.5",
     "tensorflow-probability==0.25.0",
     "tfp-nightly==0.26.0.dev20260205",
@@ -24,3 +27,6 @@ dependencies = [
 packages = ["src"]
 
 exclude-dependencies = ["tensorflow-probability"]
+
+[tool.uv.sources]
+"bcb-figure-layout" = { path = "../bcb-figure-layout", editable = true }

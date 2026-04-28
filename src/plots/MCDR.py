@@ -786,12 +786,13 @@ def plot_binned_accuracy_figure(
     )
 
     for ax, panel in zip(axes, panels, strict=False):
+        meta = panel["meta"]
         plot_grouped_summary(
             ax,
             panel["summary"],
             line_group_col="_reg_bin",
-            x_col="x_center",
-            meta=panel["meta"],
+            x_col=meta.get("x_col", "x_center"),
+            meta=meta,
             legend=legend,
         )
         if ax.legend_ is not None:
