@@ -30,6 +30,7 @@ def _():
     from src.process import two_afc as process_two_afc
     from src.process import two_afc_delay as process_two_afc_delay
     from src.process.common import add_choice_lag_summary_regressor
+    from src.plots.common import fig_size
     from figure_layout_widget import FigureLayoutWidget
 
     def prepare_predictions_df(task_name, df):
@@ -44,18 +45,15 @@ def _():
     sns.set_style("ticks")
     sns.set_context("paper", font_scale=0.8)
     return (
-        FigureLayoutWidget,
         ROOT,
         add_choice_lag_summary_regressor,
-        base64,
         build_trial_and_weights_df,
         build_views,
+        fig_size,
         get_adapter,
-        io,
         load_fit_arrays,
         mo,
         mpimg,
-        np,
         paths,
         plt,
         prepare_predictions_df,
@@ -211,134 +209,6 @@ def _(
 
 
 @app.cell
-def _(np, plt):
-    def fig_size(n_cols=1, ratio=None):
-        """
-        Get figure size for A4 page with n_cols columns and specified ratio (width/height).
-        :param n_cols: Number of columns (0 for full page)
-        :param ratio: Width/height ratio (None for default)
-        :return:
-        """
-
-        if ratio is None:
-            default_figsize = np.array(plt.rcParams["figure.figsize"])
-            default_ratio = default_figsize[0] / default_figsize[1]
-            ratio = default_ratio  # 4:3
-
-        # All measurements are in inches
-        A4_size = np.array((8.27, 11.69))  # A4 measurements
-        margins = 2  # On both dimension
-        size = A4_size - margins  # Effective size after margins removal (2 per dimension)
-        width = size[0]
-        height = size[1]
-
-        # Full page (minus margins)
-        if n_cols == 0:
-            # Full A4 minus margins
-            figsize = (width, height)
-            if ratio == 1:  # Square
-                figsize = (size[0], size[0])
-            return figsize
-
-        else:
-            fig_width = width / n_cols
-            fig_height = fig_width / ratio
-            figsize = (fig_width, fig_height)
-            return figsize
-
-    return (fig_size,)
-
-
-@app.cell
-def _(fig_size, plot_payloads):
-    def render_axis_plot(task_name: str, plot_key: str, ax):
-        _payload = plot_payloads[task_name]
-        _plots = _payload["plots"]
-        _plot_df = _payload["plot_df"]
-        _views = _payload["views"]
-
-        if plot_key == "repeat_evidence":
-            _plots.plot_repeat_by_repeat_evidence(
-                _plot_df,
-                views=_views,
-                ax=ax,
-                legend=False,
-                figsize=fig_size(n_cols=3),
-                title="",
-            )
-        elif plot_key == "binned_accuracy":
-            _plots.plot_binned_accuracy_figure(
-                _plot_df,
-                regressor_col="choice_lag_one_hot_sum",
-                axes=[ax],
-                max_panels=1,
-                legend=False,
-                figsize=fig_size(n_cols=3),
-            )
-        else:
-            _plots.plot_right_by_regressor(
-                _plot_df,
-                regressor_col="choice_lag_one_hot_sum",
-                ax=ax,
-                title=None,
-                legend=False,
-                figsize=fig_size(n_cols=3),
-            )
-
-    return (render_axis_plot,)
-
-
-@app.cell
-def _(FigureLayoutWidget, base64, io, mo, plt, render_axis_plot, task_names):
-    _plot_options = []
-    _plot_specs = (
-        ("repeat_evidence", "Repeat evidence"),
-        ("binned_accuracy", "Binned accuracy"),
-        ("right_by_regressor", "Right by regressor"),
-    )
-
-    def _render_plot_png(task_name: str, plot_key: str) -> str:
-        _fig, _ax = plt.subplots(figsize=(2.2, 1.7), constrained_layout=True, dpi=120)
-        render_axis_plot(task_name, plot_key, _ax)
-        _ax.tick_params(axis="both", labelsize=5)
-        _ax.xaxis.label.set_size(6)
-        _ax.yaxis.label.set_size(6)
-        _ax.title.set_size(6)
-        _buffer = io.BytesIO()
-        _fig.savefig(_buffer, format="png", dpi=120, bbox_inches="tight")
-        plt.close(_fig)
-        return "data:image/png;base64," + base64.b64encode(_buffer.getvalue()).decode("ascii")
-
-    _default_placements = []
-    for _task_name in task_names:
-        _placement_row = []
-        for _plot_key, _plot_label in _plot_specs:
-            _value = f"{_task_name}:{_plot_key}"
-            _plot_options.append(
-                {
-                    "group": _task_name,
-                    "label": _plot_label,
-                    "value": _value,
-                    "image": _render_plot_png(_task_name, _plot_key),
-                    "code_template": f"render_axis_plot({_task_name!r}, {_plot_key!r}, {{axis}})",
-                }
-            )
-            _placement_row.append(_value)
-        _default_placements.append(_placement_row)
-
-    layout_widget = mo.ui.anywidget(
-        FigureLayoutWidget(
-            rows=3,
-            cols=3,
-            placements=_default_placements,
-            plot_options=_plot_options,
-        )
-    )
-    layout_widget
-    return
-
-
-@app.cell
 def _(ROOT, fig_size, mpimg, plot_payloads, plt, sns):
     _panel_width, _panel_height = fig_size(n_cols=3)
 
@@ -433,16 +303,6 @@ def _(ROOT, fig_size, mpimg, plot_payloads, plt, sns):
 
     fig.savefig(out_path, dpi=300)
     fig
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
     return
 
 
