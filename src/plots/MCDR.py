@@ -40,8 +40,6 @@ from src.plots.common import (
     resolve_axes,
 )
 
-sns.set_style("white")
-
 cfg = load_app_config()
 CI_BAND_ERR_KWS = {"edgecolor": "none", "linewidth": 0}
 
@@ -666,6 +664,76 @@ def plot_delay_binned_1d(df, model_name, subject=None, n_bins=7):
 
     return fig_delay, fig_stim
 
+
+
+from src.process.common import (
+    attach_repeat_choice_evidence,
+    attach_total_fitted_evidence,
+    display_regressor_name,
+    pick_choice_history_regressor,
+    prepare_evidence_curve,
+    prepare_right_integration_maps,
+    REPEAT_EVIDENCE_TAIL_QUANTILES,
+    add_choice_lag_summary_regressor,
+    compute_rb_by_x
+)
+from src.process import MCDR as process
+from src.plots.common import (
+    add_shared_figure_legend,
+    make_single_panel_figure,
+    plot_grouped_summary,
+    plot_mean_over_data,
+    plot_integration_map_panels,
+    plot_simple_summary,
+)
+
+
+def plot_accuracy(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
+    df_pd = df.to_pandas().copy() if hasattr(df, "to_pandas") else pd.DataFrame(df).copy()
+    if "ttype_c" not in df_pd.columns and "ttype_n" in df_pd.columns:
+        ttype_map = {float(key): value for key, value in cfg["encoding"]["ttype"].items()}
+        df_pd["ttype_c"] = pd.to_numeric(df_pd["ttype_n"], errors="coerce").map(ttype_map)
+
+    accuracy_col = "correct_bool" if "correct_bool" in df_pd.columns else "performance"
+    return plot_mean_over_data(
+        df_pd,
+        x_col="ttype_c",
+        y_col=accuracy_col,
+        invert_x=False,
+        x_order=cfg["plots"]["ttype"]["order"],
+        # x_tick_labels=cfg["plots"]["ttype"]["labels"],
+        x_tick_labels=['VG', 'Easy', 'Mid', 'Hard'],
+        xlabel="Difficulty",
+        title=title,
+        baseline=1 / 3,
+        color="tab:blue",
+        ax=ax,
+        figsize=figsize,
+    )
+
+def plot_rb(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
+    df_pd = df.to_pandas().copy() if hasattr(df, "to_pandas") else pd.DataFrame(df).copy()
+    if "ttype_c" not in df_pd.columns and "ttype_n" in df_pd.columns:
+        ttype_map = {float(key): value for key, value in cfg["encoding"]["ttype"].items()}
+        df_pd["ttype_c"] = pd.to_numeric(df_pd["ttype_n"], errors="coerce").map(ttype_map)
+
+    rb_df = compute_rb_by_x(df_pd,x_col="ttype_c",choice_col="response",)
+
+    return plot_mean_over_data(
+        rb_df,
+        x_col="ttype_c",
+        y_col="rb",
+        x_order=cfg["plots"]["ttype"]["order"],
+        x_tick_labels=["VG", "Easy", "Mid", "Hard"],
+        xlabel="Difficulty",
+        ylabel="Rep. bias",
+        title=title,
+        baseline=1 / 3,
+        baseline_area=True,
+        color="tab:blue",
+        ax=ax,
+        figsize=figsize,
+    )
 
 def plot_right_by_regressor_simple(
     plot_df,

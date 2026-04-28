@@ -28,7 +28,6 @@ from src.process.two_afc_delay import EMISSION_REGRESSOR_LABELS
 from glmhmmt.views import get_state_color, get_state_palette
 
 # ── state colour palette ──────────────────────────────────────────────────────
-sns.set_style("ticks")
 
 _SESSION_COL = "session"
 _SORT_COL = "trial_idx"
@@ -1100,6 +1099,7 @@ from src.process.common import (
     ranked_state_labels,
     resolve_ild_max,
     to_pandas_df,
+    compute_rb_by_x,
 )
 from src.process import two_afc_delay as process
 from src.plots.common import (
@@ -1108,7 +1108,7 @@ from src.plots.common import (
     centered_numeric_group_palette,
     make_single_panel_figure,
     plot_grouped_summary,
-    plot_empirical_accuracy_curve,
+    plot_mean_over_data,
     plot_integration_map_panels,
     plot_simple_summary,
     resolve_axes,
@@ -1138,19 +1138,41 @@ SIGNED_DELAY_ORDER = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
 SIGNED_DELAY_LABELS = ["0", "-1", "-3", "-10", "10", "3", "1", "0"]
 
 
-def plot_accuracy_by_delay(plot_df, **plot_kwargs):
-    style = dict(plot_kwargs)
-    style.setdefault("xlabel", "Delay")
+def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
     df_pd = to_pandas_df(plot_df)
     
-    return plot_empirical_accuracy_curve(
+    return plot_mean_over_data(
         df_pd,
         x_col="delays",
         invert_x=False,
-        accuracy_col="hit",
+        y_col="hit",
+        xlabel="Delay (s)",
+        title=title,
         baseline=0.5,
-        color="#1f77b4",
-        **style,
+        color="tab:blue",
+        ax=ax,
+        figsize=figsize,
+    )
+
+
+def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
+    df_pd = to_pandas_df(plot_df).copy()
+
+    rb_df = compute_rb_by_x(df_pd, "delays", "choices")
+
+    return plot_mean_over_data(
+        rb_df,
+        x_col="delays",
+        y_col="rb",
+        invert_x=False,
+        xlabel="Delay (s)",
+        ylabel="Rep. bias",
+        title=title,
+        baseline=0.5,
+        baseline_area=True,
+        color="tab:blue",
+        ax=ax,
+        figsize=figsize,
     )
 
 

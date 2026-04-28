@@ -977,6 +977,43 @@ def integration_map_2d(
         "sigma_y_bins": sigma_y_bins,
     }
 
+def compute_rb_by_x(
+    df,
+    x_col: str,
+    choice_col: str,
+    subject_col: str = "subject",
+    trial_col: str | None = None,
+):
+    df = df.copy()
+    if trial_col is not None and trial_col in df.columns:
+        df = df.sort_values([subject_col, trial_col]).copy()
+
+    df["_prev_choice"] = df.groupby(subject_col, observed=True)[choice_col].shift(1)
+    df = df.dropna(subset=[x_col, choice_col, "_prev_choice"]).copy()
+
+    choice_set = sorted(df[choice_col].unique())
+
+    results = []
+
+    for (subject, x_val), df_sx in df.groupby([subject_col, x_col], observed=True):
+        probs = []
+        for c in choice_set:
+            df_c = df_sx[df_sx["_prev_choice"] == c]
+            if df_c.empty:
+                continue
+            probs.append((df_c[choice_col] == c).mean())
+
+        if probs:
+            results.append(
+                {
+                    subject_col: subject,
+                    x_col: x_val,
+                    "rb": float(np.mean(probs)),
+                }
+            )
+
+    return pd.DataFrame(results)
+
 
 def prepare_right_integration_maps(
     plot_df,

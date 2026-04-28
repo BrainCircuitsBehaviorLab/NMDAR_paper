@@ -26,8 +26,12 @@ from typing import List, Optional, Sequence, Tuple
 from src.process.two_afc import EMISSION_REGRESSOR_LABELS
 from glmhmmt.views import get_state_color, get_state_palette
 
+from src.process.common import (
+    compute_rb_by_x,
+    to_pandas_df,
+)
+
 # ── state colour palette ──────────────────────────────────────────────────────
-sns.set_style("ticks")
 
 _SESSION_COL = "session"
 _SORT_COL = "trial_idx"
@@ -1203,7 +1207,7 @@ from src.plots.common import (
     centered_numeric_group_palette,
     make_single_panel_figure,
     plot_grouped_summary,
-    plot_empirical_accuracy_curve,
+    plot_mean_over_data,
     plot_integration_map_panels,
     plot_simple_summary,
     resolve_axes,
@@ -1229,9 +1233,7 @@ _binned_feature_summary = lambda df, feature_col, choice_col, pred_col, subj_col
 _attach_rank_posterior_cols = attach_rank_posterior_cols
 _attach_rank_state_model_cols = attach_rank_state_model_cols
 
-def plot_accuracy_by_stimulus(plot_df, **plot_kwargs):
-    style = dict(plot_kwargs)
-    style.setdefault("xlabel", "Absolute ILD (dB)")
+def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
     df_pd = (
         plot_df.to_pandas().copy()
         if hasattr(plot_df, "to_pandas")
@@ -1240,17 +1242,43 @@ def plot_accuracy_by_stimulus(plot_df, **plot_kwargs):
 
     df_pd["abs_ILD"] = pd.to_numeric(df_pd["ILD"], errors="coerce").abs()
     x_col = "abs_ILD"
+    xlabel = "|ILD| (dB)"
 
-    return plot_empirical_accuracy_curve(
+    return plot_mean_over_data(
         df_pd,
         x_col=x_col,
         # x_order=[20, 8, 4, 2, 0],
         invert_x=True,
         x_tick_labels={0: "0", 2: "2", 4: "4", 8: "8", 20: "20"},
-        accuracy_col="Hit",
+        y_col="Hit",
+        xlabel=xlabel,
+        title=title,
         baseline=0.5,
-        color="#2b7bba",
-        **style,
+        color="tab:blue",
+        ax=ax,
+        figsize=figsize,
+    )
+
+def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
+    df_pd = to_pandas_df(plot_df).copy()
+    df_pd["abs_ILD"] = pd.to_numeric(df_pd["ILD"], errors="coerce").abs()
+
+    rb_df = compute_rb_by_x(df_pd, "abs_ILD", "Choice")
+
+    return plot_mean_over_data(
+        rb_df,
+        x_col="abs_ILD",
+        y_col="rb",
+        invert_x=True,
+        x_tick_labels={0: "0", 2: "2", 4: "4", 8: "8", 20: "20"},
+        xlabel="|ILD| (dB)",
+        ylabel="Rep. bias",
+        title=title,
+        baseline=0.5,
+        baseline_area=True,
+        color="tab:blue",
+        ax=ax,
+        figsize=figsize,
     )
 
 
