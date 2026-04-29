@@ -144,21 +144,6 @@ wheels = [
 ]
 
 [[package]]
-name = "bcb-figure-layout"
-version = "0.1.0"
-source = { editable = "../bcb-figure-layout" }
-dependencies = [
-    { name = "anywidget" },
-    { name = "traitlets" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anywidget", specifier = ">=0.10.0" },
-    { name = "traitlets", specifier = ">=5.14.3" },
-]
-
-[[package]]
 name = "beautifulsoup4"
 version = "4.14.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1424,7 +1409,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "altair" },
-    { name = "bcb-figure-layout" },
     { name = "bottleneck" },
     { name = "glmhmmt" },
     { name = "marimo" },
@@ -1440,7 +1424,6 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "altair", specifier = ">=6.1.0" },
-    { name = "bcb-figure-layout", editable = "../bcb-figure-layout" },
     { name = "bottleneck", specifier = ">=1.6.0" },
     { name = "glmhmmt", specifier = "==0.2.4" },
     { name = "marimo", specifier = "==0.23.2" },
