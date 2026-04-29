@@ -28,5 +28,3 @@ packages = ["src"]
 
 exclude-dependencies = ["tensorflow-probability"]
 
-[tool.uv.sources]
-"bcb-figure-layout" = { path = "../bcb-figure-layout", editable = true }
