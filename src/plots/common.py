@@ -10,11 +10,18 @@ import pandas as pd
 import seaborn as sns
 from src.process.common import (
     PreparedWeightFamilyPlot,
+    attach_repeat_choice_evidence,
     attach_quantile_bin_column,
+    attach_total_fitted_evidence,
     display_regressor_name,
+    fit_lapse_logistic_by_group,
+    fit_lapse_logistic_by_subject_group,
+    padded_numeric_limits,
+    summarize_grouped_panel,
+    summarize_simple_curve,
     to_pandas_df,
 )
-
+from glmhmmt.plots.common import custom_boxplot
 
 def apply_axis_style(
     ax,
@@ -174,20 +181,14 @@ def plot_prepared_weight_family(
 
     fig, ax = plt.subplots(figsize=(max(5.0, 0.8 * len(x_order)), 4.0))
     positions = np.arange(1, len(x_order) + 1)
-    ax.boxplot(
+    custom_boxplot(
+        ax,
         per_feature_values,
         positions=positions,
         widths=0.55,
-        patch_artist=True,
-        medianprops={"color": "black", "linewidth": 1.2},
-        boxprops={"facecolor": "#d9e8f6", "edgecolor": "#356b9a", "linewidth": 1.0},
-        whiskerprops={"color": "#356b9a", "linewidth": 1.0},
-        capprops={"color": "#356b9a", "linewidth": 1.0},
-        flierprops={"marker": "o", "markersize": 3, "alpha": 0.35},
+        median_colors="tab:blue",
+        line_values=subject_lines,
     )
-    for row in subject_lines:
-        if np.isfinite(row).sum() >= 2:
-            ax.plot(positions, row, color="#777777", alpha=0.18, linewidth=0.8, zorder=0)
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
     ax.set_title(prepared.title)
     ax.set_xlabel(prepared.xlabel)
@@ -689,6 +690,301 @@ def plot_simple_summary(
     return ax
 
 
+def plot_repeat_by_regressor_simple(
+    plot_df,
+    *,
+    regressor_col: str,
+    views: dict,
+    is_mcdr: bool,
+    baseline: float | None = None,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+    legend: bool = True,
+    **style,
+):
+    df_pd = attach_repeat_choice_evidence(
+        plot_df,
+        views=views,
+        is_mcdr=is_mcdr,
+    )
+    required_cols = {regressor_col, "_repeat_choice", "_p_repeat_model", "subject"}
+    if df_pd.empty or not required_cols.issubset(df_pd.columns):
+        return None
+
+    df_pd = df_pd.copy()
+    df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
+    df_pd["_repeat_choice"] = pd.to_numeric(df_pd["_repeat_choice"], errors="coerce")
+    df_pd["_p_repeat_model"] = pd.to_numeric(df_pd["_p_repeat_model"], errors="coerce")
+    df_pd = df_pd[
+        np.isfinite(df_pd[regressor_col])
+        & np.isfinite(df_pd["_repeat_choice"])
+        & np.isfinite(df_pd["_p_repeat_model"])
+    ].copy()
+    if df_pd.empty:
+        return None
+
+    df_pd, bin_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col=regressor_col,
+        max_bins=n_bins,
+        quantiles=None,
+    )
+    if df_pd is None:
+        return None
+
+    summary = summarize_simple_curve(
+        df_pd,
+        subject_col="subject",
+        reg_bin_col="_reg_bin",
+        regressor_col=regressor_col,
+        data_col="_repeat_choice",
+        model_col="_p_repeat_model",
+    )
+    if summary.empty:
+        return None
+
+    if baseline is None:
+        baseline = 1.0 / next(iter(views.values())).num_classes if views else 0.5
+    meta = {
+        "xlabel": xlabel or display_regressor_name(regressor_col),
+        "ylabel": r"$p(\mathrm{repeat})$",
+        "baseline": float(baseline),
+        "xlim": padded_numeric_limits(bin_centers["x_center"], absolute_pad=0.25),
+    }
+    return plot_simple_summary(summary, meta=meta, legend=legend, **style)
+
+
+def prepare_binned_accuracy_total_evidence_panels(
+    plot_df,
+    *,
+    regressor_col: str,
+    adapter,
+    views: dict,
+    is_mcdr: bool,
+    baseline: float,
+    n_bins: int = 10,
+) -> tuple[list[dict] | None, str | None]:
+    if adapter is None or views is None:
+        raise ValueError("x_axis='total_evidence' requires adapter=... and views=....")
+
+    df_pd = attach_total_fitted_evidence(
+        plot_df,
+        adapter=adapter,
+        views=views,
+        is_mcdr=is_mcdr,
+    )
+    required_cols = {
+        regressor_col,
+        "correct_bool",
+        "_fitted_correct_prob",
+        "_fitted_total_evidence",
+        "subject",
+    }
+    if df_pd.empty or not required_cols.issubset(df_pd.columns):
+        return None, None
+
+    df_pd = df_pd.copy()
+    for col in [regressor_col, "correct_bool", "_fitted_correct_prob", "_fitted_total_evidence"]:
+        df_pd[col] = pd.to_numeric(df_pd[col], errors="coerce")
+    df_pd = df_pd[
+        np.isfinite(df_pd[regressor_col])
+        & np.isfinite(df_pd["correct_bool"])
+        & np.isfinite(df_pd["_fitted_correct_prob"])
+        & np.isfinite(df_pd["_fitted_total_evidence"])
+    ].copy()
+    if df_pd.empty:
+        return None, None
+
+    df_pd, reg_bin_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col=regressor_col,
+        max_bins=4,
+        quantiles=None,
+    )
+    if df_pd is None:
+        return None, None
+    reg_bin_labels = reg_bin_centers["_reg_bin"].tolist()
+
+    df_pd, evidence_bin_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col="_fitted_total_evidence",
+        bin_col="_evidence_bin",
+        max_bins=n_bins,
+        quantiles=None,
+    )
+    if df_pd is None:
+        return None, None
+
+    summary = summarize_grouped_panel(
+        df_pd,
+        line_group_col="_reg_bin",
+        x_col="_evidence_bin",
+        subject_col="subject",
+        data_col="correct_bool",
+        model_col="_fitted_correct_prob",
+        line_order=reg_bin_labels,
+    )
+    if summary.empty:
+        return None, None
+    summary = summary.merge(
+        evidence_bin_centers[["_evidence_bin", "x_center"]],
+        on="_evidence_bin",
+        how="left",
+    ).sort_values(["_reg_bin", "x_center"])
+
+    subject_summary = (
+        df_pd.groupby(["_reg_bin", "subject", "_evidence_bin"], observed=True)
+        .agg(
+            data_mean=("correct_bool", "mean"),
+            model_mean=("_fitted_correct_prob", "mean"),
+            n_trials=("correct_bool", "count"),
+        )
+        .reset_index()
+        .merge(evidence_bin_centers[["_evidence_bin", "x_center"]], on="_evidence_bin", how="left")
+    )
+
+    meta = {
+        "xlabel": "Correct-vs-rest fitted evidence",
+        "ylabel": "Accuracy",
+        "legend_title": display_regressor_name(regressor_col),
+        "baseline": baseline,
+        "line_order": reg_bin_labels,
+        "line_x_centers": dict(zip(reg_bin_centers["_reg_bin"], reg_bin_centers["x_center"], strict=False)),
+        "x_col": "x_center",
+        "fit_x_col": "x_center",
+    }
+    return [{"summary": summary, "subject_summary": subject_summary, "meta": meta}], display_regressor_name(regressor_col)
+
+
+def fit_lapse_logistic_for_panel(
+    panel: dict,
+    *,
+    fit_lapse_by_subject: bool = True,
+    lapse_max: float = 0.4,
+    share_lapse_logistic_core: bool = False,
+    default_x_col: str,
+    fit_x_limits: tuple[float, float] | None = None,
+):
+    summary = panel.get("summary")
+    meta = panel.get("meta", {})
+    if summary is None or summary.empty:
+        return {}
+
+    x_fit_col = meta.get("fit_x_col", meta.get("x_col", default_x_col))
+    if x_fit_col not in summary.columns:
+        return {}
+    if pd.to_numeric(summary[x_fit_col], errors="coerce").notna().sum() < 2:
+        return {}
+    if fit_x_limits is not None:
+        x_min, x_max = (float(v) for v in fit_x_limits)
+        x_values = pd.to_numeric(summary[x_fit_col], errors="coerce")
+        summary = summary.loc[x_values.between(x_min, x_max, inclusive="both")].copy()
+        if summary.empty or x_values.loc[summary.index].nunique() < 2:
+            return {}
+
+    line_order = meta.get("line_order") or summary["_reg_bin"].dropna().unique().tolist()
+    subject_summary = panel.get("subject_summary")
+    if (
+        fit_lapse_by_subject
+        and subject_summary is not None
+        and not subject_summary.empty
+        and x_fit_col in subject_summary.columns
+    ):
+        if fit_x_limits is not None:
+            x_min, x_max = (float(v) for v in fit_x_limits)
+            subject_x_values = pd.to_numeric(subject_summary[x_fit_col], errors="coerce")
+            subject_summary = subject_summary.loc[
+                subject_x_values.between(x_min, x_max, inclusive="both")
+            ].copy()
+            if subject_summary.empty:
+                return {}
+        subject_fits = fit_lapse_logistic_by_subject_group(
+            subject_summary,
+            subject_col="subject",
+            line_group_col="_reg_bin",
+            x_col=x_fit_col,
+            y_col="data_mean",
+            weight_col="n_trials",
+            line_order=line_order,
+            lapse_max=lapse_max,
+            shared_core=share_lapse_logistic_core,
+        )
+        if subject_fits:
+            return subject_fits
+
+    return fit_lapse_logistic_by_group(
+        summary,
+        line_group_col="_reg_bin",
+        x_col=x_fit_col,
+        y_col="md",
+        weight_col="nd",
+        line_order=line_order,
+        lapse_max=lapse_max,
+        shared_core=share_lapse_logistic_core,
+    )
+
+
+def plot_lapse_fit_parameter_panels(
+    axes,
+    fits: dict,
+    *,
+    line_order,
+    meta: dict,
+    regressor_label: str,
+):
+    axes = np.atleast_1d(axes)
+    if len(axes) < 2:
+        return
+
+    lapse_ax, bias_ax = axes[:2]
+    groups = [group for group in list(line_order or fits.keys()) if group in fits]
+    if not groups:
+        for ax in (bias_ax, lapse_ax):
+            ax.set_axis_off()
+        return
+
+    center_map = meta.get("line_x_centers") or {}
+    x_values = []
+    use_numeric_centers = bool(center_map)
+    for idx, group in enumerate(groups):
+        value = center_map.get(group, center_map.get(str(group), np.nan))
+        if use_numeric_centers and np.isfinite(pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]):
+            x_values.append(float(value))
+        else:
+            use_numeric_centers = False
+            x_values.append(float(idx))
+
+    if not use_numeric_centers:
+        x_values = np.arange(len(groups), dtype=float)
+        for ax in (bias_ax, lapse_ax):
+            ax.set_xticks(x_values)
+            ax.set_xticklabels([str(group) for group in groups], rotation=0)
+
+    lapse_left = np.asarray([fits[group].lapse_left for group in groups], dtype=float)
+    lapse_right = np.asarray([fits[group].lapse_right for group in groups], dtype=float)
+
+    lapse_ax.plot(x_values, lapse_left, "-o", color="#2b7bba", lw=1.5, ms=4, label="left")
+    lapse_ax.plot(x_values, lapse_right, "-o", color="#c43c39", lw=1.5, ms=4, label="right")
+    lapse_ax.set_ylim(bottom=0.0)
+    apply_axis_style(
+        lapse_ax,
+        xlabel=regressor_label,
+        ylabel="Lapse",
+        title="Lapses",
+    )
+    lapse_ax.legend(frameon=False, fontsize=8)
+
+    bias = np.asarray([fits[group].bias for group in groups], dtype=float)
+    bias_ax.plot(x_values, bias, "-o", color="black", lw=1.5, ms=4)
+    bias_ax.axhline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
+    apply_axis_style(
+        bias_ax,
+        xlabel=regressor_label,
+        ylabel="Psychometric bias",
+        title="Bias",
+    )
+
+
 def plot_grouped_summary(
     ax,
     summary_df,
@@ -705,6 +1001,16 @@ def plot_grouped_summary(
         ax.set_axis_off()
         apply_axis_style(ax, **style)
         return ax
+
+    summary_df = summary_df.copy()
+    rename_map = {
+        "data_mean": "md",
+        "model_mean": "mm",
+        "data_sem": "sem",
+    }
+    for src, dst in rename_map.items():
+        if dst not in summary_df.columns and src in summary_df.columns:
+            summary_df[dst] = summary_df[src]
 
     line_order = meta.get("line_order") or list(
         summary_df[line_group_col].dropna().unique()

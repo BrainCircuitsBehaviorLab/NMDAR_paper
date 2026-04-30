@@ -24,11 +24,13 @@ import pandas as pd
 from matplotlib.lines import Line2D
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
+from glmhmmt.plots.common import resolve_axes_grid
 from glmhmmt.views import get_state_color, get_state_palette
 from src.process import nuo_auditory as process
 from src.process.nuo_auditory import _stim_bin_centers, _stim_param_weight_map, EMISSION_REGRESSOR_LABELS
 from src.process.common import (
     REPEAT_EVIDENCE_TAIL_QUANTILES,
+    attach_quantile_bin_column,
     assign_quantile_bins,
     display_regressor_name as _display_regressor_name,
     fit_lapse_logistic_by_group,
@@ -47,7 +49,9 @@ from src.plots.common import (
     add_shared_figure_legend,
     apply_axis_style,
     centered_numeric_group_palette,
+    fit_lapse_logistic_for_panel,
     make_single_panel_figure,
+    plot_lapse_fit_parameter_panels,
     plot_grouped_summary,
     plot_integration_map_panels,
     plot_simple_summary,
@@ -1770,7 +1774,6 @@ def plot_right_by_regressor(
         line_group_col=line_group_col,
         x_col="x_center",
         meta=meta,
-        line_order=line_order,
         label_map=group_labels,
         palette=palette,
     )
@@ -1784,6 +1787,12 @@ def plot_binned_accuracy_figure(
     plot_df,
     *,
     regressor_col: str,
+    x_axis: str | None = None,
+    adapter=None,
+    views: dict | None = None,
+    figsize: tuple[float, float] | None = None,
+    max_panels: int | None = None,
+    legend: bool = True,
     fit_lapse_logistic: bool = False,
     show_lapses_in_legend: bool = True,
     print_lapse_fits: bool | None = None,
@@ -1792,40 +1801,147 @@ def plot_binned_accuracy_figure(
     fit_lapse_by_subject: bool = True,
     **plot_kwargs,
 ):
+    _ = adapter, views
     style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
     df_pd = _prepare_compat_plot_df(plot_df)
+
     if regressor_col not in df_pd.columns or _EVIDENCE_COL not in df_pd.columns:
         return None
+
+    x_axis_key = str(x_axis).lower() if x_axis is not None else None
+    use_fitted_total_evidence = x_axis_key in {
+        "fitted_total_evidence",
+        "fitted total evidence",
+        "correct_evidence",
+        "correct evidence",
+        "correct-vs-rest",
+        "correct_vs_rest",
+    }
+    use_evidence_strength = x_axis_key in {
+        None,
+        "ild",
+        "total_evidence_strength",
+        "native",
+        "total_evidence",
+        "total evidence",
+        "evidence",
+        "evidence_strength",
+        "evidence strength",
+    }
 
     df_pd = df_pd.copy()
     df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
     df_pd[_EVIDENCE_COL] = pd.to_numeric(df_pd[_EVIDENCE_COL], errors="coerce")
-    df_pd["_response_right"] = pd.to_numeric(df_pd[_RESPONSE_COL], errors="coerce")
+    df_pd["_fit_evidence_for_right"] = -df_pd[_EVIDENCE_COL]
+    df_pd, response_right_col = _with_plot_choice_right(df_pd, _RESPONSE_COL)
+    df_pd["_response_right"] = pd.to_numeric(df_pd[response_right_col], errors="coerce")
     df_pd["_p_right_model"] = pd.to_numeric(df_pd["pR"], errors="coerce")
-    df_pd = df_pd.dropna(subset=[regressor_col, _EVIDENCE_COL, "_response_right", "_p_right_model"])
+    if use_fitted_total_evidence:
+        if "p_model_correct" not in df_pd.columns or "correct_bool" not in df_pd.columns:
+            return None
+        correct_prob = pd.to_numeric(df_pd["p_model_correct"], errors="coerce").clip(1e-6, 1.0 - 1e-6)
+        df_pd["_fitted_total_evidence"] = np.log(correct_prob / (1.0 - correct_prob))
+        df_pd["_fitted_correct_prob"] = correct_prob
+        df_pd["correct_bool"] = pd.to_numeric(df_pd["correct_bool"], errors="coerce")
+        required = [regressor_col, "_fitted_total_evidence", "correct_bool", "_fitted_correct_prob"]
+    else:
+        required = [regressor_col, _EVIDENCE_COL, "_response_right", "_p_right_model"]
+    df_pd = df_pd.dropna(subset=required)
     if df_pd.empty:
         return None
 
-    reg_labels, reg_order = assign_quantile_bins(df_pd[regressor_col], max_bins=4)
-    if not reg_order:
+    df_pd, reg_centers = attach_quantile_bin_column(
+        df_pd,
+        value_col=regressor_col,
+        max_bins=4,
+        quantiles=None,
+    )
+    if df_pd is None or reg_centers.empty:
         return None
+    reg_order = reg_centers["_reg_bin"].tolist()
+    reg_center_map = dict(zip(reg_centers["_reg_bin"], reg_centers["x_center"], strict=False))
 
-    df_pd["_reg_bin"] = reg_labels
-    df_pd = df_pd[df_pd["_reg_bin"].notna()].copy()
-    if df_pd.empty:
-        return None
+    if use_fitted_total_evidence:
+        df_pd, evidence_centers = attach_quantile_bin_column(
+            df_pd,
+            value_col="_fitted_total_evidence",
+            bin_col="_evidence_bin",
+            max_bins=10,
+            quantiles=None,
+        )
+        if df_pd is None or evidence_centers.empty:
+            return None
+        summary = summarize_grouped_panel(
+            df_pd,
+            line_group_col="_reg_bin",
+            x_col="_evidence_bin",
+            subject_col="subject",
+            data_col="correct_bool",
+            model_col="_fitted_correct_prob",
+            line_order=reg_order,
+        )
+        if summary.empty:
+            return None
+        summary = summary.merge(
+            evidence_centers[["_evidence_bin", "x_center"]],
+            on="_evidence_bin",
+            how="left",
+        ).sort_values(["_reg_bin", "x_center"])
+        subject_summary = (
+            df_pd.groupby(["_reg_bin", "subject", "_evidence_bin"], observed=True)
+            .agg(
+                data_mean=("correct_bool", "mean"),
+                model_mean=("_fitted_correct_prob", "mean"),
+                n_trials=("correct_bool", "count"),
+                x_fit=("_fitted_total_evidence", "mean"),
+            )
+            .reset_index()
+            .merge(evidence_centers[["_evidence_bin", "x_center"]], on="_evidence_bin", how="left")
+        )
+        summary = summary.merge(
+            subject_summary
+            .groupby(["_reg_bin", "_evidence_bin"], observed=True)["x_fit"]
+            .mean()
+            .reset_index(),
+            on=["_reg_bin", "_evidence_bin"],
+            how="left",
+        )
+        panels = [
+            {
+                "label": "Overall",
+                "summary": summary,
+                "subject_summary": subject_summary,
+                "meta": {
+                    "xlabel": "Correct-vs-rest fitted evidence",
+                    "ylabel": "Accuracy",
+                    "legend_title": display_regressor_name(regressor_col),
+                    "baseline": 0.5,
+                    "line_order": reg_order,
+                    "line_x_centers": reg_center_map,
+                    "x_col": "x_center",
+                    "fit_x_col": "x_fit",
+                    "fit_x_plot_scale": 1.0,
+                },
+            }
+        ]
+    elif use_evidence_strength:
+        df_pd, evidence_order = _attach_natural_evidence_bins(df_pd)
+        if df_pd is None:
+            return None
+        df_pd = df_pd[df_pd["_evidence_bin"].notna()].copy()
+        if df_pd.empty:
+            return None
 
-    df_pd, evidence_order = _attach_natural_evidence_bins(df_pd)
-    if df_pd is None:
-        return None
-    df_pd = df_pd[df_pd["_evidence_bin"].notna()].copy()
-    if df_pd.empty:
-        return None
-
-    xtick_labels = [f"{center:g}" for center in evidence_order]
-
-    def _panel_summary(*, subgroup_col: str | None = None, subgroup_value=None) -> pd.DataFrame:
-        return summarize_grouped_panel(
+        xtick_labels = [f"{center:g}" for center in evidence_order]
+        evidence_centers = pd.DataFrame(
+            {
+                "_evidence_bin": np.asarray(evidence_order, dtype=float),
+                "x_center": np.asarray(evidence_order, dtype=float),
+            }
+        )
+        summary = summarize_grouped_panel(
             df_pd,
             line_group_col="_reg_bin",
             x_col="_evidence_bin",
@@ -1833,41 +1949,39 @@ def plot_binned_accuracy_figure(
             data_col="_response_right",
             model_col="_p_right_model",
             line_order=reg_order,
-            subgroup_col=subgroup_col,
-            subgroup_value=subgroup_value,
         )
-
-    def _subject_summary(*, subgroup_col: str | None = None, subgroup_value=None) -> pd.DataFrame:
-        plot_df = df_pd.copy()
-        if subgroup_col is not None:
-            plot_df = plot_df[plot_df[subgroup_col] == subgroup_value].copy()
-        plot_df = plot_df[
-            plot_df["_reg_bin"].notna()
-            & plot_df["_evidence_bin"].notna()
-            & plot_df["_reg_bin"].isin(reg_order)
-        ].copy()
-        if plot_df.empty:
-            return pd.DataFrame()
-        return (
-            plot_df.groupby(["_reg_bin", "subject", "_evidence_bin"], observed=True)
+        if summary.empty:
+            return None
+        summary = summary.merge(
+            evidence_centers,
+            on="_evidence_bin",
+            how="left",
+        ).sort_values(["_reg_bin", "x_center"])
+        subject_summary = (
+            df_pd.groupby(["_reg_bin", "subject", "_evidence_bin"], observed=True)
             .agg(
                 data_mean=("_response_right", "mean"),
                 model_mean=("_p_right_model", "mean"),
                 n_trials=("_response_right", "count"),
+                x_fit=("_fit_evidence_for_right", "mean"),
             )
             .reset_index()
+            .merge(evidence_centers, on="_evidence_bin", how="left")
         )
-
-    panels: list[tuple[str, pd.DataFrame, dict]] = []
-    overall = _panel_summary()
-    overall_subject = _subject_summary()
-    if overall is not None and not overall.empty:
-        panels.append(
-            (
-                "Overall",
-                overall,
-                overall_subject,
-                {
+        summary = summary.merge(
+            subject_summary
+            .groupby(["_reg_bin", "_evidence_bin"], observed=True)["x_fit"]
+            .mean()
+            .reset_index(),
+            on=["_reg_bin", "_evidence_bin"],
+            how="left",
+        )
+        panels = [
+            {
+                "label": "Overall",
+                "summary": summary,
+                "subject_summary": subject_summary,
+                "meta": {
                     "xlabel": "Evidence strength",
                     "ylabel": p_right_label(),
                     "legend_title": display_regressor_name(regressor_col),
@@ -1875,46 +1989,66 @@ def plot_binned_accuracy_figure(
                     "xticks": evidence_order,
                     "x_tick_labels": xtick_labels,
                     "line_order": reg_order,
+                    "line_x_centers": reg_center_map,
+                    "x_col": "x_center",
+                    "fit_x_col": "x_fit",
+                    "fit_x_plot_scale": -1.0,
                 },
-            )
-        )
+            }
+        ]
+    else:
+        return None
 
     if not panels:
         return None
+    if max_panels is not None:
+        panels = panels[:max_panels]
 
-    figsize = style.get("figsize", (4.0 * len(panels), 4.0))
-    fig, axes = plt.subplots(1, len(panels), figsize=figsize, sharey=True)
-    axes = np.atleast_1d(axes)
+    extra_fit_axes = 2 if fit_lapse_logistic else 0
+    n_axes = len(panels) + extra_fit_axes
+    resolved_figsize = (
+        figsize_arg
+        if figsize_arg is not None
+        else (figsize if figsize is not None else (4.0 * n_axes, 4.0))
+    )
+    if extra_fit_axes and (figsize_arg is not None or figsize is not None) and len(panels) > 0:
+        resolved_figsize = (
+            resolved_figsize[0] * n_axes / len(panels),
+            resolved_figsize[1],
+        )
+    fig, axes_grid, _ = resolve_axes_grid(
+        axes=axes_arg,
+        n_panels=n_axes,
+        nrows=1,
+        ncols=n_axes,
+        figsize=resolved_figsize,
+        squeeze=False,
+        sharex=False,
+        sharey=False,
+    )
+    axes = axes_grid.ravel()
+    panel_axes = axes[: len(panels)]
+    diagnostic_axes = axes[len(panels) : len(panels) + extra_fit_axes]
 
     lapse_fit_reports: list[str] = []
-    for ax, (panel_label, summary, subject_summary, meta) in zip(axes, panels, strict=False):
+    diagnostic_fits = {}
+    diagnostic_meta = None
+    diagnostic_line_order = None
+    for ax, panel in zip(panel_axes, panels, strict=False):
+        panel_label = panel["label"]
+        summary = panel["summary"]
+        meta = panel["meta"]
         fits = {}
         label_map = None
         if fit_lapse_logistic and summary is not None and not summary.empty:
             line_order = meta.get("line_order") or summary["_reg_bin"].dropna().unique().tolist()
-            if fit_lapse_by_subject and subject_summary is not None and not subject_summary.empty:
-                fits = fit_lapse_logistic_by_subject_group(
-                    subject_summary,
-                    subject_col="subject",
-                    line_group_col="_reg_bin",
-                    x_col="_evidence_bin",
-                    y_col="data_mean",
-                    weight_col="n_trials",
-                    line_order=line_order,
-                    lapse_max=lapse_max,
-                    shared_core=share_lapse_logistic_core,
-                )
-            else:
-                fits = fit_lapse_logistic_by_group(
-                    summary,
-                    line_group_col="_reg_bin",
-                    x_col="_evidence_bin",
-                    y_col="md",
-                    weight_col="nd",
-                    line_order=line_order,
-                    lapse_max=lapse_max,
-                    shared_core=share_lapse_logistic_core,
-                )
+            fits = fit_lapse_logistic_for_panel(
+                panel,
+                fit_lapse_by_subject=fit_lapse_by_subject,
+                lapse_max=lapse_max,
+                share_lapse_logistic_core=share_lapse_logistic_core,
+                default_x_col=meta.get("fit_x_col", meta.get("x_col", "_evidence_bin")),
+            )
             if fits and show_lapses_in_legend:
                 label_map = {
                     group_value: lapse_logistic_label(group_value, fits.get(group_value))
@@ -1922,14 +2056,19 @@ def plot_binned_accuracy_figure(
                 }
             elif fits and (print_lapse_fits is None or print_lapse_fits):
                 lapse_fit_reports.append(format_lapse_logistic_fits(fits, title=panel_label))
+            if fits and not diagnostic_fits:
+                diagnostic_fits = fits
+                diagnostic_meta = meta
+                diagnostic_line_order = line_order
 
         plot_grouped_summary(
             ax,
             summary,
             line_group_col="_reg_bin",
-            x_col="_evidence_bin",
+            x_col=meta.get("x_col", "_evidence_bin"),
             meta=meta,
             label_map=label_map,
+            legend=legend,
         )
         if fits:
             line_order = meta.get("line_order") or list(fits)
@@ -1939,7 +2078,7 @@ def plot_binned_accuracy_figure(
                 if fit is None:
                     continue
                 ax.plot(
-                    fit.x_fit,
+                    fit.x_fit * float(meta.get("fit_x_plot_scale", 1.0)),
                     fit.y_fit,
                     "--",
                     color=color,
@@ -1953,12 +2092,20 @@ def plot_binned_accuracy_figure(
 
     if lapse_fit_reports:
         print("\n\n".join(report for report in lapse_fit_reports if report))
-    add_shared_figure_legend(fig, source_ax=axes[-1])
+    if fit_lapse_logistic:
+        plot_lapse_fit_parameter_panels(
+            diagnostic_axes,
+            diagnostic_fits,
+            line_order=diagnostic_line_order,
+            meta=diagnostic_meta or {},
+            regressor_label=display_regressor_name(regressor_col),
+        )
+    add_shared_figure_legend(fig, source_ax=panel_axes[-1], title=display_regressor_name(regressor_col), legend=legend)
     fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
-    for ax in axes[: len(panels)]:
+    for ax in panel_axes:
         apply_axis_style(ax, **style)
 
-    return fig, axes[: len(panels)]
+    return fig, axes[: len(panels) + extra_fit_axes]
 
 
 def plot_accuracy_by_total_evidence(

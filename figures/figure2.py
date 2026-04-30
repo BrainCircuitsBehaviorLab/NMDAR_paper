@@ -1,3 +1,9 @@
+# /// script
+# [tool.marimo.opengraph]
+# title = "Figure 2" 
+# description = " Figure 2: GLM model predictions."
+# ///
+
 import marimo
 
 __generated_with = "0.23.2"

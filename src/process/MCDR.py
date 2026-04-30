@@ -1067,7 +1067,21 @@ class MCDRAdapter(TaskAdapter):
     # ── data preparation ────────────────────────────────────────────────────
 
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
-        return df.filter(pl.col("subject") != "A84")
+        filtered_df = df.filter(pl.col("subject") != "A84")
+        if "timepoint_4" not in filtered_df.columns:
+            return filtered_df
+
+        timepoint_4_values = (
+            filtered_df["timepoint_4"]
+            .drop_nulls()
+            .drop_nans()
+            .to_numpy()
+        )
+        if timepoint_4_values.size == 0:
+            return filtered_df
+
+        timepoint_4_cutoff = float(np.percentile(timepoint_4_values, 95))
+        return filtered_df.filter(pl.col("timepoint_4") <= timepoint_4_cutoff)
 
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
         """Return the MCDR trial dataframe with all derived regressors."""

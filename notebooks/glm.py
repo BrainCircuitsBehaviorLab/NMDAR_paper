@@ -15,12 +15,18 @@ def _(mo):
 @app.cell
 def _():
     from pathlib import Path
+    import sys
     import marimo as mo
     import numpy as np
     import polars as pl
     import matplotlib.pyplot as plt
     import seaborn as sns
     import pandas as pd
+
+    _local_glmhmmt_src = Path(__file__).resolve().parents[2] / "glmhmmt" / "src"
+    if _local_glmhmmt_src.exists() and str(_local_glmhmmt_src) not in sys.path:
+        sys.path.insert(0, str(_local_glmhmmt_src))
+
     from plot_saver import make_plot_saver
     from glmhmmt.notebook_support import (
         CoefficientEditorWidget,
@@ -86,6 +92,7 @@ def _():
         load_fit_arrays,
         make_plot_saver,
         mo,
+        model_plots,
         np,
         paths,
         pd,
@@ -115,6 +122,8 @@ def _(get_adapter, model_cfg):
     adapter = get_adapter(task_name)
     df_all = adapter.read_dataset()
     df_all = adapter.subject_filter(df_all)
+    if adapter.condition_filter_options():
+        df_all = adapter.filter_condition_df(df_all, model_cfg.condition_filter)
     plots = adapter.get_plots()
     return adapter, df_all, plots, task_name
 
@@ -143,12 +152,6 @@ def _(ModelManagerWidget, mo):
 
 
 @app.cell
-def _(df_all):
-    df_all
-    return
-
-
-@app.cell
 def _(ModelCfg, ui_model_manager):
     model_cfg = ModelCfg.from_value(ui_model_manager.value)
     is_2afc = (model_cfg.task != "MCDR")
@@ -170,6 +173,7 @@ def _(adapter, generate_model_id, model_cfg, task_name):
         lapse_mode=model_cfg.lapse_mode,
         lapse_max=model_cfg.lapse_max,
         baseline_class_idx=adapter.baseline_class_idx,
+        condition_filter=model_cfg.condition_filter,
     )
     return (current_hash,)
 
@@ -287,6 +291,7 @@ def _(
                 verbose=True,
                 progress_callback=_on_progress,
                 baseline_class_idx=adapter.baseline_class_idx,
+                condition_filter=model_cfg.condition_filter,
             )
         mm_widget.saved_model_name = _selected_id
         mm_widget.alias_error = ""
@@ -600,12 +605,6 @@ def _(mo):
 
 
 @app.cell
-def _(weights_df):
-    weights_df
-    return
-
-
-@app.cell
 def _(arrays_store, mo, selected, views):
     mo.stop(not arrays_store, mo.md("No results loaded."))
     views_sel = {s: views[s] for s in selected}
@@ -613,15 +612,21 @@ def _(arrays_store, mo, selected, views):
 
 
 @app.cell
+def _(ui_mcdr_one_hot_mode):
+    ui_mcdr_one_hot_mode
+    return
+
+
+@app.cell
 def _(
     K,
     mo,
+    model_plots,
     pl,
     plot_bias_hot_weights,
     plot_choice_lag_weights,
     plot_sequence_feature_weights,
     plot_stim_hot_weights,
-    plots,
     save_plot,
     selected,
     task_name,
@@ -638,7 +643,7 @@ def _(
     #     K=K,
     # )
 
-    # _fig_summary = plot_weights_boxplot(**build_weights_boxplot_payload(build_emission_weights_df(views_sel)))
+    _fig_summary = model_plots.emission_weights_summary_boxplot(weights_df)
     # _lr_df = build_regressor_lr_df(
     #     {s: arrays_store[s] for s in selected},
     #     lapse_max=model_cfg.lapse_max,
@@ -652,11 +657,11 @@ def _(
     #         title="Regressor LR chi2",
     #     )
     # )
-    _fig_lr = None if _ax_lr is None else _ax_lr.figure
+    # _fig_lr = None if _ax_lr is None else _ax_lr.figure
     _fig_stim_hot = plot_stim_hot_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
     _fig_choice_lag = plot_choice_lag_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
     _fig_bias_hot = plot_bias_hot_weights(_weights_df_sel)
-    _fig_lapses = plots.plot_lapse_rates_boxplot(views=views_sel, K=K)
+    _fig_lapses = model_plots.lapse_rates_boxplot(views=views_sel, K=K)
     _fig_seq = plot_sequence_feature_weights(_weights_df_sel)
     # _items = [mo.md("#### By subject"), _fig_by_subject]
     _items = []
@@ -677,13 +682,13 @@ def _(
                 align="center",
             )
         )
-    if _fig_lr is not None:
-        _summary_cards.append(
-            mo.vstack(
-                [_fig_lr, save_plot(_fig_lr, "regressor LR chi2", stem="regressor_lr_chi2")],
-                align="center",
-            )
-        )
+    # if _fig_lr is not None:
+    #     _summary_cards.append(
+    #         mo.vstack(
+    #             [_fig_lr, save_plot(_fig_lr, "regressor LR chi2", stem="regressor_lr_chi2")],
+    #             align="center",
+    #         )
+    #     )
     _summary_cards.append(mo.vstack([_fig_lapses, save_plot(_fig_lapses, "lapse rates", stem="lapse_rates")], align="center"))
     _summary_panel = mo.hstack(_summary_cards, align="start", justify="start", gap=1.0)
     _items.extend([mo.md("#### Summary"), _summary_panel])
@@ -831,6 +836,7 @@ def _(adapter, mo, task_name, trial_df, views):
 
     if not regressor_options:
         ui_accuracy_binning = None
+        ui_accuracy_x_axis = None
         ui_accuracy_regressor = None
         ui_fit_lapse_by_subject = None
         ui_fit_lapse_logistic = None
@@ -838,6 +844,17 @@ def _(adapter, mo, task_name, trial_df, views):
         ui_show_lapses_in_legend = None
     else:
         ui_accuracy_binning = mo.ui.checkbox(value=False, label="Enable")
+        if task_name == "MCDR":
+            _accuracy_x_options = ["ttype", "stimd", "delay", "total_evidence"]
+        elif task_name == "2AFC_delay":
+            _accuracy_x_options = ["delay", "total_evidence"]
+        else:
+            _accuracy_x_options = ["ILD", "total_evidence"]
+        ui_accuracy_x_axis = mo.ui.dropdown(
+            options=_accuracy_x_options,
+            value=_accuracy_x_options[0],
+            label="Accuracy x-axis",
+        )
         ui_accuracy_regressor = mo.ui.dropdown(
             options=regressor_options,
             value=regressor_options[0],
@@ -870,6 +887,7 @@ def _(adapter, mo, task_name, trial_df, views):
     return (
         regressor_options,
         ui_accuracy_regressor,
+        ui_accuracy_x_axis,
         ui_fit_lapse_by_subject,
         ui_fit_lapse_logistic,
         ui_net_impact_x_axis,
@@ -920,6 +938,7 @@ def _(
 def _(
     mo,
     ui_accuracy_regressor,
+    ui_accuracy_x_axis,
     ui_fit_lapse_by_subject,
     ui_fit_lapse_logistic,
     ui_share_lapse_logistic_core,
@@ -928,6 +947,7 @@ def _(
     mo.hstack(
         [
             ui_accuracy_regressor,
+            ui_accuracy_x_axis,
             ui_fit_lapse_logistic,
             ui_fit_lapse_by_subject,
             ui_share_lapse_logistic_core,
@@ -962,13 +982,14 @@ def _(
     _regressor_for_right = _choice_history_regressor or ui_accuracy_regressor.value
     _regressor_label = plots.display_regressor_name(_regressor_for_right)
 
-    _fig_regressor = plots.plot_right_by_regressor_simple(
+    _fig_regressor = plots.plot_repeat_by_regressor_simple(
         plot_df_all,
         regressor_col=_regressor_for_right,
+        views=views_sel,
         title=None,
     )
 
-    mo.stop(_fig_regressor is None, mo.md(f"No p(right) plot available for {_regressor_label}."))
+    mo.stop(_fig_regressor is None, mo.md(f"No p(repeat) plot available for {_regressor_label}."))
 
     mo.hstack(
         [
@@ -984,7 +1005,7 @@ def _(
                     _fig_regressor,
                     save_plot(
                         _fig_regressor,
-                        f"p(right) by {_regressor_label}",
+                        f"p(repeat) by {_regressor_label}",
                         stem=f"psychometric_regressor_{_regressor_for_right}",
                     ),
                 ],
@@ -1039,13 +1060,15 @@ def _(mo, plot_df_all, plots, save_plot, views_sel):
 
 
 @app.cell
-def _(ui_accuracy_regressor):
+def _(plot_df_all, ui_accuracy_regressor):
     ui_accuracy_regressor.value
+    plot_df_all
     return
 
 
 @app.cell
 def _(
+    adapter,
     mo,
     plot_df_all,
     plots,
@@ -1053,10 +1076,12 @@ def _(
     regressor_options,
     save_plot,
     ui_accuracy_regressor,
+    ui_accuracy_x_axis,
     ui_fit_lapse_by_subject,
     ui_fit_lapse_logistic,
     ui_share_lapse_logistic_core,
     ui_show_lapses_in_legend,
+    views_sel,
 ):
     _selected_regressor_label = plots.display_regressor_name(ui_accuracy_regressor.value)
 
@@ -1065,12 +1090,15 @@ def _(
     _fig_binned = plots.plot_binned_accuracy_figure(
         plot_df_all,
         regressor_col=ui_accuracy_regressor.value,
+        x_axis=ui_accuracy_x_axis.value,
+        adapter=adapter,
+        views=views_sel,
         fit_lapse_logistic=bool(ui_fit_lapse_logistic.value),
         fit_lapse_by_subject=bool(ui_fit_lapse_by_subject.value),
         share_lapse_logistic_core=bool(ui_share_lapse_logistic_core.value),
         show_lapses_in_legend=bool(ui_show_lapses_in_legend.value),
         print_lapse_fits=not bool(ui_show_lapses_in_legend.value),
-        figsize = (3,3)
+        # figsize = (3,3)
     )
     _secondary_regressor = plots.pick_choice_history_regressor(regressor_options)
     mo.stop(_secondary_regressor is None, mo.md("No choice-history regressor available."))
@@ -1090,6 +1118,7 @@ def _(
             mo.hstack(
                 [
                     ui_accuracy_regressor,
+                    ui_accuracy_x_axis,
                     ui_fit_lapse_logistic,
                     ui_fit_lapse_by_subject,
                     ui_share_lapse_logistic_core,
@@ -1385,7 +1414,6 @@ def _(
     editor_trial_df,
     mo,
     np,
-    plot_right_by_regressor_simple,
     plots,
     prepare_predictions_df,
     save_plot,
@@ -1443,10 +1471,10 @@ def _(
         _reg_section = mo.md("No choice-history regressor available for the tweaked psychometric plot.")
     else:
         _regressor_label = display_regressor_name(_regressor_col)
-        _fig_reg_tweaked = plot_right_by_regressor_simple(
+        _fig_reg_tweaked = plots.plot_repeat_by_regressor_simple(
             _plot_df_tweaked,
             regressor_col=_regressor_col,
-            task_name=task_name,
+            views={subject: _view_tweaked},
             title=None,
         )
         if _fig_reg_tweaked is None:
@@ -1457,7 +1485,7 @@ def _(
                     _fig_reg_tweaked,
                     save_plot(
                         _fig_reg_tweaked,
-                        f"tweaked {_regressor_label} psychometric",
+                        f"tweaked {_regressor_label} repeat probability",
                         stem=f"tweaked_regressor_{_regressor_col}",
                     ),
                 ],

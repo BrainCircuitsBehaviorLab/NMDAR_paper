@@ -6,6 +6,7 @@ import polars as pl
 
 from glmhmmt.tasks import _register
 from glmhmmt.tasks.fitted_regressors import FittedWeightRegressorSpec
+from glmhmmt.runtime import get_data_dir
 
 from .two_afc import (
     EMISSION_COLS as BASE_EMISSION_COLS,
@@ -44,13 +45,42 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
     transition_cols: list[str] = TRANSITION_COLS
     stim_param_spec: FittedWeightRegressorSpec = _STIM_PARAM_SPEC
 
+    def read_dataset(self) -> pl.DataFrame:
+        """Return all Alexis 2AFC batches with a unified ``Drug`` column.
+
+        Older 2AFC batches do not have drug/rest annotations, so their
+        ``Drug`` values stay null. Batch 6 keeps the original 0/1 coding and
+        gets a readable ``condition`` label for plotting.
+        """
+        data_dir = get_data_dir()
+        base = pl.read_parquet(data_dir / "alexis_combined.parquet")
+        drug = pl.read_parquet(data_dir / self.data_file)
+
+        if "Drug" not in base.columns:
+            base = base.with_columns(pl.lit(None, dtype=pl.Float64).alias("Drug"))
+        else:
+            base = base.with_columns(pl.col("Drug").cast(pl.Float64, strict=False))
+        drug = drug.with_columns(pl.col("Drug").cast(pl.Float64, strict=False))
+
+        df = pl.concat([base, drug], how="diagonal_relaxed")
+        return df.with_columns(
+            pl.when(pl.col("Drug").is_null())
+            .then(pl.lit(None, dtype=pl.Utf8))
+            .when(pl.col("Drug") == 1)
+            .then(pl.lit("drug"))
+            .when(pl.col("Drug") == 0)
+            .then(pl.lit("rest"))
+            .otherwise(pl.lit(None, dtype=pl.Utf8))
+            .alias("condition")
+        )
+
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
         if "Experiment" not in df.columns:
             return df
         return df.filter(pl.col("Experiment").is_in(_KEEP_EXPERIMENTS))
 
     def condition_filter_options(self) -> list[str]:
-        return ["all", "saline", "drug"]
+        return ["all", "nan", "rest", "drug", "saline"]
 
     def drug_condition_col(self, df: pl.DataFrame | pd.DataFrame) -> str | None:
         for col in ("Drug", "drug"):
@@ -66,15 +96,20 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
         selected = str(condition_filter or "all").strip().lower()
         if selected in {"all", ""}:
             return df
-        if selected not in {"saline", "drug"}:
+        if selected not in {"nan", "null", "none", "no_drug", "saline", "rest", "drug"}:
             raise ValueError(
                 f"Unknown 2AFC drug condition filter {condition_filter!r}. "
-                "Expected one of: all, saline, drug."
+                "Expected one of: all, nan, rest, drug."
             )
 
         drug_col = self.drug_condition_col(df)
         if drug_col is None:
             raise ValueError("2AFC_DRUG requires a 'Drug' or 'drug' column for condition filtering.")
+
+        if selected in {"nan", "null", "none", "no_drug"}:
+            if isinstance(df, pl.DataFrame):
+                return df.filter(pl.col(drug_col).is_null())
+            return df.loc[pd.to_numeric(df[drug_col], errors="coerce").isna()].copy()
 
         target = 1 if selected == "drug" else 0
         if isinstance(df, pl.DataFrame):
@@ -82,7 +117,6 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
             return (
                 df.with_columns(
                     pl.col(drug_col)
-                    .fill_null(0)
                     .cast(pl.Int64, strict=False)
                     .alias(filter_col)
                 )

@@ -25,6 +25,7 @@ from matplotlib.lines import Line2D
 from typing import List, Optional, Sequence, Tuple
 from src.process.two_afc import EMISSION_REGRESSOR_LABELS
 from glmhmmt.views import get_state_color, get_state_palette
+from glmhmmt.plots.common import resolve_axes_grid
 
 from src.process.common import (
     compute_rb_by_x,
@@ -176,7 +177,7 @@ def plot_weights_per_contrast(
         style.get("axes"),
         n_axes=C_m1,
         figsize=style.get("figsize", (max(5, 0.7 * M) * C_m1, 3.5)),
-        sharey=True,
+        sharey=extra_fit_axes == 0,
     )
     for c, ax in enumerate(axes):
         for k in range(K):
@@ -1205,11 +1206,15 @@ from src.plots.common import (
     add_shared_figure_legend,
     apply_axis_style,
     centered_numeric_group_palette,
+    fit_lapse_logistic_for_panel,
     make_single_panel_figure,
+    prepare_binned_accuracy_total_evidence_panels,
+    plot_lapse_fit_parameter_panels,
     plot_grouped_summary,
     plot_mean_over_data,
     plot_integration_map_panels,
     plot_simple_summary,
+    plot_repeat_by_regressor_simple as _plot_repeat_by_regressor_simple,
     resolve_axes,
     resolve_single_axis,
 )
@@ -1306,6 +1311,9 @@ def plot_binned_accuracy_figure(
     plot_df,
     *,
     regressor_col: str,
+    x_axis: str | None = None,
+    adapter=None,
+    views: dict | None = None,
     figsize: tuple[float, float] | None = None,
     max_panels: int | None = None,
     legend: bool = True,
@@ -1320,72 +1328,105 @@ def plot_binned_accuracy_figure(
     style = dict(plot_kwargs)
     axes_arg = style.pop("axes", None)
     figsize_arg = style.pop("figsize", None)
-    panels, legend_title = process.prepare_binned_accuracy_figure(
-        plot_df,
-        regressor_col=regressor_col,
-    )
+    x_axis_key = str(x_axis).lower() if x_axis is not None else None
+    if x_axis_key in {"total_evidence", "total evidence", "fitted_total_evidence", "evidence"}:
+        panels, legend_title = prepare_binned_accuracy_total_evidence_panels(
+            plot_df,
+            regressor_col=regressor_col,
+            adapter=adapter,
+            views=views,
+            is_mcdr=False,
+            baseline=process.BASELINE,
+        )
+    else:
+        panels, legend_title = process.prepare_binned_accuracy_figure(
+            plot_df,
+            regressor_col=regressor_col,
+        )
+        if panels and x_axis_key in {"ild", "native"}:
+            panels = panels[:1]
     if not panels:
         return None
     if max_panels is not None:
         panels = panels[:max_panels]
 
-    fig, axes = resolve_axes(
-        axes_arg,
-        n_axes=len(panels),
-        figsize=figsize_arg if figsize_arg is not None else (figsize if figsize is not None else (4 * len(panels), 4)),
-        sharey=True,
+    extra_fit_axes = 2 if fit_lapse_logistic else 0
+    resolved_figsize = (
+        figsize_arg
+        if figsize_arg is not None
+        else (figsize if figsize is not None else (4 * (len(panels) + extra_fit_axes), 4))
     )
+    if extra_fit_axes and (figsize_arg is not None or figsize is not None) and len(panels) > 0:
+        resolved_figsize = (
+            resolved_figsize[0] * (len(panels) + extra_fit_axes) / len(panels),
+            resolved_figsize[1],
+        )
+    n_axes = len(panels) + extra_fit_axes
+    if extra_fit_axes:
+        fig, axes_grid, _ = resolve_axes_grid(
+            axes=axes_arg,
+            n_panels=n_axes,
+            nrows=1,
+            ncols=n_axes,
+            figsize=resolved_figsize,
+            squeeze=False,
+            sharex=False,
+            sharey=False,
+        )
+        axes = axes_grid.ravel()
+    else:
+        fig, axes = resolve_axes(
+            axes_arg,
+            n_axes=n_axes,
+            figsize=resolved_figsize,
+            sharey=True,
+        )
+    panel_axes = axes[: len(panels)]
+    diagnostic_axes = axes[len(panels) : len(panels) + extra_fit_axes]
 
     lapse_fit_reports: list[str] = []
-    for ax, panel in zip(axes, panels, strict=False):
+    diagnostic_fits = {}
+    diagnostic_meta = None
+    diagnostic_line_order = None
+    for ax, panel in zip(panel_axes, panels, strict=False):
         summary = panel["summary"]
+        meta = panel["meta"]
+        x_plot_col = meta.get("x_col", "ILD")
         fits = {}
         label_map = None
         if fit_lapse_logistic and summary is not None and not summary.empty:
-            line_order = panel["meta"].get("line_order") or summary["_reg_bin"].dropna().unique().tolist()
-            subject_summary = panel.get("subject_summary")
-            if fit_lapse_by_subject and subject_summary is not None and not subject_summary.empty:
-                fits = fit_lapse_logistic_by_subject_group(
-                    subject_summary,
-                    subject_col="subject",
-                    line_group_col="_reg_bin",
-                    x_col="ILD",
-                    y_col="data_mean",
-                    weight_col="n_trials",
-                    line_order=line_order,
-                    lapse_max=lapse_max,
-                    shared_core=share_lapse_logistic_core,
-                )
-            else:
-                fits = fit_lapse_logistic_by_group(
-                    summary,
-                    line_group_col="_reg_bin",
-                    x_col="ILD",
-                    y_col="md",
-                    weight_col="nd",
-                    line_order=line_order,
-                    lapse_max=lapse_max,
-                    shared_core=share_lapse_logistic_core,
-                )
+            line_order = meta.get("line_order") or summary["_reg_bin"].dropna().unique().tolist()
+            fits = fit_lapse_logistic_for_panel(
+                panel,
+                fit_lapse_by_subject=fit_lapse_by_subject,
+                lapse_max=lapse_max,
+                share_lapse_logistic_core=share_lapse_logistic_core,
+                default_x_col="ILD",
+            )
             if fits and show_lapses_in_legend:
                 label_map = {
                     group_value: lapse_logistic_label(group_value, fits.get(group_value))
                     for group_value in line_order
                 }
             elif fits and (print_lapse_fits is None or print_lapse_fits):
-                title = panel.get("label") or panel["meta"].get("title") or "Binned psychometric lapse fits"
+                title = panel.get("label") or meta.get("title") or "Binned psychometric lapse fits"
                 lapse_fit_reports.append(format_lapse_logistic_fits(fits, title=title))
+            if fits and not diagnostic_fits:
+                diagnostic_fits = fits
+                diagnostic_meta = meta
+                diagnostic_line_order = line_order
 
         plot_grouped_summary(
             ax,
             summary,
             line_group_col="_reg_bin",
-            x_col="ILD",
-            meta=panel["meta"],
+            x_col=x_plot_col,
+            meta=meta,
             label_map=label_map,
+            legend=legend,
         )
         if fits:
-            line_order = panel["meta"].get("line_order") or list(fits)
+            line_order = meta.get("line_order") or list(fits)
             default_palette = sns.color_palette("viridis", len(line_order))
             for group_value, color in zip(line_order, default_palette, strict=False):
                 fit = fits.get(group_value)
@@ -1405,11 +1446,44 @@ def plot_binned_accuracy_figure(
         ax.axvline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
     if lapse_fit_reports:
         print("\n\n".join(report for report in lapse_fit_reports if report))
-    add_shared_figure_legend(fig, source_ax=axes[-1], title=legend_title, legend=legend)
+    if fit_lapse_logistic:
+        plot_lapse_fit_parameter_panels(
+            diagnostic_axes,
+            diagnostic_fits,
+            line_order=diagnostic_line_order,
+            meta=diagnostic_meta or {},
+            regressor_label=display_regressor_name(regressor_col),
+        )
+    add_shared_figure_legend(fig, source_ax=panel_axes[-1], title=legend_title, legend=legend)
     fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
-    for ax in axes[: len(panels)]:
+    for ax in panel_axes:
         apply_axis_style(ax, **style)
-    return fig, axes[: len(panels)]
+    return fig, axes[: len(panels) + extra_fit_axes]
+
+
+def plot_repeat_by_regressor_simple(
+    plot_df,
+    *,
+    regressor_col: str,
+    views: dict,
+    title: str | None = None,
+    xlabel: str | None = None,
+    n_bins: int = 10,
+    legend: bool = True,
+    **plot_kwargs,
+):
+    _ = title
+    return _plot_repeat_by_regressor_simple(
+        plot_df,
+        regressor_col=regressor_col,
+        views=views,
+        is_mcdr=False,
+        baseline=process.BASELINE,
+        xlabel=xlabel,
+        n_bins=n_bins,
+        legend=legend,
+        **plot_kwargs,
+    )
 
 
 def plot_right_by_regressor(
@@ -1634,6 +1708,7 @@ __all__ = [
     "plot_accuracy_by_total_evidence",
     "plot_binned_accuracy_figure",
     "plot_repeat_by_repeat_evidence",
+    "plot_repeat_by_regressor_simple",
     "plot_right_integration_map",
     "plot_right_by_regressor",
     "plot_right_by_regressor_simple",

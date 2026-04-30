@@ -524,13 +524,19 @@ def prepare_binned_accuracy_figure(
     if df_pd.empty:
         return None, None
 
+    df_pd["_plot_ild"] = pd.to_numeric(df_pd["ILD"], errors="coerce")
+    df_pd["_plot_ild"] = np.where(
+        np.isclose(df_pd["_plot_ild"], -70.0),
+        -16.0,
+        np.where(np.isclose(df_pd["_plot_ild"], 70.0), 16.0, df_pd["_plot_ild"]),
+    )
     conds = sorted(df_pd["condition"].dropna().unique()) if "condition" in df_pd.columns else []
     exps = sorted(df_pd["experiment"].dropna().unique()) if "experiment" in df_pd.columns else []
-    ild_ticks = sorted(pd.to_numeric(df_pd["ILD"], errors="coerce").dropna().unique()) if "ILD" in df_pd.columns else []
+    ild_ticks = sorted(pd.to_numeric(df_pd["_plot_ild"], errors="coerce").dropna().unique())
 
-    # Build sparse tick labels: show labels only at -70, -8, 0, +8, +70
+    # Build sparse tick labels: show central labels and remapped extremes.
     if ild_ticks:
-        allowed = {-70.0, -8.0, 0.0, 8.0, 70.0}
+        allowed = {-16.0, -8.0, 0.0, 8.0, 16.0}
         ild_tick_labels: list[str] = []
         for t in ild_ticks:
             val = float(t)
@@ -554,13 +560,13 @@ def prepare_binned_accuracy_figure(
             plot_df = plot_df[plot_df[subgroup_col] == subgroup_value].copy()
         plot_df = plot_df[
             plot_df["_reg_bin"].notna()
-            & plot_df["ILD"].notna()
+            & plot_df["_plot_ild"].notna()
             & plot_df["_reg_bin"].isin(reg_bin_labels)
         ].copy()
         if plot_df.empty:
             return pd.DataFrame()
         return (
-            plot_df.groupby(["_reg_bin", "subject", "ILD"], observed=True)
+            plot_df.groupby(["_reg_bin", "subject", "_plot_ild"], observed=True)
             .agg(
                 data_mean=("_response_right", "mean"),
                 model_mean=(PRED_COL, "mean"),
@@ -574,7 +580,7 @@ def prepare_binned_accuracy_figure(
             "summary": summarize_grouped_panel(
                 df_pd,
                 line_group_col="_reg_bin",
-                x_col="ILD",
+                x_col="_plot_ild",
                 subject_col="subject",
                 data_col="_response_right",
                 model_col=PRED_COL,
@@ -588,6 +594,8 @@ def prepare_binned_accuracy_figure(
                 "baseline": BASELINE,
                 "xticks": ild_ticks,
                 "x_tick_labels": ild_tick_labels,
+                "x_col": "_plot_ild",
+                "fit_x_col": "_plot_ild",
             }
         }
     )
@@ -596,12 +604,12 @@ def prepare_binned_accuracy_figure(
         panels.append(
             {
                 "summary": summarize_grouped_panel(
-                    df_pd,
-                    line_group_col="_reg_bin",
-                    x_col="ILD",
-                    subject_col="subject",
-                    data_col="_response_right",
-                    model_col=PRED_COL,
+                df_pd,
+                line_group_col="_reg_bin",
+                x_col="_plot_ild",
+                subject_col="subject",
+                data_col="_response_right",
+                model_col=PRED_COL,
                     line_order=reg_bin_labels,
                     subgroup_col="condition",
                     subgroup_value=cond,
@@ -617,6 +625,8 @@ def prepare_binned_accuracy_figure(
                     "baseline": BASELINE,
                     "xticks": ild_ticks,
                     "x_tick_labels": ild_tick_labels,
+                    "x_col": "_plot_ild",
+                    "fit_x_col": "_plot_ild",
                 },
             }
         )
@@ -625,12 +635,12 @@ def prepare_binned_accuracy_figure(
         panels.append(
             {
                 "summary": summarize_grouped_panel(
-                    df_pd,
-                    line_group_col="_reg_bin",
-                    x_col="ILD",
-                    subject_col="subject",
-                    data_col="_response_right",
-                    model_col=PRED_COL,
+                df_pd,
+                line_group_col="_reg_bin",
+                x_col="_plot_ild",
+                subject_col="subject",
+                data_col="_response_right",
+                model_col=PRED_COL,
                     line_order=reg_bin_labels,
                     subgroup_col="experiment",
                     subgroup_value=exp,
@@ -646,6 +656,8 @@ def prepare_binned_accuracy_figure(
                     "baseline": BASELINE,
                     "xticks": ild_ticks,
                     "x_tick_labels": ild_tick_labels,
+                    "x_col": "_plot_ild",
+                    "fit_x_col": "_plot_ild",
                 },
             }
         )
