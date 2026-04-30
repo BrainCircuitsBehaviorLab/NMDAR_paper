@@ -611,7 +611,7 @@ wheels = [
 
 [[package]]
 name = "glmhmmt"
-version = "0.2.6"
+version = "0.2.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anywidget" },
@@ -638,9 +638,9 @@ dependencies = [
     { name = "traitlets" },
     { name = "wigglystuff" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b1/51/c54a563cb202e46819f2970eaec860874832562744b248540cee90019d45/glmhmmt-0.2.6.tar.gz", hash = "sha256:0d288015bf74fb8340059bb518345159a7a52e0df264e54fcb21cc819041674c", size = 180807, upload-time = "2026-04-29T12:12:07.725Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/0d/210585cc0fedf49e3f395ccb5a5395d7f89a091db21df4512b26dee3462e/glmhmmt-0.2.7.tar.gz", hash = "sha256:4f34c2de10739cdd941f1967c26d92321cf5483daa3b99ffd14955756f5b3482", size = 180802, upload-time = "2026-04-30T08:04:16.518Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/e3/e69472bbfb278456da4e1ac0c751a5abccff03f8ed1d527390c336098a29/glmhmmt-0.2.6-py3-none-any.whl", hash = "sha256:58e196ad28b50c35fcaa4a9e04c3130ee3b7c2a5dd673623ac4d71b10a29672e", size = 208227, upload-time = "2026-04-29T12:12:06.327Z" },
+    { url = "https://files.pythonhosted.org/packages/60/12/25e2cd4355ba2a49f4091dfda968337071febeac65060644942e96dcaea1/glmhmmt-0.2.7-py3-none-any.whl", hash = "sha256:37b24ad87d4a8c46eaf5c27f15386a7ba6ce773e8c477cce6eae316587074de0", size = 208227, upload-time = "2026-04-30T08:04:14.648Z" },
 ]
 
 [[package]]
@@ -1425,7 +1425,7 @@ dependencies = [
 requires-dist = [
     { name = "altair", specifier = ">=6.1.0" },
     { name = "bottleneck", specifier = ">=1.6.0" },
-    { name = "glmhmmt", specifier = "==0.2.6" },
+    { name = "glmhmmt", specifier = "==0.2.7" },
     { name = "marimo", specifier = "==0.23.2" },
     { name = "marimo-toml-editor", specifier = ">=0.1.1" },
     { name = "numexpr", specifier = ">=2.14.1" },

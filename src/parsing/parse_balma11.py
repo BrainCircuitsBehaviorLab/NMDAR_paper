@@ -192,7 +192,7 @@ def _(df, np, paths, pd):
         'timepoint_1', 'timepoint_2', 'timepoint_3', 'timepoint_4',
         'onset', 'offset',
     ]]
-    to_plot = to_plot[to_plot["batch"].isin(["3B", "11B"])]
+    to_plot = to_plot[to_plot["batch"].isin(["3B", "6B", "11B"])]
     to_plot.to_parquet(paths.DATA_PATH / "MCDR_all.parquet")
     to_plot.to_csv(paths.DATA_PATH / "MCDR_bad.csv")
     to_plot

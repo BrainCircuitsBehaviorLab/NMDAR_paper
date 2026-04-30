@@ -117,19 +117,30 @@ def _(df_2AFC, fig_size, plt, two_afc_plots):
 
 
 @app.cell
-def _(MCDR_plots, df_MCDR, fig_size, plt):
-    MCDR_plots.plot_accuracy(df_MCDR, figsize=fig_size(n_cols=3), title='')
-    plt.savefig('acc_vs_difficulty.svg')
-    plt.show()
+def _(df_MCDR, mo):
 
-    MCDR_plots.plot_rb(df_MCDR, figsize=fig_size(n_cols=3), title='')
+    ui_MCDR_subject = mo.ui.multiselect(options = df_MCDR["subject"].unique(), value = df_MCDR["subject"].unique())
+    ui_MCDR_subject
+    return (ui_MCDR_subject,)
+
+
+@app.cell
+def _(MCDR_plots, df_MCDR, fig_size, mo, pl, plt, ui_MCDR_subject):
+    df_MCDR_filtered = df_MCDR.filter(pl.col("subject").is_in(ui_MCDR_subject.value))
+    panel1 = MCDR_plots.plot_accuracy(df_MCDR_filtered, figsize=fig_size(n_cols=1), title='')
+    plt.savefig('acc_vs_difficulty.svg')
+    # plt.show()
+
+    panel2 = MCDR_plots.plot_rb(df_MCDR_filtered, figsize=fig_size(n_cols=1), title='')
     plt.savefig('MCDR_rb.svg')
-    plt.show()
+    # plt.show()
+    mo.hstack([panel1, panel2])
     return
 
 
 @app.cell
-def _():
+def _(df_MCDR):
+    print(*df_MCDR["subject"].unique())
     return
 
 
