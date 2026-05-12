@@ -187,7 +187,7 @@ def plot_prepared_weight_family(
         positions=positions,
         widths=0.55,
         median_colors="tab:blue",
-        line_values=subject_lines,
+        # line_values=subject_lines,
     )
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
     ax.set_title(prepared.title)
@@ -395,6 +395,181 @@ def plot_mean_over_data(
         ax.invert_xaxis()
 
     return fig
+
+
+COUNTERFACTUAL_PALETTE = {
+    "Empirical": "#1f77b4",
+    "Full fitted": "#111111",
+    "Fixed bias": "#d55e00",
+    "Fixed lapses": "#009e73",
+}
+
+
+def _plot_counterfactual_summary(
+    ax,
+    df: pd.DataFrame,
+    *,
+    x_col: str,
+    mean_col: str,
+    lo_col: str,
+    hi_col: str,
+    order: Sequence[str],
+) -> None:
+    """Shared line/error plotting for the RB and lag-match simulation summaries."""
+    required = {"scenario", x_col, mean_col, lo_col, hi_col}
+    if df.empty or not required.issubset(df.columns):
+        ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
+        return
+
+    for scenario in order:
+        sub = df[df["scenario"] == scenario].copy()
+        if sub.empty:
+            continue
+        sub = sub.sort_values(x_col)
+        x = sub[x_col].to_numpy(dtype=float)
+        y = sub[mean_col].to_numpy(dtype=float)
+        lo = sub[lo_col].to_numpy(dtype=float)
+        hi = sub[hi_col].to_numpy(dtype=float)
+        color = COUNTERFACTUAL_PALETTE[scenario]
+        if scenario == "Empirical":
+            ax.errorbar(
+                x,
+                y,
+                yerr=np.vstack([y - lo, hi - y]),
+                fmt="o",
+                color=color,
+                ecolor=color,
+                capsize=3,
+                label=scenario,
+                zorder=4,
+            )
+        else:
+            ax.plot(x, y, lw=1.8, marker="o", ms=3, color=color, label=scenario)
+            ax.fill_between(x, lo, hi, color=color, alpha=0.12, linewidth=0.0)
+
+
+def plot_action_trace_counterfactual_rb(summary, meta, *, ax: plt.Axes | None = None, figsize=(4.6, 3.4)):
+    """Plot repetition bias from empirical data and parameter-fixed simulations."""
+    fig, ax = resolve_single_axis(ax=ax, figsize=figsize, constrained_layout=True)
+    df = to_pandas_df(summary)
+    _plot_counterfactual_summary(
+        ax,
+        df,
+        x_col="_counterfactual_rb_x",
+        mean_col="rb_mean",
+        lo_col="rb_lo",
+        hi_col="rb_hi",
+        order=("Empirical", "Full fitted", "Fixed bias", "Fixed lapses"),
+    )
+    ax.axhline(float(meta.get("baseline", 0.5)), color="0.5", lw=0.9, ls="--", zorder=0)
+    ax.set_xlabel(meta.get("xlabel", "Task variable"))
+    ax.set_ylabel("Rep. bias")
+    ax.set_ylim(0.0, 1.0)
+    if meta.get("xticks") is not None:
+        ax.set_xticks(meta["xticks"])
+        if meta.get("x_tick_labels") is not None:
+            ax.set_xticklabels(meta["x_tick_labels"])
+    if meta.get("invert_x", False):
+        ax.invert_xaxis()
+    ax.legend(frameon=False, fontsize=8)
+    ax.set_title("")
+    return fig, ax
+
+
+def plot_action_trace_counterfactual_lag_match(
+    lag_summary,
+    meta,
+    *,
+    ax: plt.Axes | None = None,
+    figsize=(4.6, 3.2),
+):
+    """Plot p(response_t = response_{t-L}) from lag 1 to the selected max lag."""
+    fig, ax = resolve_single_axis(ax=ax, figsize=figsize, constrained_layout=True)
+    df = to_pandas_df(lag_summary)
+    _plot_counterfactual_summary(
+        ax,
+        df,
+        x_col="lag",
+        mean_col="lag_match_mean",
+        lo_col="lag_match_lo",
+        hi_col="lag_match_hi",
+        order=("Empirical", "Full fitted", "Fixed bias", "Fixed lapses"),
+    )
+    ax.axhline(float(meta.get("baseline", 0.5)), color="0.5", lw=0.9, ls="--", zorder=0)
+    ax.set_xlabel("History lag")
+    ax.set_ylabel(r"$p(\hat r_t = r_{t-L})$")
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlim(0.5, float(meta.get("max_history_lag", 10)) + 0.5)
+    ax.set_xticks(np.arange(1, int(meta.get("max_history_lag", 10)) + 1))
+    ax.set_title("Lag-match parameter-fixed simulation")
+    ax.legend(frameon=False, fontsize=8)
+    return fig, ax
+
+
+def plot_action_trace_counterfactual_subject_scatter(
+    subject_scatter,
+    meta=None,
+    *,
+    ax: plt.Axes | None = None,
+    figsize=(3.6, 3.6),
+):
+    """Plot one animal per point: empirical RB vs full-fitted simulated RB."""
+    fig, ax = resolve_single_axis(ax=ax, figsize=figsize, constrained_layout=True)
+    df = to_pandas_df(subject_scatter)
+    required = {"empirical_rb", "full_fitted_rb"}
+    if df.empty or not required.issubset(df.columns):
+        ax.text(0.5, 0.5, "No valid subject data", ha="center", va="center", transform=ax.transAxes)
+        ax.axis("off")
+        return fig, ax
+
+    x = df["empirical_rb"].to_numpy(dtype=float)
+    y = df["full_fitted_rb"].to_numpy(dtype=float)
+    yerr = None
+    if {"full_fitted_rb_lo", "full_fitted_rb_hi"}.issubset(df.columns):
+        lo = df["full_fitted_rb_lo"].to_numpy(dtype=float)
+        hi = df["full_fitted_rb_hi"].to_numpy(dtype=float)
+        yerr = np.vstack([np.clip(y - lo, 0.0, None), np.clip(hi - y, 0.0, None)])
+
+    ax.errorbar(
+        x,
+        y,
+        yerr=yerr,
+        fmt=".",
+        ms=5,
+        color=COUNTERFACTUAL_PALETTE["Full fitted"],
+        ecolor=COUNTERFACTUAL_PALETTE["Full fitted"],
+        alpha=0.8,
+        capsize=2,
+        linewidth=1.0,
+    )
+    ax.plot([0, 1], [0, 1], color="0.45", lw=0.9, ls="--", zorder=0)
+    ax.axhline(0.5, color="0.8", lw=0.8, zorder=0)
+    ax.axvline(0.5, color="0.8", lw=0.8, zorder=0)
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("Experimental RB")
+    ax.set_ylabel("Full fitted RB")
+    ax.set_title("Full model by animal")
+    if len(df) > 1 and np.nanstd(x) > 0 and np.nanstd(y) > 0:
+        corr = float(np.corrcoef(x, y)[0, 1])
+        ax.text(0.05, 0.95, f"r = {corr:.2f}", ha="left", va="top", transform=ax.transAxes)
+    return fig, ax
+
+
+def plot_action_trace_parameter_fixed_rb(*args, **kwargs):
+    """Alias for the parameter-fixed repetition-bias plot."""
+    return plot_action_trace_counterfactual_rb(*args, **kwargs)
+
+
+def plot_action_trace_parameter_fixed_lag_match(*args, **kwargs):
+    """Alias for the parameter-fixed lag-match plot."""
+    return plot_action_trace_counterfactual_lag_match(*args, **kwargs)
+
+
+def plot_action_trace_parameter_fixed_subject_scatter(*args, **kwargs):
+    """Alias for the parameter-fixed full-model animal scatter."""
+    return plot_action_trace_counterfactual_subject_scatter(*args, **kwargs)
 
 
 def add_shared_figure_legend(
@@ -962,10 +1137,21 @@ def plot_lapse_fit_parameter_panels(
 
     lapse_left = np.asarray([fits[group].lapse_left for group in groups], dtype=float)
     lapse_right = np.asarray([fits[group].lapse_right for group in groups], dtype=float)
+    bias = np.asarray([fits[group].bias for group in groups], dtype=float)
+    y_values = np.concatenate([lapse_left, lapse_right, bias, np.asarray([0.0])])
+    y_values = y_values[np.isfinite(y_values)]
+    shared_ylim = None
+    if y_values.size:
+        y_min = float(np.nanmin(y_values))
+        y_max = float(np.nanmax(y_values))
+        if np.isclose(y_min, y_max):
+            pad = 0.1 if np.isclose(y_min, 0.0) else 0.1 * abs(y_min)
+        else:
+            pad = 0.05 * (y_max - y_min)
+        shared_ylim = (y_min - pad, y_max + pad)
 
     lapse_ax.plot(x_values, lapse_left, "-o", color="#2b7bba", lw=1.5, ms=4, label="left")
     lapse_ax.plot(x_values, lapse_right, "-o", color="#c43c39", lw=1.5, ms=4, label="right")
-    lapse_ax.set_ylim(bottom=0.0)
     apply_axis_style(
         lapse_ax,
         xlabel=regressor_label,
@@ -974,7 +1160,6 @@ def plot_lapse_fit_parameter_panels(
     )
     lapse_ax.legend(frameon=False, fontsize=8)
 
-    bias = np.asarray([fits[group].bias for group in groups], dtype=float)
     bias_ax.plot(x_values, bias, "-o", color="black", lw=1.5, ms=4)
     bias_ax.axhline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
     apply_axis_style(
@@ -983,6 +1168,9 @@ def plot_lapse_fit_parameter_panels(
         ylabel="Psychometric bias",
         title="Bias",
     )
+    if shared_ylim is not None:
+        lapse_ax.set_ylim(shared_ylim)
+        bias_ax.set_ylim(shared_ylim)
 
 
 def plot_grouped_summary(
@@ -1334,6 +1522,223 @@ def plot_integration_map_panels(
     axes[0].set_ylabel(meta["ylabel"])
     return fig, axes
 
+def plot_session_running_accuracy_repetition(
+    prepared,
+    *,
+    ax: plt.Axes | None = None,
+    figsize=(4.8, 3.0),
+    accuracy_label: str = "Accuracy",
+    repetition_label: str = "Repeating bias",
+    **style,
+):
+    """Plot running accuracy and repetition probability across trials."""
+    fig, ax = resolve_single_axis(ax=ax, figsize=figsize, constrained_layout=True)
+
+    trace = to_pandas_df(prepared.get("trace", pd.DataFrame()))
+    required = {"trial_index", "running_accuracy", "running_repetition"}
+    if trace.empty or not required.issubset(trace.columns):
+        ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
+        ax.axis("off")
+        apply_axis_style(ax, **style)
+        return fig, ax
+
+    ax.plot(
+        trace["trial_index"],
+        trace["running_accuracy"],
+        lw=1.8,
+        color="#2b7bba",
+        label=accuracy_label,
+    )
+    ax.plot(
+        trace["trial_index"],
+        trace["running_repetition"],
+        lw=1.8,
+        color="#c43c39",
+        label=repetition_label,
+    )
+
+    ax.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.6)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlabel("Trial index")
+    ax.set_ylabel("Running probability")
+    ax.legend(frameon=False, fontsize=8)
+
+    window = prepared.get("meta", {}).get("running_window")
+    if window is not None:
+        ax.set_title(f"Running behavior, window={window}")
+
+    apply_axis_style(ax, **style)
+    return fig, ax
+
+
+def plot_session_behavior_autocorrelogram(
+    prepared,
+    *,
+    ax: plt.Axes | None = None,
+    figsize=(4.0, 3.0),
+    **style,
+):
+    """Plot autocorrelogram of outcome and repetition vectors."""
+    fig, ax = resolve_single_axis(ax=ax, figsize=figsize, constrained_layout=True)
+
+    ac = to_pandas_df(prepared.get("autocorr", pd.DataFrame()))
+    required = {"lag", "autocorr", "signal"}
+    if ac.empty or not required.issubset(ac.columns):
+        ax.text(0.5, 0.5, "No valid autocorrelation data", ha="center", va="center", transform=ax.transAxes)
+        ax.axis("off")
+        apply_axis_style(ax, **style)
+        return fig, ax
+
+    palette = {
+        "Outcome": "#2b7bba",
+        "Repetition": "#c43c39",
+    }
+
+    for signal in ("Outcome", "Repetition"):
+        sub = ac[ac["signal"] == signal].copy()
+        if sub.empty:
+            continue
+        sub = sub.sort_values("lag")
+        ax.plot(
+            sub["lag"],
+            sub["autocorr"],
+            lw=1.8,
+            marker="o",
+            ms=3,
+            color=palette.get(signal, "black"),
+            label=signal,
+        )
+
+    ax.axhline(0.0, color="gray", lw=0.8, ls="--", alpha=0.6)
+    ax.set_xlabel("Lag")
+    ax.set_ylabel("Autocorrelation")
+    ax.set_title("Behavioral timescale")
+    if ac["lag"].notna().any():
+        ax.set_xlim(left=1.0, right=float(np.nanmax(ac["lag"])) if len(ac) else None)
+    ax.legend(frameon=False, fontsize=8)
+
+    apply_axis_style(ax, **style)
+    return fig, ax
+
+
+def plot_session_accuracy_repetition_timescale(
+    prepared,
+    *,
+    axes: Sequence[plt.Axes] | None = None,
+    figsize=(8.8, 3.0),
+    running_style: dict | None = None,
+    autocorr_style: dict | None = None,
+):
+    """Plot running behavior and behavioral autocorrelogram as a two-panel figure."""
+    fig, axes = resolve_axes(
+        axes=axes,
+        n_axes=2,
+        figsize=figsize,
+        squeeze=False,
+        constrained_layout=True,
+    )
+    plot_session_running_accuracy_repetition(
+        prepared,
+        ax=axes[0],
+        **(running_style or {}),
+    )
+    plot_session_behavior_autocorrelogram(
+        prepared,
+        ax=axes[1],
+        **(autocorr_style or {}),
+    )
+    return fig, axes
+
+
+def plot_corrected_behavior_autocorrelograms(
+    prepared,
+    *,
+    axes: Sequence[plt.Axes] | None = None,
+    figsize=(7.0, 3.0),
+    model_autocorr=None,
+    glm_autocorr=None,
+    data_color: str = "#1f77b4",
+    model_color: str = "black",
+    model_label: str = "Fitted GLM",
+    **style,
+):
+    """Plot Tiffany-style corrected autocorrelograms for outcomes and repetitions.
+
+    Pass ``model_autocorr`` or ``glm_autocorr`` to overlay a fitted GLM simulation.
+    """
+    fig, axes = resolve_axes(
+        axes=axes,
+        n_axes=2,
+        figsize=figsize,
+        squeeze=False,
+        constrained_layout=True,
+    )
+
+    data = to_pandas_df(prepared.get("autocorr", pd.DataFrame()))
+    model = model_autocorr if model_autocorr is not None else glm_autocorr
+    if model is None:
+        model = prepared.get("model_autocorr")
+    model = to_pandas_df(model) if model is not None else pd.DataFrame()
+
+    for ax, signal, title in zip(
+        axes,
+        ("Outcome", "Repetition"),
+        ("Choice outcomes", "Repeated responses"),
+        strict=False,
+    ):
+        sub = (
+            data[data["signal"] == signal].copy()
+            if "signal" in data.columns
+            else pd.DataFrame()
+        )
+        if sub.empty or not {"lag", "autocorr"}.issubset(sub.columns):
+            ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
+            ax.axis("off")
+            continue
+
+        sub = sub.sort_values("lag")
+        yerr = sub["autocorr_sem"].to_numpy(dtype=float) if "autocorr_sem" in sub.columns else None
+        ax.errorbar(
+            sub["lag"].to_numpy(dtype=float),
+            sub["autocorr"].to_numpy(dtype=float),
+            yerr=yerr,
+            fmt="o",
+            ms=4,
+            color=data_color,
+            ecolor=data_color,
+            elinewidth=1.0,
+            capsize=2,
+            label="Data",
+            zorder=4,
+        )
+
+        model_sub = (
+            model[model["signal"] == signal].copy()
+            if "signal" in model.columns
+            else pd.DataFrame()
+        )
+        if not model_sub.empty and {"lag", "autocorr"}.issubset(model_sub.columns):
+            model_sub = model_sub.sort_values("lag")
+            ax.plot(
+                model_sub["lag"].to_numpy(dtype=float),
+                model_sub["autocorr"].to_numpy(dtype=float),
+                color=model_color,
+                lw=1.8,
+                label=model_label,
+                zorder=3,
+            )
+
+        ax.axhline(0.0, color="gray", lw=0.8, ls="--", alpha=0.6)
+        ax.set_title(title)
+        ax.set_xlabel("Lag")
+        ax.set_ylabel("Corrected autocorrelation")
+        ax.legend(frameon=False, fontsize=8)
+        ax.set_xlim(0, 25.5)
+        apply_axis_style(ax, **style)
+
+    return fig, axes
+
+
 
 __all__ = [
     "add_shared_figure_legend",
@@ -1341,6 +1746,16 @@ __all__ = [
     "centered_numeric_group_palette",
     "make_single_panel_figure",
     "plot_empirical_accuracy_curve",
+    "plot_action_trace_counterfactual_lag_match",
+    "plot_action_trace_counterfactual_rb",
+    "plot_action_trace_counterfactual_subject_scatter",
+    "plot_action_trace_parameter_fixed_lag_match",
+    "plot_action_trace_parameter_fixed_rb",
+    "plot_action_trace_parameter_fixed_subject_scatter",
+    "plot_corrected_behavior_autocorrelograms",
+    "plot_session_accuracy_repetition_timescale",
+    "plot_session_behavior_autocorrelogram",
+    "plot_session_running_accuracy_repetition",
     "plot_prepared_weight_family",
     "plot_grouped_summary",
     "plot_integration_map_panels",

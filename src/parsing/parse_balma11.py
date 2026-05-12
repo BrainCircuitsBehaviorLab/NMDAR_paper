@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.2"
+__generated_with = "0.23.5"
 app = marimo.App()
 
 
@@ -34,9 +34,56 @@ def _():
 def _(paths, pd):
     paths.show_paths()  # Verificar que las rutas se han configurado correctamente
     all_df = pd.read_csv("./data/raw/MCDR_all.csv", sep = ";")
+    df3_ext = pd.read_csv("./data/raw/MCDR_3B_extra.csv", sep = ";")
+    merge_keys = ["subject", "date", "box", "session", "trial"]
+    df3_ext = df3_ext[merge_keys + ["trial_type_fix", "delay_abs_fix"]]
+    df3_mask = (
+        (all_df["batch"] == "3B")
+        & (all_df["task"] == "StageTraining_3B_V1")
+        & (all_df["stage"] == 6)
+    )
+    df3 = all_df.loc[df3_mask].copy()
+    df3["__source_index"] = df3.index
+    print(len(df3_ext))
+    print(len(df3))
+    print(f"df3 date range: {df3.date.min()} - {df3.date.max()}")
+    print(f"df3_ext date range: {df3_ext.date.min()} - {df3_ext.date.max()}")
+    print(f" \ndf3 sessions: \n{df3.groupby('subject')['session'].nunique()}")
+    print(f" \ndf3_ext sessions: \n{df3_ext.groupby('subject')['session'].nunique()}")
+    df3 = df3.merge(df3_ext, on=merge_keys, how="left", validate="one_to_one")
+    missing_delay_abs_fix = df3["delay_abs_fix"].isna().sum()
+    if missing_delay_abs_fix:
+        raise ValueError(f"Missing delay_abs_fix for {missing_delay_abs_fix} df3 rows")
+    delay_abs_diff = (df3["delay_abs"] != df3["delay_abs_fix"]).sum()
+    print(
+        "delay_abs different from delay_abs_fix "
+        f"{delay_abs_diff} / {len(df3['delay_abs'])}"
+    )
+    df3 = df3.loc[df3["trial_type_fix"] != "WM_I"].copy()
+    print(f"df3 rows after dropping trial_type_fix == 'WM_I': {len(df3)}")
+    df3 = df3.drop(columns=["delay_abs"]).rename(columns={"delay_abs_fix": "delay_abs"})
+    df3_for_all = df3.set_index("__source_index").reindex(columns=all_df.columns)
+    all_df = (
+        pd.concat([all_df.loc[~df3_mask], df3_for_all], axis=0)
+        .sort_index()
+        .reset_index(drop=True)
+    )
+    df3 = df3.drop(columns=["__source_index"])
     # df.to_parquet(paths.DATA_PATH/"MCDR_all.parquet")
     all_df
-    return (all_df,)
+    return all_df, df3
+
+
+@app.cell
+def _(df3):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    fig, axes = plt.subplots(nrows=1, ncols=1, figsize=(15, 6))
+    sns.histplot(x='delay_abs', hue='trial_type_fix', data=df3)
+    axes.set_xlim(0,10)
+    sns.despine()
+    fig
+    return
 
 
 @app.cell
@@ -53,7 +100,8 @@ def _(all_df, np, pd):
 
     # Set manipulation based on combined conditions
     df['manipulation'] = np.where(condition_injection | condition_opto | condition_probabilities | condition_probabilities2, 1, 0)
-    df = df[df["manipulation"] == 0]
+    df['manipulation_not_injection'] = np.where( condition_opto | condition_probabilities | condition_probabilities2, 1, 0)
+    # df = df[df["manipulation"] == 0]
     df['valids']=1
 
     # NO STAGE TRAINING CODES NO VALIDS
@@ -91,16 +139,6 @@ def _(df):
 
 
 @app.cell
-def _():
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell
 def _(df, pd):
     n_nan_original = df["bias_prob"].isna().sum()
     converted = pd.to_numeric(df["bias_prob"], errors="coerce")
@@ -127,7 +165,8 @@ def _(df):
 def _(df, np, paths, pd):
     to_plot_mask = (
         (df['valids'] == 1)
-        & (df['manipulation'] == 0)
+        # & (df['manipulation'] == 0)
+        # & (df['manipulation_not_injection'] == 0)
         & (df['training_stage'] == 'DataCollection')
         & ((df['stim_dur_dl'] == 0) | (df['stim_dur_dl'].isna()))
     )
@@ -184,9 +223,21 @@ def _(df, np, paths, pd):
     to_plot['stimulus'] = to_plot['x_c'].map(side_map)
     to_plot.sort_values(['subject', 'session', 'trial', 'date'], inplace=True)
     to_plot['trial_idx'] = to_plot.groupby(['subject']).cumcount()
+
+    injection = to_plot["injection"].astype("string").str.strip()
+    to_plot["drug"] = np.select(
+        [
+            injection.isin(["Ro63", "MK801"]),
+            injection.str.lower() == "rest",
+            injection.str.lower() == "saline",
+        ],
+        ["drug", "rest", "saline"],
+        default=pd.NA,
+    )
+
     to_plot = to_plot[[
         'subject', 'batch', 'trial', 'session', 'date', 'x_c', 'r_c',
-        'ttype_n', 'ttype_c', 'delay_code', 'stimd_n', 'stimd_c', 'stimd_code', 'performance', 'bias_prob',
+        'ttype_n', 'ttype_c', 'delay_code', 'stimd_n', 'stimd_c', 'stimd_code', 'performance', 'bias_prob', 'drug',
         'trial_idx', 'trial_length', 'delay_abs', 'stim_d', 'delay_d',
         'response', 'stimulus',
         'timepoint_1', 'timepoint_2', 'timepoint_3', 'timepoint_4',
@@ -195,19 +246,18 @@ def _(df, np, paths, pd):
     to_plot = to_plot[to_plot["batch"].isin(["3B", "11B"])]
     to_plot.to_parquet(paths.DATA_PATH / "MCDR_all.parquet")
     to_plot.to_csv(paths.DATA_PATH / "MCDR_bad.csv")
-    to_plot
     return (to_plot,)
 
 
 @app.cell
 def _(to_plot):
-    to_plot[["stimd_c", "ttype_c", "timepoint_1", "timepoint_2", "timepoint_3", "timepoint_4", "onset", "offset"]]
+    to_plot[["stimd_c", "ttype_c", "timepoint_1", "timepoint_2", "timepoint_3", "timepoint_4", "onset", "offset", "drug"]]
     return
 
 
 @app.cell
 def _(to_plot):
-    to_plot.groupby(["batch", "subject"]).size()
+    to_plot.groupby(["batch", "subject", "drug"]).size()
     return
 
 

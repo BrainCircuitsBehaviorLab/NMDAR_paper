@@ -5,33 +5,27 @@ import pandas as pd
 import polars as pl
 
 from glmhmmt.tasks import _register
-from glmhmmt.tasks.fitted_regressors import FittedWeightRegressorSpec
+from glmhmmt.tasks.fitted_regressors import (
+    resolved_source_features,
+    weighted_sum_regressor,
+)
 from glmhmmt.runtime import get_data_dir
 
 from .two_afc import (
     EMISSION_COLS as BASE_EMISSION_COLS,
     TRANSITION_COLS as BASE_TRANSITION_COLS,
     TwoAFCAdapter,
+    _AT_CHOICE_PARAM_SPEC as BASE_AT_CHOICE_PARAM_SPEC,
+    _BIAS_PARAM_SPEC as BASE_BIAS_PARAM_SPEC,
     _KEEP_EXPERIMENTS,
+    _SF_COL_PREFIX,
+    _STIM_PARAM_COL,
+    _STIM_PARAM_SPEC as BASE_STIM_PARAM_SPEC,
 )
 
 
-EMISSION_COLS: list[str] = [
-    col
-    for col in BASE_EMISSION_COLS
-    if col not in {"bias_param", "at_choice_param"}
-]
+EMISSION_COLS: list[str] = list(BASE_EMISSION_COLS)
 TRANSITION_COLS: list[str] = [*BASE_TRANSITION_COLS, "Drug"]
-_STIM_PARAM_SPEC = FittedWeightRegressorSpec(
-    target_name="stim_param",
-    fit_task="2AFC",
-    fit_model_kind="glm",
-    fit_model_id="one hot lapses",
-    arrays_suffix="glm_arrays.npz",
-    exclude_features=("bias", "stim_0"),
-    excluded_subjects=("325", "325.0"),
-    sign=1.0,
-)
 
 
 @_register(["two_afc_drug", "2afc_drug", "2AFC_DRUG"])
@@ -43,7 +37,9 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
     data_file: str = "df_alexis_drug_combined.parquet"
     emission_cols: list[str] = EMISSION_COLS
     transition_cols: list[str] = TRANSITION_COLS
-    stim_param_spec: FittedWeightRegressorSpec = _STIM_PARAM_SPEC
+    stim_param_spec = BASE_STIM_PARAM_SPEC
+    bias_param_spec = BASE_BIAS_PARAM_SPEC
+    at_choice_param_spec = BASE_AT_CHOICE_PARAM_SPEC
 
     def read_dataset(self) -> pl.DataFrame:
         """Return all Alexis 2AFC batches with a unified ``Drug`` column.
@@ -125,7 +121,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
             )
 
         df_pd = df.copy()
-        values = pd.to_numeric(df_pd[drug_col], errors="coerce").fillna(0).astype(int)
+        values = pd.to_numeric(df_pd[drug_col], errors="coerce")
         return df_pd.loc[values == target].copy()
 
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
@@ -133,20 +129,93 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
             df_sub,
             tau=tau,
             include_stim_strength=False,
-            include_stim_param=True,
+            include_stim_param=False,
             include_bias_param=False,
             include_at_choice_param=False,
+        )
+
+    def build_design_matrices(
+        self,
+        feature_df,
+        emission_cols=None,
+        transition_cols=None,
+    ):
+        requested = (
+            list(emission_cols)
+            if emission_cols is not None
+            else self.default_emission_cols(feature_df)
+        )
+        include_stim_strength = "stim_strength" in requested or any(
+            str(col).startswith(_SF_COL_PREFIX) for col in requested
+        )
+        include_stim_param = _STIM_PARAM_COL in requested
+        include_bias_param = "bias_param" in requested
+        include_at_choice_param = "at_choice_param" in requested
+
+        missing_optional = (
+            (include_stim_strength and not any(str(col).startswith(_SF_COL_PREFIX) for col in feature_df.columns))
+            or (include_stim_param and _STIM_PARAM_COL not in feature_df.columns)
+            or (include_bias_param and "bias_param" not in feature_df.columns)
+            or (include_at_choice_param and "at_choice_param" not in feature_df.columns)
+        )
+        if missing_optional:
+            raw_cols = [
+                col
+                for col in [
+                    "subject",
+                    "Trial",
+                    "Side",
+                    "Drug",
+                    "Choice",
+                    "Hit",
+                    "Punish",
+                    "Session",
+                    "ILD",
+                    "Filename",
+                    "Experiment",
+                    "Task",
+                    "P",
+                    "AW",
+                    "WarmUp",
+                    "Date",
+                    "condition",
+                ]
+                if col in feature_df.columns
+            ]
+            if raw_cols:
+                feature_df = feature_df.select(raw_cols)
+            feature_df = self._build_feature_df(
+                feature_df,
+                include_stim_strength=include_stim_strength,
+                include_stim_param=include_stim_param,
+                include_bias_param=False,
+                include_at_choice_param=False,
+            )
+            if include_bias_param or include_at_choice_param:
+                feature_pd = feature_df.to_pandas()
+                for spec in [
+                    self.bias_param_spec if include_bias_param else None,
+                    self.at_choice_param_spec if include_at_choice_param else None,
+                ]:
+                    if spec is None or spec.target_name in feature_pd.columns:
+                        continue
+                    for source_col in resolved_source_features(spec):
+                        if source_col not in feature_pd.columns:
+                            feature_pd[source_col] = 0.0
+                    feature_pd[spec.target_name] = weighted_sum_regressor(
+                        feature_pd,
+                        spec,
+                    )
+                feature_df = pl.from_pandas(feature_pd)
+        return super().build_design_matrices(
+            feature_df,
+            emission_cols=emission_cols,
+            transition_cols=transition_cols,
         )
 
     def choice_half_life(self, subject: str | None) -> float | None:
         del subject
         return None
-
-    def bias_hot_cols(self, df: pl.DataFrame) -> list[str]:
-        return []
-
-    def choice_lag_cols(self, df: pl.DataFrame | None = None) -> list[str]:
-        return []
 
 
 __all__ = [

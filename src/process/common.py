@@ -275,8 +275,13 @@ def lapse_logistic_probability(
     lapse_left: float,
     lapse_right: float,
 ) -> np.ndarray:
-    return float(lapse_left) + (1.0 - float(lapse_left) - float(lapse_right)) * _stable_sigmoid(
-        float(slope) * (np.asarray(x, dtype=float) - float(bias))
+    x_arr = np.asarray(x, dtype=float)
+    slope_arr = np.asarray(slope, dtype=float)
+    bias_arr = np.asarray(bias, dtype=float)
+    lapse_left_arr = np.asarray(lapse_left, dtype=float)
+    lapse_right_arr = np.asarray(lapse_right, dtype=float)
+    return lapse_left_arr + (1.0 - lapse_left_arr - lapse_right_arr) * _stable_sigmoid(
+        slope_arr * (x_arr - bias_arr)
     )
 
 
@@ -320,12 +325,17 @@ def fit_lapse_logistic_curve(
     x_max = float(np.max(x_arr))
     x_span = max(x_max - x_min, 1e-6)
     pad = 0.25 * x_span
-    lapse_bound = float(np.clip(lapse_max, 0.0, 0.49))
+    lapse_bound = float(np.clip(lapse_max, 0.0, 1.0 - 1e-6))
+    lapse_sum_bound = 1.0 - 1e-6
 
     slope0 = 4.0 / x_span
     bias0 = float(x_arr[np.argmin(np.abs(y_arr - 0.5))])
     lapse_left0 = float(np.clip(np.min(y_arr), 0.0, lapse_bound))
     lapse_right0 = float(np.clip(1.0 - np.max(y_arr), 0.0, lapse_bound))
+    if lapse_left0 + lapse_right0 > lapse_sum_bound:
+        scale = lapse_sum_bound / (lapse_left0 + lapse_right0)
+        lapse_left0 *= scale
+        lapse_right0 *= scale
 
     sqrt_w = None
     if w_arr is not None:
@@ -343,25 +353,53 @@ def fit_lapse_logistic_curve(
         residual = pred - y_arr
         return residual * sqrt_w if sqrt_w is not None else residual
 
+    x0 = np.asarray([slope0, bias0, lapse_left0, lapse_right0], dtype=float)
     try:
-        from scipy.optimize import least_squares
+        if lapse_bound <= 0.49:
+            from scipy.optimize import least_squares
 
-        result = least_squares(
-            _residual,
-            x0=np.asarray([slope0, bias0, lapse_left0, lapse_right0], dtype=float),
-            bounds=(
-                np.asarray([1e-9, x_min - pad, 0.0, 0.0], dtype=float),
-                np.asarray([np.inf, x_max + pad, lapse_bound, lapse_bound], dtype=float),
-            ),
-            max_nfev=20000,
-        )
+            result = least_squares(
+                _residual,
+                x0=x0,
+                bounds=(
+                    np.asarray([1e-9, x_min - pad, 0.0, 0.0], dtype=float),
+                    np.asarray([np.inf, x_max + pad, lapse_bound, lapse_bound], dtype=float),
+                ),
+                max_nfev=20000,
+            )
+            if not result.success or not np.all(np.isfinite(result.x)):
+                return None
+            slope, bias, lapse_left, lapse_right = (float(v) for v in result.x)
+        else:
+            from scipy.optimize import minimize
+
+            def _objective(params):
+                residual = _residual(params)
+                return float(np.nansum(residual * residual))
+
+            result = minimize(
+                _objective,
+                x0=x0,
+                method="SLSQP",
+                bounds=[
+                    (1e-9, None),
+                    (x_min - pad, x_max + pad),
+                    (0.0, lapse_bound),
+                    (0.0, lapse_bound),
+                ],
+                constraints=[
+                    {
+                        "type": "ineq",
+                        "fun": lambda params: lapse_sum_bound - params[2] - params[3],
+                    }
+                ],
+                options={"maxiter": 20000, "ftol": 1e-12},
+            )
+            if not result.success or not np.all(np.isfinite(result.x)):
+                return None
+            slope, bias, lapse_left, lapse_right = (float(v) for v in result.x)
     except Exception:
         return None
-
-    if not result.success or not np.all(np.isfinite(result.x)):
-        return None
-
-    slope, bias, lapse_left, lapse_right = (float(v) for v in result.x)
     x_fit = np.linspace(x_min, x_max, int(n_fit_points))
     y_fit = lapse_logistic_probability(
         x_fit,
@@ -2626,3 +2664,1417 @@ def prepare_regressor_state_panel_payload(
         "data_sem": agg["sd"].fillna(0.0).to_numpy(dtype=float) / np.sqrt(nd),
         "model_mean": agg["mm"].to_numpy(dtype=float),
     }
+
+
+COUNTERFACTUAL_SCENARIOS: tuple[tuple[str, str], ...] = (
+    ("Full fitted", "full"),
+    ("Fixed bias", "fixed_bias"),
+    ("Fixed lapses", "fixed_lapses"),
+)
+
+
+def _counterfactual_sem(values) -> float:
+    arr = pd.to_numeric(pd.Series(values), errors="coerce").dropna().to_numpy(dtype=float)
+    if arr.size <= 1:
+        return 0.0
+    return float(np.nanstd(arr, ddof=1) / np.sqrt(arr.size))
+
+
+def _counterfactual_subject_rb(
+    work_df: pd.DataFrame,
+    repeat_values,
+    *,
+    x_col: str,
+    subject_col: str,
+    previous_choice_col: str | None = None,
+) -> pd.DataFrame:
+    keep_cols = [subject_col, x_col]
+    if previous_choice_col is not None:
+        keep_cols.append(previous_choice_col)
+    tmp = work_df[keep_cols].copy()
+    tmp["_repeat_value"] = np.asarray(repeat_values, dtype=float)
+    if previous_choice_col is not None:
+        by_side = (
+            tmp.dropna(subset=[subject_col, x_col, previous_choice_col, "_repeat_value"])
+            .groupby([subject_col, x_col, previous_choice_col], observed=True)["_repeat_value"]
+            .mean()
+            .reset_index(name="rb_by_previous_choice")
+        )
+        subject = (
+            by_side.groupby([subject_col, x_col], observed=True)["rb_by_previous_choice"]
+            .mean()
+            .reset_index(name="rb")
+        )
+        subject_counts = (
+            tmp.dropna(subset=[subject_col, x_col, previous_choice_col, "_repeat_value"])
+            .groupby([subject_col, x_col], observed=True)["_repeat_value"]
+            .size()
+            .reset_index(name="n_trials")
+        )
+        subject = subject.merge(subject_counts, on=[subject_col, x_col], how="left")
+    else:
+        subject = (
+            tmp.dropna(subset=[subject_col, x_col, "_repeat_value"])
+            .groupby([subject_col, x_col], observed=True)["_repeat_value"]
+            .mean()
+            .reset_index(name="rb")
+        )
+    if subject.empty:
+        return pd.DataFrame()
+
+    # Average animals, not trials, so high-trial-count animals do not dominate.
+    summary = (
+        subject.groupby(x_col, observed=True)["rb"]
+        .agg(rb_mean="mean", rb_sem=_counterfactual_sem, n_subjects="count")
+        .reset_index()
+    )
+    return summary
+
+
+def _counterfactual_subject_overall_rb(
+    work_df: pd.DataFrame,
+    repeat_values,
+    *,
+    subject_col: str,
+    previous_choice_col: str | None = None,
+) -> pd.DataFrame:
+    """Compute one repetition-bias value per animal."""
+    keep_cols = [subject_col]
+    if previous_choice_col is not None:
+        keep_cols.append(previous_choice_col)
+    tmp = work_df[keep_cols].copy()
+    tmp["_repeat_value"] = np.asarray(repeat_values, dtype=float)
+    if previous_choice_col is not None:
+        valid = tmp.dropna(subset=[subject_col, previous_choice_col, "_repeat_value"])
+        by_side = (
+            valid.groupby([subject_col, previous_choice_col], observed=True)["_repeat_value"]
+            .mean()
+            .reset_index(name="rb_by_previous_choice")
+        )
+        subject = (
+            by_side.groupby(subject_col, observed=True)["rb_by_previous_choice"]
+            .mean()
+            .reset_index(name="rb")
+        )
+        subject_counts = (
+            valid.groupby(subject_col, observed=True)["_repeat_value"]
+            .size()
+            .reset_index(name="n_trials")
+        )
+        return subject.merge(subject_counts, on=subject_col, how="left")
+
+    return (
+        tmp.dropna(subset=[subject_col, "_repeat_value"])
+        .groupby(subject_col, observed=True)["_repeat_value"]
+        .agg(rb="mean", n_trials="count")
+        .reset_index()
+    )
+
+
+def _counterfactual_subject_lag_match(
+    work_df: pd.DataFrame,
+    choice_values,
+    *,
+    max_lag: int,
+    subject_col: str,
+) -> pd.DataFrame:
+    """Compute p(choice_t = experimental choice_{t-L}) per animal, then average animals."""
+    choice = np.asarray(choice_values, dtype=float)
+    rows = []
+    for lag in range(1, int(max_lag) + 1):
+        lag_col = f"_response_right_lag_{lag:02d}"
+        if lag_col not in work_df.columns:
+            continue
+
+        tmp = work_df[[subject_col, lag_col]].copy()
+        tmp["_choice_value"] = choice
+        tmp = tmp.dropna(subset=[subject_col, lag_col, "_choice_value"]).copy()
+        if tmp.empty:
+            continue
+
+        tmp["_lag_match"] = (
+            tmp["_choice_value"].to_numpy(dtype=float) == tmp[lag_col].to_numpy(dtype=float)
+        ).astype(float)
+        subject = (
+            tmp.groupby(subject_col, observed=True)["_lag_match"]
+            .mean()
+            .reset_index(name="lag_match")
+        )
+        if subject.empty:
+            continue
+
+        values = subject["lag_match"].to_numpy(dtype=float)
+        mean = float(np.nanmean(values))
+        sem = _counterfactual_sem(values)
+        rows.append(
+            {
+                "lag": int(lag),
+                "lag_match_mean": mean,
+                "lag_match_sem": sem,
+                "lag_match_lo": float(np.clip(mean - sem, 0.0, 1.0)),
+                "lag_match_hi": float(np.clip(mean + sem, 0.0, 1.0)),
+                "n_subjects": int(len(subject)),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _counterfactual_subject_expected_lag_match(
+    work_df: pd.DataFrame,
+    p_right_values,
+    *,
+    max_lag: int,
+    subject_col: str,
+) -> pd.DataFrame:
+    """Compute expected p(choice_t = experimental choice_{t-L}) per animal."""
+    p_right = np.asarray(p_right_values, dtype=float)
+    rows = []
+    for lag in range(1, int(max_lag) + 1):
+        lag_col = f"_response_right_lag_{lag:02d}"
+        if lag_col not in work_df.columns:
+            continue
+
+        tmp = work_df[[subject_col, lag_col]].copy()
+        tmp["_p_right"] = p_right
+        tmp = tmp.dropna(subset=[subject_col, lag_col, "_p_right"]).copy()
+        if tmp.empty:
+            continue
+
+        lag_choice = tmp[lag_col].to_numpy(dtype=float)
+        p_right_sub = tmp["_p_right"].to_numpy(dtype=float)
+        tmp["_lag_match"] = np.where(
+            np.isclose(lag_choice, 1.0),
+            p_right_sub,
+            1.0 - p_right_sub,
+        )
+        subject = (
+            tmp.groupby(subject_col, observed=True)["_lag_match"]
+            .mean()
+            .reset_index(name="lag_match")
+        )
+        if subject.empty:
+            continue
+
+        values = subject["lag_match"].to_numpy(dtype=float)
+        mean = float(np.nanmean(values))
+        sem = _counterfactual_sem(values)
+        rows.append(
+            {
+                "lag": int(lag),
+                "lag_match_mean": mean,
+                "lag_match_sem": sem,
+                "lag_match_lo": float(np.clip(mean - sem, 0.0, 1.0)),
+                "lag_match_hi": float(np.clip(mean + sem, 0.0, 1.0)),
+                "n_subjects": int(len(subject)),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _format_delay_tick(value: float) -> str:
+    value = float(value)
+    if np.isclose(value, 0.1):
+        return "0"
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:g}"
+
+
+def _signed_delay_order_and_labels(df: pd.DataFrame) -> tuple[list[str], list[str]]:
+    series = df["_signed_delay_cat"]
+    if hasattr(series, "cat"):
+        order = [str(value) for value in series.cat.categories if str(value) in set(series.dropna().astype(str))]
+    else:
+        order = [str(value) for value in series.dropna().unique()]
+
+    def label(value: str) -> str:
+        if value in {"0L", "0R"}:
+            return "0"
+        return _format_delay_tick(float(value))
+
+    return order, [label(value) for value in order]
+
+
+def _counterfactual_fit_axes(df: pd.DataFrame, *, task_name: str) -> tuple[pd.DataFrame, dict]:
+    """Choose the psychometric x-axis and the RB summary x-axis for each task."""
+    out = df.copy()
+    if task_name == "2AFC":
+        if "ILD" in out.columns:
+            x = pd.to_numeric(out["ILD"], errors="coerce")
+            out["_counterfactual_fit_x"] = np.where(
+                np.isclose(x, -70.0),
+                -16.0,
+                np.where(np.isclose(x, 70.0), 16.0, x),
+            )
+            out["_counterfactual_rb_x"] = x.abs()
+            ticks = sorted(out["_counterfactual_rb_x"].dropna().unique())
+            return out, {
+                "xlabel": "|ILD| (dB)",
+                "fit_xlabel": "ILD (dB)",
+                "x_col": "_counterfactual_rb_x",
+                "xticks": ticks,
+                "x_tick_labels": [f"{float(value):g}" for value in ticks],
+                "invert_x": True,
+                "baseline": 0.5,
+            }
+        if "stimulus" in out.columns:
+            x = pd.to_numeric(out["stimulus"], errors="coerce")
+            out["_counterfactual_fit_x"] = x
+            out["_counterfactual_rb_x"] = x.abs()
+            return out, {
+                "xlabel": "|Stimulus|",
+                "fit_xlabel": "Stimulus",
+                "x_col": "_counterfactual_rb_x",
+                "invert_x": True,
+                "baseline": 0.5,
+            }
+
+    delay_tasks = {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}
+    if task_name in delay_tasks:
+        out = attach_signed_delay_columns(out)
+        if "_signed_delay_cat" in out.columns and out["_signed_delay_cat"].notna().any():
+            order, labels = _signed_delay_order_and_labels(out)
+            code_map = {value: idx for idx, value in enumerate(order)}
+            out["_counterfactual_fit_x"] = out["_signed_delay_cat"].astype(str).map(code_map).astype(float)
+            fit_ticks = list(range(len(order)))
+            fit_tick_labels = labels
+        elif "delay" in out.columns:
+            out["_counterfactual_fit_x"] = pd.to_numeric(out["delay"], errors="coerce")
+            fit_ticks = None
+            fit_tick_labels = None
+        else:
+            raise ValueError("Delay counterfactuals require a delay column.")
+
+        delay_source = "delay" if "delay" in out.columns else "delays"
+        delay = pd.to_numeric(out[delay_source], errors="coerce")
+        out["_counterfactual_rb_x"] = delay
+        ticks = sorted(delay.dropna().unique())
+        return out, {
+            "xlabel": "Delay (s)",
+            "fit_xlabel": "Signed delay" if fit_ticks is not None else "Delay (s)",
+            "fit_xticks": fit_ticks,
+            "fit_x_tick_labels": fit_tick_labels,
+            "x_col": "_counterfactual_rb_x",
+            "xticks": ticks,
+            "x_tick_labels": [_format_delay_tick(value) for value in ticks],
+            "invert_x": False,
+            "baseline": 0.5,
+        }
+
+    raise ValueError("Action-trace counterfactuals are implemented only for 2AFC and delay tasks.")
+
+
+def _fit_counterfactual_full_model(
+    curve_table: pd.DataFrame,
+    *,
+    bin_order: Sequence[str],
+    lapse_max: float,
+) -> pd.DataFrame:
+    rows = []
+    for bin_label in bin_order:
+        curve = curve_table[curve_table["action_bin"] == bin_label]
+        if curve.empty:
+            continue
+        fit = fit_lapse_logistic_curve(
+            curve["_counterfactual_fit_x"].to_numpy(dtype=float),
+            curve["p_right"].to_numpy(dtype=float),
+            weights=curve["n_trials"].to_numpy(dtype=float),
+            group=bin_label,
+            lapse_max=float(lapse_max),
+            min_points=4,
+        )
+        if fit is None:
+            continue
+        rows.append(
+            {
+                "scenario": "Full fitted",
+                "kind": "full",
+                "action_bin": bin_label,
+                "n_trials": int(curve["n_trials"].sum()),
+                "slope": float(fit.slope),
+                "bias": float(fit.bias),
+                "lapse_left": float(fit.lapse_left),
+                "lapse_right": float(fit.lapse_right),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _interpolate_counterfactual_params(
+    work: pd.DataFrame,
+    fit_table: pd.DataFrame,
+    bin_centers: pd.DataFrame,
+    *,
+    regressor_col: str,
+) -> pd.DataFrame:
+    """Map each real A_t value to fitted psychometric parameters by interpolation."""
+    center_table = bin_centers.rename(columns={"_reg_bin": "action_bin"}).copy()
+    center_table["action_bin"] = center_table["action_bin"].astype(str)
+    param_table = (
+        fit_table.merge(center_table[["action_bin", "x_center"]], on="action_bin", how="left")
+        .dropna(subset=["x_center"])
+        .sort_values("x_center")
+    )
+    if param_table.empty:
+        raise ValueError("Cannot interpolate parameter-fixed simulations without A_t bin centers.")
+
+    at_values = pd.to_numeric(work[regressor_col], errors="coerce").to_numpy(dtype=float)
+    if param_table["x_center"].nunique() == 1:
+        return pd.DataFrame(
+            {
+                param: np.full(len(work), float(param_table[param].iloc[0]))
+                for param in ["slope", "bias", "lapse_left", "lapse_right"]
+            },
+            index=work.index,
+        )
+
+    centers = param_table["x_center"].to_numpy(dtype=float)
+    params = {}
+    for param in ["slope", "bias", "lapse_left", "lapse_right"]:
+        params[param] = np.interp(
+            at_values,
+            centers,
+            param_table[param].to_numpy(dtype=float),
+            left=float(param_table[param].iloc[0]),
+            right=float(param_table[param].iloc[-1]),
+        )
+    return pd.DataFrame(params, index=work.index)
+
+
+def build_action_trace_counterfactual(
+    plot_df,
+    *,
+    task_name: str,
+    regressor_col: str,
+    n_bins: int = 4,
+    n_simulations: int = 200,
+    lapse_max: float = 1.0,
+    max_history_lag: int = 10,
+    seed: int = 7,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """Fit psychometrics by A_t bin, then run parameter-fixed simulations.
+
+    The observed choice history is kept fixed per animal. Each simulation only resamples
+    the current response from the fitted psychometrics, and repetition bias compares that
+    simulated current response with the same animal's observed previous response. RB is
+    first computed conditional on previous response side and then averaged across sides
+    within animal, matching compute_rb_by_x for binary tasks. The full fitted simulation
+    interpolates the fitted parameters at each trial's real A_t value; the controls fix
+    bias or lapses.
+    """
+    df = to_pandas_df(plot_df)
+    if regressor_col not in df.columns:
+        raise ValueError(f"Missing action-trace regressor column {regressor_col!r}.")
+    if "subject" not in df.columns or "response" not in df.columns:
+        raise ValueError("Counterfactual analysis requires 'subject' and 'response' columns.")
+
+    df, meta = _counterfactual_fit_axes(df, task_name=task_name)
+    df = attach_response_right_column(df, response_mode="pm1_or_prob")
+    df, bin_centers = attach_quantile_bin_column(df, value_col=regressor_col, max_bins=int(n_bins))
+    if df is None or bin_centers.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), meta
+
+    bin_order = [str(value) for value in bin_centers["_reg_bin"].tolist()]
+    df["_counterfactual_action_bin"] = df["_reg_bin"].astype(str)
+
+    # Keep experimental history fixed; only the current simulated response changes.
+    max_history_lag = max(1, int(max_history_lag))
+    for lag in range(1, max_history_lag + 1):
+        df[f"_response_right_lag_{lag:02d}"] = df.groupby("subject", observed=True)["_response_right"].shift(lag)
+    df["_prev_response_right"] = df["_response_right_lag_01"]
+
+    required = [
+        "_counterfactual_fit_x",
+        "_counterfactual_rb_x",
+        "_response_right",
+        "_prev_response_right",
+        "_counterfactual_action_bin",
+    ]
+    work = df.dropna(subset=required).copy()
+    if work.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), meta
+
+    # First build the empirical psychometric curves: P(Right) vs stimulus evidence
+    # separately for each A_t quantile.
+    curve_table = (
+        work.groupby(["_counterfactual_action_bin", "_counterfactual_fit_x"], observed=True)
+        .agg(p_right=("_response_right", "mean"), n_trials=("_response_right", "count"))
+        .reset_index()
+        .rename(columns={"_counterfactual_action_bin": "action_bin"})
+    )
+
+    full_fit_table = _fit_counterfactual_full_model(
+        curve_table,
+        bin_order=bin_order,
+        lapse_max=float(lapse_max),
+    )
+    if full_fit_table.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), full_fit_table, meta
+
+    valid_bins = [bin_label for bin_label in bin_order if bin_label in set(full_fit_table["action_bin"])]
+    work = work[work["_counterfactual_action_bin"].isin(valid_bins)].copy()
+    fit_table = full_fit_table.copy()
+
+    fit_weights = full_fit_table["n_trials"].to_numpy(dtype=float)
+    pooled = {
+        param: float(np.average(full_fit_table[param].to_numpy(dtype=float), weights=fit_weights))
+        for param in ["slope", "bias", "lapse_left", "lapse_right"]
+    }
+    full_trial_params = _interpolate_counterfactual_params(
+        work,
+        full_fit_table,
+        bin_centers,
+        regressor_col=regressor_col,
+    )
+
+    empirical_repeat = (
+        work["_response_right"].to_numpy(dtype=float) == work["_prev_response_right"].to_numpy(dtype=float)
+    ).astype(float)
+    empirical_subject = _counterfactual_subject_overall_rb(
+        work,
+        empirical_repeat,
+        subject_col="subject",
+        previous_choice_col="_prev_response_right",
+    ).rename(columns={"rb": "empirical_rb", "n_trials": "empirical_n_trials"})
+    empirical = _counterfactual_subject_rb(
+        work,
+        empirical_repeat,
+        x_col="_counterfactual_rb_x",
+        subject_col="subject",
+        previous_choice_col="_prev_response_right",
+    )
+    if not empirical.empty:
+        empirical["scenario"] = "Empirical"
+        empirical["rb_lo"] = np.clip(empirical["rb_mean"] - empirical["rb_sem"], 0.0, 1.0)
+        empirical["rb_hi"] = np.clip(empirical["rb_mean"] + empirical["rb_sem"], 0.0, 1.0)
+
+    empirical_lag = _counterfactual_subject_lag_match(
+        work,
+        work["_response_right"].to_numpy(dtype=float),
+        max_lag=max_history_lag,
+        subject_col="subject",
+    )
+    if not empirical_lag.empty:
+        empirical_lag["scenario"] = "Empirical"
+
+    x = work["_counterfactual_fit_x"].to_numpy(dtype=float)
+    previous_animal_response = work["_prev_response_right"].to_numpy(dtype=float)
+    rng = np.random.default_rng(int(seed))
+    simulation_rows = []
+    lag_simulation_rows = []
+    full_subject_rows = []
+
+    for scenario, kind in COUNTERFACTUAL_SCENARIOS:
+        params = full_trial_params.copy()
+        # Full fitted: interpolate the fitted psychometric parameters at each real A_t.
+        # Fixed bias: keep the real-A_t slope/lapses, but average the bias across bins.
+        # Fixed lapses: keep the real-A_t slope/bias, but average lapse rates across bins.
+        if kind == "fixed_bias":
+            params["bias"] = pooled["bias"]
+        elif kind == "fixed_lapses":
+            params["lapse_left"] = pooled["lapse_left"]
+            params["lapse_right"] = pooled["lapse_right"]
+
+        params_np = params.to_numpy(dtype=float)
+        p_right = lapse_logistic_probability(
+            x,
+            slope=params_np[:, 0],
+            bias=params_np[:, 1],
+            lapse_left=params_np[:, 2],
+            lapse_right=params_np[:, 3],
+        )
+        p_right = np.clip(p_right, 1e-6, 1.0 - 1e-6)
+
+        for simulation_idx in range(int(n_simulations)):
+            sim_right = (rng.random(len(work)) < p_right).astype(float)
+            previous_choice_for_rb = previous_animal_response
+            # previous_choice_for_rb = (
+            #     pd.Series(sim_right, index=work.index)
+            #     .groupby(work["subject"], observed=True)
+            #     .shift(1)
+            #     .to_numpy(dtype=float)
+            # )
+            sim_repeat = np.where(
+                np.isfinite(previous_choice_for_rb),
+                (sim_right == previous_choice_for_rb).astype(float),
+                np.nan,
+            )
+            if kind == "full":
+                subject_rb = _counterfactual_subject_overall_rb(
+                    work,
+                    sim_repeat,
+                    subject_col="subject",
+                    previous_choice_col="_prev_response_right",
+                )
+                if not subject_rb.empty:
+                    subject_rb["simulation"] = simulation_idx
+                    full_subject_rows.append(subject_rb)
+
+            summary = _counterfactual_subject_rb(
+                work,
+                sim_repeat,
+                x_col="_counterfactual_rb_x",
+                subject_col="subject",
+                previous_choice_col="_prev_response_right",
+            )
+            if not summary.empty:
+                summary["scenario"] = scenario
+                summary["simulation"] = simulation_idx
+                simulation_rows.append(summary)
+
+            lag_summary = _counterfactual_subject_lag_match(
+                work,
+                sim_right,
+                max_lag=max_history_lag,
+                subject_col="subject",
+            )
+            if not lag_summary.empty:
+                lag_summary["scenario"] = scenario
+                lag_summary["simulation"] = simulation_idx
+                lag_simulation_rows.append(lag_summary)
+
+    if simulation_rows:
+        simulated = pd.concat(simulation_rows, ignore_index=True)
+        model_summary = (
+            simulated.groupby(["scenario", "_counterfactual_rb_x"], observed=True)["rb_mean"]
+            .agg(
+                rb_mean="mean",
+                rb_lo=lambda values: float(np.nanquantile(values, 0.025)),
+                rb_hi=lambda values: float(np.nanquantile(values, 0.975)),
+            )
+            .reset_index()
+        )
+        model_summary["rb_sem"] = (model_summary["rb_hi"] - model_summary["rb_lo"]) / 3.92
+        model_summary["n_subjects"] = np.nan
+    else:
+        model_summary = pd.DataFrame()
+
+    if lag_simulation_rows:
+        lag_simulated = pd.concat(lag_simulation_rows, ignore_index=True)
+        lag_model_summary = (
+            lag_simulated.groupby(["scenario", "lag"], observed=True)["lag_match_mean"]
+            .agg(
+                lag_match_mean="mean",
+                lag_match_lo=lambda values: float(np.nanquantile(values, 0.025)),
+                lag_match_hi=lambda values: float(np.nanquantile(values, 0.975)),
+            )
+            .reset_index()
+        )
+        lag_model_summary["lag_match_sem"] = (
+            lag_model_summary["lag_match_hi"] - lag_model_summary["lag_match_lo"]
+        ) / 3.92
+        lag_model_summary["n_subjects"] = np.nan
+    else:
+        lag_model_summary = pd.DataFrame()
+
+    if full_subject_rows:
+        full_subject = pd.concat(full_subject_rows, ignore_index=True)
+        full_subject_summary = (
+            full_subject.groupby("subject", observed=True)["rb"]
+            .agg(
+                full_fitted_rb="mean",
+                full_fitted_rb_lo=lambda values: float(np.nanquantile(values, 0.025)),
+                full_fitted_rb_hi=lambda values: float(np.nanquantile(values, 0.975)),
+            )
+            .reset_index()
+        )
+        subject_scatter = empirical_subject.merge(full_subject_summary, on="subject", how="inner")
+        subject_scatter["delta_full_minus_empirical"] = (
+            subject_scatter["full_fitted_rb"] - subject_scatter["empirical_rb"]
+        )
+    else:
+        subject_scatter = pd.DataFrame()
+
+    rb_summary = pd.concat(
+        [frame for frame in [empirical, model_summary] if frame is not None and not frame.empty],
+        ignore_index=True,
+    )
+    lag_summary = pd.concat(
+        [frame for frame in [empirical_lag, lag_model_summary] if frame is not None and not frame.empty],
+        ignore_index=True,
+    )
+    meta.update(
+        {
+            "regressor_col": regressor_col,
+            "regressor_label": display_regressor_name(regressor_col),
+            "n_simulations": int(n_simulations),
+            "max_history_lag": int(max_history_lag),
+            "history_reference": "same animal's observed previous response",
+            "rb_estimator": "mean over previous response sides within animal, then animal average",
+            "pooled": pooled,
+            "models": {
+                "Full fitted": "slope, bias, and lapses are interpolated at each trial's real A_t value",
+                "Fixed bias": "bias is averaged across A_t bins; slope and lapses use each trial's real A_t value",
+                "Fixed lapses": "lapses are averaged across A_t bins; slope and bias use each trial's real A_t value",
+            },
+        }
+    )
+    return rb_summary, lag_summary, subject_scatter, fit_table, meta
+
+
+def build_action_trace_parameter_fixed_simulations(*args, **kwargs):
+    """Alias for the A_t psychometric parameter-fixed simulation analysis."""
+    return build_action_trace_counterfactual(*args, **kwargs)
+
+
+def build_action_trace_model_prediction_rb(
+    plot_df,
+    *,
+    task_name: str,
+    max_history_lag: int = 10,
+    p_right_col: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """Compare empirical RB with full-model trial-level predicted probabilities.
+
+    This uses existing per-trial model inference, so no psychometric refit and no
+    choice simulation are performed. The model RB is the expected p(repeat) from
+    each trial's predicted P(right), compared against the same animal's empirical
+    previous choice and aggregated with the same side-balanced estimator as
+    compute_rb_by_x for binary tasks.
+    """
+    df = to_pandas_df(plot_df)
+    if "subject" not in df.columns or "response" not in df.columns:
+        raise ValueError("Model-prediction RB requires 'subject' and 'response' columns.")
+
+    p_candidates = [p_right_col] if p_right_col is not None else []
+    p_candidates.extend(["p_model_right", "p_pred", "pR"])
+    p_col = next((col for col in p_candidates if col in df.columns), None)
+    if p_col is None:
+        raise ValueError("Model-prediction RB requires one of: 'p_model_right', 'p_pred', or 'pR'.")
+
+    df, meta = _counterfactual_fit_axes(df, task_name=task_name)
+    df = attach_response_right_column(df, response_mode="pm1_or_prob")
+    max_history_lag = max(1, int(max_history_lag))
+    for lag in range(1, max_history_lag + 1):
+        df[f"_response_right_lag_{lag:02d}"] = df.groupby("subject", observed=True)["_response_right"].shift(lag)
+    df["_prev_response_right"] = df["_response_right_lag_01"]
+    df["_model_p_right"] = pd.to_numeric(df[p_col], errors="coerce")
+
+    required = [
+        "_counterfactual_rb_x",
+        "_response_right",
+        "_prev_response_right",
+        "_model_p_right",
+    ]
+    work = df.dropna(subset=required).copy()
+    if work.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), meta
+
+    empirical_repeat = (
+        work["_response_right"].to_numpy(dtype=float) == work["_prev_response_right"].to_numpy(dtype=float)
+    ).astype(float)
+    p_right = np.clip(work["_model_p_right"].to_numpy(dtype=float), 0.0, 1.0)
+    previous_response = work["_prev_response_right"].to_numpy(dtype=float)
+    model_repeat = np.where(np.isclose(previous_response, 1.0), p_right, 1.0 - p_right)
+
+    empirical_subject = _counterfactual_subject_overall_rb(
+        work,
+        empirical_repeat,
+        subject_col="subject",
+        previous_choice_col="_prev_response_right",
+    ).rename(columns={"rb": "empirical_rb", "n_trials": "empirical_n_trials"})
+    model_subject = _counterfactual_subject_overall_rb(
+        work,
+        model_repeat,
+        subject_col="subject",
+        previous_choice_col="_prev_response_right",
+    ).rename(columns={"rb": "full_fitted_rb", "n_trials": "full_fitted_n_trials"})
+    subject_scatter = empirical_subject.merge(model_subject, on="subject", how="inner")
+    if not subject_scatter.empty:
+        subject_scatter["delta_full_minus_empirical"] = (
+            subject_scatter["full_fitted_rb"] - subject_scatter["empirical_rb"]
+        )
+
+    empirical = _counterfactual_subject_rb(
+        work,
+        empirical_repeat,
+        x_col="_counterfactual_rb_x",
+        subject_col="subject",
+        previous_choice_col="_prev_response_right",
+    )
+    if not empirical.empty:
+        empirical["scenario"] = "Empirical"
+        empirical["rb_lo"] = np.clip(empirical["rb_mean"] - empirical["rb_sem"], 0.0, 1.0)
+        empirical["rb_hi"] = np.clip(empirical["rb_mean"] + empirical["rb_sem"], 0.0, 1.0)
+
+    model = _counterfactual_subject_rb(
+        work,
+        model_repeat,
+        x_col="_counterfactual_rb_x",
+        subject_col="subject",
+        previous_choice_col="_prev_response_right",
+    )
+    if not model.empty:
+        model["scenario"] = "Full fitted"
+        model["rb_lo"] = np.clip(model["rb_mean"] - model["rb_sem"], 0.0, 1.0)
+        model["rb_hi"] = np.clip(model["rb_mean"] + model["rb_sem"], 0.0, 1.0)
+
+    empirical_lag = _counterfactual_subject_lag_match(
+        work,
+        work["_response_right"].to_numpy(dtype=float),
+        max_lag=max_history_lag,
+        subject_col="subject",
+    )
+    if not empirical_lag.empty:
+        empirical_lag["scenario"] = "Empirical"
+    model_lag = _counterfactual_subject_expected_lag_match(
+        work,
+        p_right,
+        max_lag=max_history_lag,
+        subject_col="subject",
+    )
+    if not model_lag.empty:
+        model_lag["scenario"] = "Full fitted"
+
+    rb_summary = pd.concat(
+        [frame for frame in [empirical, model] if frame is not None and not frame.empty],
+        ignore_index=True,
+    )
+    lag_summary = pd.concat(
+        [frame for frame in [empirical_lag, model_lag] if frame is not None and not frame.empty],
+        ignore_index=True,
+    )
+    meta.update(
+        {
+            "max_history_lag": int(max_history_lag),
+            "model_probability_col": p_col,
+            "history_reference": "same animal's observed previous response",
+            "rb_estimator": "mean over previous response sides within animal, then animal average",
+            "models": {
+                "Full fitted": f"trial-level model P(right) from {p_col!r}; no refit or simulation",
+            },
+        }
+    )
+    return rb_summary, lag_summary, subject_scatter, meta
+
+
+
+def _binary_indicator_series(values) -> pd.Series:
+    """Coerce common correct/error encodings to a numeric 1/0 series."""
+    series = pd.Series(values).copy()
+    numeric = pd.to_numeric(series, errors="coerce")
+    missing_numeric = numeric.isna() & series.notna()
+    if not missing_numeric.any():
+        return numeric.astype(float)
+
+    labels = series.astype("string").str.strip().str.lower()
+    mapped = pd.Series(np.nan, index=series.index, dtype=float)
+    mapped[labels.isin({"1", "true", "correct", "hit", "success"})] = 1.0
+    mapped[labels.isin({"0", "false", "error", "incorrect", "miss", "failure"})] = 0.0
+    return numeric.where(numeric.notna(), mapped).astype(float)
+
+
+def _normalized_lag_correlation(
+    x,
+    y=None,
+    *,
+    max_lag: int = 50,
+    demean: bool = True,
+    bidirectional: bool = False,
+) -> pd.DataFrame:
+    """Normalized lag correlation for one or two binary-like vectors."""
+    max_lag = int(max_lag)
+    if max_lag < 0:
+        raise ValueError("max_lag must be non-negative.")
+
+    x_values = _binary_indicator_series(x).to_numpy(dtype=float)
+    y_values = x_values if y is None else _binary_indicator_series(y).to_numpy(dtype=float)
+    n_values = min(x_values.size, y_values.size)
+    if n_values < 2:
+        return pd.DataFrame({"lag": [], "corr": [], "n": []})
+
+    x_values = x_values[:n_values]
+    y_values = y_values[:n_values]
+
+    if demean:
+        x_values = x_values - np.nanmean(x_values)
+        y_values = y_values - np.nanmean(y_values)
+
+    def corr_at_lag(a_values: np.ndarray, b_values: np.ndarray, lag: int) -> tuple[float, int]:
+        if lag == 0:
+            a = a_values
+            b = b_values
+        else:
+            a = a_values[:-lag]
+            b = b_values[lag:]
+        valid = np.isfinite(a) & np.isfinite(b)
+        if valid.sum() < 2:
+            return np.nan, int(valid.sum())
+        av = a[valid]
+        bv = b[valid]
+        denom = float(np.sqrt(np.nansum(av * av) * np.nansum(bv * bv)))
+        corr = np.nan if denom <= 0 else float(np.nansum(av * bv) / denom)
+        return corr, int(valid.sum())
+
+    rows = []
+    for lag in range(1, min(max_lag, n_values - 1) + 1):
+        corr, n = corr_at_lag(x_values, y_values, lag)
+        if bidirectional:
+            reverse_corr, reverse_n = corr_at_lag(y_values, x_values, lag)
+            finite_corr = [value for value in (corr, reverse_corr) if np.isfinite(value)]
+            corr = float(np.mean(finite_corr)) if finite_corr else np.nan
+            n = int(np.nanmean([n, reverse_n]))
+        rows.append({"lag": lag, "corr": corr, "n": n})
+
+    return pd.DataFrame(rows)
+
+
+def binary_autocorrelation(x, *, max_lag: int = 50, demean: bool = True) -> pd.DataFrame:
+    """Normalized autocorrelation of a binary vector for lags 1..max_lag."""
+    corr = _normalized_lag_correlation(x, max_lag=max_lag, demean=demean)
+    return corr.rename(columns={"corr": "autocorr"})
+
+
+def binary_crosscorrelation(x, y, *, max_lag: int = 50, demean: bool = True) -> pd.DataFrame:
+    """Normalized cross-correlation between two binary vectors for lags 1..max_lag."""
+    corr = _normalized_lag_correlation(
+        x,
+        y,
+        max_lag=max_lag,
+        demean=demean,
+        bidirectional=True,
+    )
+    return corr.rename(columns={"corr": "crosscorr"})
+
+
+def prepare_session_accuracy_repetition_timescale(
+    session_df,
+    *,
+    choice_col: str,
+    outcome_col: str,
+    trial_index_col: str | None = None,
+    running_window: int = 20,
+    max_lag: int = 50,
+) -> dict:
+    """Prepare running accuracy/repetition and autocorrelations for one session."""
+    df = to_pandas_df(session_df).copy()
+
+    required = {choice_col, outcome_col}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}.")
+
+    if trial_index_col is not None:
+        if trial_index_col not in df.columns:
+            raise ValueError(f"Missing trial index column {trial_index_col!r}.")
+        df["_trial_index_numeric"] = pd.to_numeric(df[trial_index_col], errors="coerce")
+        df = df.sort_values("_trial_index_numeric", kind="mergesort").copy()
+        trial_index = df.pop("_trial_index_numeric")
+    else:
+        trial_index = pd.Series(np.arange(len(df)), index=df.index, dtype=float)
+
+    running_window = int(running_window)
+    if running_window < 1:
+        raise ValueError("running_window must be at least 1.")
+    min_periods = min(running_window, max(2, running_window // 4))
+    max_lag = int(max_lag)
+
+    outcome = _binary_indicator_series(df[outcome_col])
+    choice = df[choice_col]
+    valid_choice_pair = choice.notna() & choice.shift(1).notna()
+
+    repetition = choice.eq(choice.shift(1)).astype(float)
+    repetition = repetition.where(valid_choice_pair, np.nan)
+
+    trace = pd.DataFrame(
+        {
+            "trial_index": trial_index.to_numpy(dtype=float),
+            "outcome": outcome.to_numpy(dtype=float),
+            "repetition": repetition.to_numpy(dtype=float),
+        }
+    )
+
+    trace["running_accuracy"] = (
+        trace["outcome"]
+        .rolling(running_window, min_periods=min_periods)
+        .mean()
+    )
+    trace["running_repetition"] = (
+        trace["repetition"]
+        .rolling(running_window, min_periods=min_periods)
+        .mean()
+    )
+    trace["running_repetition_bias"] = trace["running_repetition"]
+
+    outcome_ac = binary_autocorrelation(trace["outcome"], max_lag=max_lag)
+    outcome_ac["signal"] = "Outcome"
+
+    repetition_ac = binary_autocorrelation(trace["repetition"], max_lag=max_lag)
+    repetition_ac["signal"] = "Repetition"
+
+    autocorr = pd.concat([outcome_ac, repetition_ac], ignore_index=True)
+
+    return {
+        "trace": trace,
+        "autocorr": autocorr,
+        "meta": {
+            "running_window": running_window,
+            "running_min_periods": min_periods,
+            "max_lag": max_lag,
+        },
+    }
+
+
+def _prepare_session_binary_sequences(
+    df: pd.DataFrame,
+    *,
+    subject_col: str,
+    session_col: str,
+    choice_col: str,
+    outcome_col: str,
+    trial_index_col: str | None,
+) -> pd.DataFrame:
+    required = {subject_col, session_col, choice_col, outcome_col}
+    if trial_index_col is not None:
+        required.add(trial_index_col)
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}.")
+
+    out = df.copy()
+    if trial_index_col is not None:
+        out["_trial_index_numeric"] = pd.to_numeric(out[trial_index_col], errors="coerce")
+    else:
+        out["_trial_index_numeric"] = out.groupby(
+            [subject_col, session_col],
+            observed=True,
+        ).cumcount()
+    out = out.sort_values(
+        [subject_col, session_col, "_trial_index_numeric"],
+        kind="mergesort",
+    ).copy()
+    out["_outcome_binary"] = _binary_indicator_series(out[outcome_col]).to_numpy(dtype=float)
+    valid_choice_pair = (
+        out[choice_col].notna()
+        & out.groupby([subject_col, session_col], observed=True)[choice_col].shift(1).notna()
+    )
+    repetition = out[choice_col].eq(
+        out.groupby([subject_col, session_col], observed=True)[choice_col].shift(1)
+    ).astype(float)
+    out["_repetition_binary"] = repetition.where(valid_choice_pair, np.nan).to_numpy(dtype=float)
+    return out[
+        [
+            subject_col,
+            session_col,
+            "_trial_index_numeric",
+            "_outcome_binary",
+            "_repetition_binary",
+        ]
+    ].rename(
+        columns={
+            subject_col: "subject",
+            session_col: "session",
+            "_trial_index_numeric": "trial_index",
+            "_outcome_binary": "outcome",
+            "_repetition_binary": "repetition",
+        }
+    )
+
+
+def prepare_corrected_behavior_autocorrelograms(
+    df_like,
+    *,
+    subject_col: str = "subject",
+    session_col: str = "session",
+    choice_col: str,
+    outcome_col: str,
+    trial_index_col: str | None = None,
+    max_lag: int = 50,
+    min_cross_pairs: int = 20,
+    max_cross_pairs: int = 80,
+    seed: int = 0,
+) -> dict:
+    """Prepare Tiffany-style drift-corrected autocorrelograms for outcome/repetition.
+
+    Raw autocorrelograms are computed per session, averaged within mouse, and corrected
+    by subtracting cross-correlograms from different sessions of the same mouse.
+    """
+    df = to_pandas_df(df_like)
+    max_lag = int(max_lag)
+    sequences = _prepare_session_binary_sequences(
+        df,
+        subject_col=subject_col,
+        session_col=session_col,
+        choice_col=choice_col,
+        outcome_col=outcome_col,
+        trial_index_col=trial_index_col,
+    )
+    if sequences.empty:
+        empty = pd.DataFrame(
+            columns=[
+                "signal",
+                "lag",
+                "autocorr",
+                "autocorr_sem",
+                "raw_autocorr",
+                "crosscorr",
+                "n_subjects",
+            ]
+        )
+        return {
+            "autocorr": empty,
+            "subject_autocorr": empty,
+            "session_autocorr": pd.DataFrame(),
+            "crosscorr": pd.DataFrame(),
+            "meta": {"max_lag": max_lag},
+        }
+
+    signal_cols = {"Outcome": "outcome", "Repetition": "repetition"}
+    raw_rows = []
+    for (subject, session), session_df in sequences.groupby(["subject", "session"], observed=True):
+        for signal, value_col in signal_cols.items():
+            ac = binary_autocorrelation(session_df[value_col], max_lag=max_lag)
+            if ac.empty:
+                continue
+            ac["subject"] = subject
+            ac["session"] = session
+            ac["signal"] = signal
+            raw_rows.append(ac)
+    session_autocorr = pd.concat(raw_rows, ignore_index=True) if raw_rows else pd.DataFrame()
+
+    if session_autocorr.empty:
+        return {
+            "autocorr": pd.DataFrame(),
+            "subject_autocorr": pd.DataFrame(),
+            "session_autocorr": session_autocorr,
+            "crosscorr": pd.DataFrame(),
+            "meta": {"max_lag": max_lag},
+        }
+
+    subject_raw = (
+        session_autocorr.groupby(["subject", "signal", "lag"], observed=True)["autocorr"]
+        .mean()
+        .reset_index(name="raw_autocorr")
+    )
+
+    rng = np.random.default_rng(int(seed))
+    cross_rows = []
+    for subject, subject_df in sequences.groupby("subject", observed=True):
+        sessions = list(pd.unique(subject_df["session"]))
+        if len(sessions) < 2:
+            continue
+        all_pairs = [(left, right) for idx, left in enumerate(sessions) for right in sessions[idx + 1 :]]
+        if len(all_pairs) > int(max_cross_pairs):
+            pair_idx = rng.choice(len(all_pairs), size=int(max_cross_pairs), replace=False)
+            pairs = [all_pairs[int(idx)] for idx in pair_idx]
+        else:
+            pairs = all_pairs
+        if len(pairs) < int(min_cross_pairs) and len(all_pairs) >= int(min_cross_pairs):
+            pair_idx = rng.choice(len(all_pairs), size=int(min_cross_pairs), replace=False)
+            pairs = [all_pairs[int(idx)] for idx in pair_idx]
+
+        session_map = {session: sdf for session, sdf in subject_df.groupby("session", observed=True)}
+        for left, right in pairs:
+            left_df = session_map[left]
+            right_df = session_map[right]
+            for signal, value_col in signal_cols.items():
+                cc = binary_crosscorrelation(
+                    left_df[value_col],
+                    right_df[value_col],
+                    max_lag=max_lag,
+                )
+                if cc.empty:
+                    continue
+                cc["subject"] = subject
+                cc["session_left"] = left
+                cc["session_right"] = right
+                cc["signal"] = signal
+                cross_rows.append(cc)
+    crosscorr = pd.concat(cross_rows, ignore_index=True) if cross_rows else pd.DataFrame()
+    if crosscorr.empty:
+        subject_cross = pd.DataFrame(columns=["subject", "signal", "lag", "crosscorr"])
+    else:
+        subject_cross = (
+            crosscorr.groupby(["subject", "signal", "lag"], observed=True)["crosscorr"]
+            .mean()
+            .reset_index()
+        )
+
+    subject_autocorr = subject_raw.merge(
+        subject_cross,
+        on=["subject", "signal", "lag"],
+        how="left",
+    )
+    subject_autocorr["crosscorr"] = subject_autocorr["crosscorr"].fillna(0.0)
+    subject_autocorr["autocorr"] = subject_autocorr["raw_autocorr"] - subject_autocorr["crosscorr"]
+
+    summary = (
+        subject_autocorr.groupby(["signal", "lag"], observed=True)
+        .agg(
+            autocorr=("autocorr", "mean"),
+            autocorr_std=("autocorr", "std"),
+            raw_autocorr=("raw_autocorr", "mean"),
+            crosscorr=("crosscorr", "mean"),
+            n_subjects=("subject", "count"),
+        )
+        .reset_index()
+    )
+    summary["autocorr_sem"] = summary["autocorr_std"].fillna(0.0) / np.sqrt(
+        summary["n_subjects"].clip(lower=1)
+    )
+
+    return {
+        "autocorr": summary,
+        "subject_autocorr": subject_autocorr,
+        "session_autocorr": session_autocorr,
+        "crosscorr": crosscorr,
+        "sequences": sequences,
+        "meta": {
+            "max_lag": max_lag,
+            "min_cross_pairs": int(min_cross_pairs),
+            "max_cross_pairs": int(max_cross_pairs),
+            "seed": int(seed),
+        },
+    }
+
+
+def prepare_glm_simulated_corrected_behavior_autocorrelograms(
+    df_like,
+    arrays_store: dict,
+    *,
+    adapter=None,
+    subject_col: str = "subject",
+    session_col: str = "session",
+    trial_index_col: str | None = None,
+    correct_label_col: str = "stimulus",
+    tau: float = 50.0,
+    emission_cols: Sequence[str] | None = None,
+    recursive: bool = False,
+    n_simulations: int = 20,
+    max_lag: int = 50,
+    min_cross_pairs: int = 20,
+    max_cross_pairs: int = 80,
+    seed: int = 0,
+) -> dict:
+    """Simulate fitted GLM choices and prepare corrected autocorrelograms."""
+    from glmhmmt.glm import glm_probs_from_weights, simulate_glm_choices
+
+    df = to_pandas_df(df_like)
+    required = {subject_col, session_col}
+    if not recursive:
+        required.add(correct_label_col)
+    if trial_index_col is not None:
+        required.add(trial_index_col)
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns for GLM simulation: {sorted(missing)}.")
+    if recursive and adapter is None:
+        raise ValueError("recursive=True requires adapter=... so history regressors can be rebuilt.")
+
+    rng = np.random.default_rng(int(seed))
+    frames = []
+    n_simulations = int(n_simulations)
+    if n_simulations < 1:
+        raise ValueError("n_simulations must be at least 1.")
+
+    sort_cols = [session_col]
+    if trial_index_col is not None:
+        sort_cols.append(trial_index_col)
+
+    def apply_lapse_to_step_probs(
+        probs: np.ndarray,
+        *,
+        previous_choice: int | None,
+        lapse_mode: str,
+        lapse_rates: np.ndarray,
+    ) -> np.ndarray:
+        out = np.asarray(probs, dtype=float).copy()
+        if previous_choice is None:
+            out = np.clip(out, 1e-12, 1.0)
+            return out / out.sum()
+        num_classes = out.size
+        if lapse_mode == "class" and lapse_rates.size:
+            total_mass = float(np.sum(lapse_rates))
+            out = lapse_rates + (1.0 - total_mass) * out
+        elif lapse_mode == "history":
+            repeat_rate = float(lapse_rates[0]) if lapse_rates.size > 0 else 0.0
+            alternate_rate = float(lapse_rates[1]) if lapse_rates.size > 1 else 0.0
+            repeat_target = np.zeros(num_classes, dtype=float)
+            repeat_target[int(previous_choice)] = 1.0
+            alternate_target = np.full(num_classes, 1.0 / max(1, num_classes - 1), dtype=float)
+            alternate_target[int(previous_choice)] = 0.0
+            out = (1.0 - repeat_rate - alternate_rate) * out
+            out += repeat_rate * repeat_target + alternate_rate * alternate_target
+        elif lapse_mode == "history_conditioned":
+            repeat_rates = lapse_rates[:num_classes] if lapse_rates.size >= num_classes else np.zeros(num_classes)
+            alternate_rates = (
+                lapse_rates[num_classes : 2 * num_classes]
+                if lapse_rates.size >= 2 * num_classes
+                else np.zeros(num_classes)
+            )
+            repeat_rate = float(repeat_rates[int(previous_choice)])
+            alternate_rate = float(alternate_rates[int(previous_choice)])
+            repeat_target = np.zeros(num_classes, dtype=float)
+            repeat_target[int(previous_choice)] = 1.0
+            alternate_target = np.full(num_classes, 1.0 / max(1, num_classes - 1), dtype=float)
+            alternate_target[int(previous_choice)] = 0.0
+            out = (1.0 - repeat_rate - alternate_rate) * out
+            out += repeat_rate * repeat_target + alternate_rate * alternate_target
+        out = np.clip(out, 1e-12, 1.0)
+        return out / out.sum()
+
+    def infer_class_to_response(raw_response: pd.Series, y_values: np.ndarray) -> dict[int, object]:
+        out = {}
+        tmp = pd.DataFrame({"response": raw_response.to_numpy(), "class": np.asarray(y_values, dtype=int)})
+        for class_idx, group in tmp.dropna().groupby("class", observed=True):
+            mode = group["response"].mode(dropna=True)
+            out[int(class_idx)] = mode.iloc[0] if not mode.empty else int(class_idx)
+        return out
+
+    def infer_correct_classes(
+        raw_df: pd.DataFrame,
+        *,
+        stimulus_col: str,
+        performance_col: str,
+        y_values: np.ndarray,
+    ) -> np.ndarray:
+        performance = pd.to_numeric(raw_df[performance_col], errors="coerce")
+        stimulus = raw_df[stimulus_col]
+        mapping = {}
+        correct_trials = pd.DataFrame(
+            {
+                "stimulus": stimulus.to_numpy(),
+                "performance": performance.to_numpy(dtype=float),
+                "class": np.asarray(y_values, dtype=int),
+            }
+        )
+        for stim_value, group in correct_trials[correct_trials["performance"] > 0].groupby("stimulus", observed=True):
+            mode = group["class"].mode(dropna=True)
+            if not mode.empty:
+                mapping[stim_value] = int(mode.iloc[0])
+        return np.asarray([mapping.get(value, np.nan) for value in stimulus.to_numpy()], dtype=float)
+
+    for subject, arrays in arrays_store.items():
+        subject_df = df[df[subject_col].astype(str) == str(subject)].copy()
+        if subject_df.empty:
+            continue
+        subject_df = subject_df.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
+
+        X = np.asarray(arrays.get("X"), dtype=float)
+        if X.ndim != 2 or X.shape[0] != len(subject_df):
+            continue
+
+        weights = np.asarray(arrays.get("emission_weights"), dtype=float)
+        if weights.ndim == 3:
+            weights = weights[0]
+        p_pred = np.asarray(arrays.get("p_pred"), dtype=float)
+        y = np.asarray(arrays.get("y", []), dtype=int)
+        num_classes = int(p_pred.shape[1]) if p_pred.ndim == 2 else int(np.nanmax(y) + 1)
+        baseline_class_idx = int(np.asarray(arrays.get("baseline_class_idx", 0)).reshape(()))
+        lapse_mode = np.asarray(arrays.get("lapse_mode", "none")).reshape(()).item()
+        lapse_rates = np.asarray(arrays.get("lapse_rates", []), dtype=float)
+
+        if recursive:
+            behavioral_cols = dict(getattr(adapter, "behavioral_cols"))
+            response_col = behavioral_cols["response"]
+            performance_col = behavioral_cols["performance"]
+            stimulus_col = behavioral_cols["stimulus"]
+            if any(col not in subject_df.columns for col in [response_col, performance_col, stimulus_col]):
+                continue
+            y_original = np.asarray(arrays.get("y", []), dtype=int)
+            if y_original.shape[0] != len(subject_df):
+                continue
+            class_to_response = infer_class_to_response(subject_df[response_col], y_original)
+            correct_class = infer_correct_classes(
+                subject_df,
+                stimulus_col=stimulus_col,
+                performance_col=performance_col,
+                y_values=y_original,
+            )
+            x_cols = list(emission_cols or arrays.get("X_cols", []))
+            if not x_cols:
+                x_cols = list(arrays.get("X_cols", []))
+            simulations = []
+            for _simulation_idx in range(n_simulations):
+                sim_df = subject_df.copy()
+                sim_choices = np.zeros(len(sim_df), dtype=int)
+                for trial_idx in range(len(sim_df)):
+                    _, X_current, _, _names = adapter.load_subject(
+                        pl.from_pandas(sim_df),
+                        tau=float(tau),
+                        emission_cols=x_cols if x_cols else None,
+                    )
+                    x_trial = np.asarray(X_current, dtype=float)[trial_idx : trial_idx + 1]
+                    probs = glm_probs_from_weights(
+                        x_trial,
+                        weights,
+                        baseline_class_idx=baseline_class_idx,
+                        num_classes=num_classes,
+                    )[0]
+                    previous_choice = int(sim_choices[trial_idx - 1]) if trial_idx > 0 else None
+                    probs = apply_lapse_to_step_probs(
+                        probs,
+                        previous_choice=previous_choice,
+                        lapse_mode=str(lapse_mode),
+                        lapse_rates=lapse_rates,
+                    )
+                    choice = int(rng.choice(num_classes, p=probs))
+                    sim_choices[trial_idx] = choice
+                    sim_df.loc[trial_idx, response_col] = class_to_response.get(choice, choice)
+                    sim_df.loc[trial_idx, performance_col] = float(choice == correct_class[trial_idx])
+                simulations.append(sim_choices)
+            simulations = np.asarray(simulations, dtype=int)
+            correct_label = correct_class
+        else:
+            simulations = simulate_glm_choices(
+                X,
+                weights,
+                baseline_class_idx=baseline_class_idx,
+                num_classes=num_classes,
+                lapse_mode=str(lapse_mode),
+                lapse_rates=lapse_rates,
+                seed=int(rng.integers(0, np.iinfo(np.int32).max)),
+                n_simulations=n_simulations,
+            )
+            correct_label = pd.to_numeric(subject_df[correct_label_col], errors="coerce").to_numpy(dtype=float)
+
+        for simulation_idx, simulated_choice in enumerate(simulations):
+            sim_frame = pd.DataFrame(
+                {
+                    "subject": f"{subject}__glm_sim_{simulation_idx:03d}",
+                    "session": subject_df[session_col].to_numpy(),
+                    "trial_index": (
+                        pd.to_numeric(subject_df[trial_index_col], errors="coerce").to_numpy(dtype=float)
+                        if trial_index_col is not None
+                        else np.arange(len(subject_df), dtype=float)
+                    ),
+                    "response": simulated_choice.astype(int),
+                    "performance": (simulated_choice.astype(float) == correct_label).astype(float),
+                }
+            )
+            frames.append(sim_frame)
+
+    if not frames:
+        return {
+            "autocorr": pd.DataFrame(),
+            "subject_autocorr": pd.DataFrame(),
+            "session_autocorr": pd.DataFrame(),
+            "crosscorr": pd.DataFrame(),
+            "sequences": pd.DataFrame(),
+            "meta": {
+                "max_lag": int(max_lag),
+                "n_simulations": n_simulations,
+                "seed": int(seed),
+                "simulation": "recursive_glm" if recursive else "fixed_design_glm",
+            },
+        }
+
+    simulated_df = pd.concat(frames, ignore_index=True)
+    prepared = prepare_corrected_behavior_autocorrelograms(
+        simulated_df,
+        subject_col="subject",
+        session_col="session",
+        choice_col="response",
+        outcome_col="performance",
+        trial_index_col="trial_index",
+        max_lag=max_lag,
+        min_cross_pairs=min_cross_pairs,
+        max_cross_pairs=max_cross_pairs,
+        seed=seed,
+    )
+    prepared["meta"] = {
+        **prepared.get("meta", {}),
+        "n_simulations": n_simulations,
+        "simulation": "recursive_glm" if recursive else "fixed_design_glm",
+    }
+    return prepared

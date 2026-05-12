@@ -11,8 +11,8 @@ requires-python = ">=3.11, <3.14"
 dependencies = [
     "altair>=6.1.0",
     "bottleneck>=1.6.0",
-    "glmhmmt==0.2.6",
-    "marimo==0.23.2",
+    "glmhmmt==0.2.11",
+    "marimo==0.23.5",
     "marimo-toml-editor>=0.1.1",
     "numexpr>=2.14.1",
     "playwright>=1.58.0",
@@ -20,10 +20,17 @@ dependencies = [
     "tensorflow-probability==0.25.0",
     "tfp-nightly==0.26.0.dev20260205",
     "tqdm>=4.67.3",
+    "vegafusion>=2.0.3",
+    "vl-convert-python>=1.9.0.post1",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
 exclude-dependencies = ["tensorflow-probability"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
+]
 

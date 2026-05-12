@@ -1,6 +1,7 @@
 """Task adapter for the MCDR (3-AFC rats) task."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from functools import lru_cache
 import json
 from pathlib import Path
@@ -49,6 +50,38 @@ _STIM_HOT_COLS = tuple(
     for stim_idx in range(1, 5)
     for side in _CHOICE_LAG_SIDES
 )
+_PRIVATE_ALTERNATIVE_BATCH11_COLS = (
+    "stim1",
+    "stim2",
+    "stim3",
+    "stim4",
+    *[f"choice_lag_{lag_idx:02d}" for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)],
+)
+_PRIVATE_ALTERNATIVE_BATCH3B_COLS = (
+    "stim_d",
+    "delay_d",
+    "ttype_c",
+    *[f"choice_lag_{lag_idx:02d}" for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)],
+)
+_PRIVATE_ALTERNATIVE_VARIANTS = {
+    "batch11": _PRIVATE_ALTERNATIVE_BATCH11_COLS,
+    "batch3b": _PRIVATE_ALTERNATIVE_BATCH3B_COLS,
+}
+_PRIVATE_ALTERNATIVE_ACTIVE_VARIANT = "batch11"
+_PRIVATE_BATCH3B_TTYPE_CODE_BY_LABEL = {
+    "SIL": 0.0,
+    "DS": 1.0,
+    "DM": 2.0,
+    "DL": 3.0,
+    "VG": 4.0,
+}
+_PRIVATE_BATCH3B_TTYPE_CODE_BY_EXISTING_NUMERIC = {
+    4.0: 0.0,
+    1.0: 1.0,
+    2.0: 2.0,
+    3.0: 3.0,
+    0.0: 4.0,
+}
 
 EMISSION_COLS: list[str] = [
     "bias",
@@ -126,6 +159,78 @@ _TRANSITION_GROUPS: list[dict] = [
     {"key": "A_minus", "label": "A−", "members": {"N": "A_minus"}},
     {"key": "A_trans", "label": "A (action)", "members": {"L": "A_L", "C": "A_C", "R": "A_R"}},
 ]
+
+
+def _normalize_private_alternative_variant(variant: str | None) -> str:
+    value = str(variant or "batch11").strip().lower()
+    aliases = {
+        "11": "batch11",
+        "11b": "batch11",
+        "batch_11": "batch11",
+        "batch11b": "batch11",
+        "3": "batch3b",
+        "3b": "batch3b",
+        "batch_3b": "batch3b",
+    }
+    value = aliases.get(value, value)
+    if value not in _PRIVATE_ALTERNATIVE_VARIANTS:
+        raise ValueError(
+            f"Unknown private_alternative_variant: {variant!r}. "
+            f"Available: {sorted(_PRIVATE_ALTERNATIVE_VARIANTS)}"
+        )
+    return value
+
+
+def set_private_alternative_variant(variant: str | None) -> str:
+    """Set the MCDR-private design used by generic GLM fitting code."""
+    global _PRIVATE_ALTERNATIVE_ACTIVE_VARIANT
+    _PRIVATE_ALTERNATIVE_ACTIVE_VARIANT = _normalize_private_alternative_variant(variant)
+    return _PRIVATE_ALTERNATIVE_ACTIVE_VARIANT
+
+
+def get_private_alternative_variant() -> str:
+    """Return the active MCDR-private design variant."""
+    return _PRIVATE_ALTERNATIVE_ACTIVE_VARIANT
+
+
+@contextmanager
+def private_alternative_variant_context(variant: str | None):
+    """Temporarily set the active MCDR-private design variant."""
+    previous = get_private_alternative_variant()
+    set_private_alternative_variant(variant)
+    try:
+        yield get_private_alternative_variant()
+    finally:
+        set_private_alternative_variant(previous)
+
+
+def generate_private_alternative_model_id(
+    generate_model_id_fn,
+    task,
+    tau,
+    emission_cols,
+    *,
+    private_alternative_variant: str = "batch11",
+    emission_model: str = "standard",
+    **kwargs,
+) -> str:
+    """Generate a GLM model id, folding the MCDR-private variant into the hash.
+
+    ``glmhmmt`` only needs to know about ``emission_model``. The MCDR-specific
+    private design variant is encoded here so batch11 and batch3b fits do not
+    collide in notebook output directories.
+    """
+    hash_emission_model = str(emission_model)
+    if hash_emission_model == "private_alternative":
+        variant = _normalize_private_alternative_variant(private_alternative_variant)
+        hash_emission_model = f"private_alternative:{variant}"
+    return generate_model_id_fn(
+        task,
+        tau,
+        emission_cols,
+        emission_model=hash_emission_model,
+        **kwargs,
+    )
 
 
 def _safe_weighted_sum_regressor(
@@ -1059,12 +1164,28 @@ class MCDRAdapter(TaskAdapter):
         "S2_coh":   [("stim2L", 0), ("stim2R", 1)],
         "S3_coh":   [("stim3L", 0), ("stim3R", 1)],
         "S4_coh":   [("stim4L", 0), ("stim4R", 1)],
+        "stim_param": [("stim_param", 0)],
         "onset_coh": [("onsetL", 0), ("onsetR", 1)],
         "bias_coh":  [("biasL", 0), ("biasR", 1)],
     }
     scoring_key: str = "S_coh"
 
     # ── data preparation ────────────────────────────────────────────────────
+
+    def read_dataset(self) -> pl.DataFrame:
+        df = pl.read_parquet(self.dataset_path())
+        if "drug" not in df.columns:
+            return df.with_columns(pl.lit(None, dtype=pl.Utf8).alias("condition"))
+
+        drug_clean = pl.col("drug").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+        return df.with_columns(
+            pl.when(drug_clean.is_in(["rest", "saline", "drug"]))
+            .then(drug_clean)
+            .when(drug_clean.is_null())
+            .then(pl.lit(None, dtype=pl.Utf8))
+            .otherwise(pl.lit("drug"))
+            .alias("condition")
+        )
 
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
         filtered_df = df.filter(pl.col("subject") != "A84")
@@ -1083,9 +1204,86 @@ class MCDRAdapter(TaskAdapter):
         timepoint_4_cutoff = float(np.percentile(timepoint_4_values, 95))
         return filtered_df.filter(pl.col("timepoint_4") <= timepoint_4_cutoff)
 
+    def condition_filter_options(self) -> list[str]:
+        return ["all", "nan", "rest", "saline", "drug"]
+
+    def filter_condition_df(
+        self,
+        df: pl.DataFrame | pd.DataFrame,
+        condition_filter: str = "all",
+    ) -> pl.DataFrame | pd.DataFrame:
+        selected = str(condition_filter or "all").strip().lower()
+        if selected in {"all", ""}:
+            return df
+        if selected in {"null", "none", "no_drug"}:
+            selected = "nan"
+        if selected not in {"nan", "rest", "saline", "drug"}:
+            raise ValueError(
+                f"Unknown MCDR condition filter {condition_filter!r}. "
+                "Expected one of: all, nan, rest, saline, drug."
+            )
+
+        if isinstance(df, pl.DataFrame):
+            if "condition" in df.columns:
+                condition_expr = pl.col("condition").cast(pl.Utf8).str.to_lowercase()
+            elif "drug" in df.columns:
+                drug_expr = pl.col("drug").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+                condition_expr = (
+                    pl.when(drug_expr.is_in(["rest", "saline", "drug"]))
+                    .then(drug_expr)
+                    .when(drug_expr.is_null())
+                    .then(pl.lit(None, dtype=pl.Utf8))
+                    .otherwise(pl.lit("drug"))
+                )
+            else:
+                raise ValueError("MCDR requires a 'condition' or 'drug' column for condition filtering.")
+            filter_col = "__condition_filter"
+            filtered = df.with_columns(condition_expr.alias(filter_col))
+            if selected == "nan":
+                return filtered.filter(pl.col(filter_col).is_null()).drop(filter_col)
+            return filtered.filter(pl.col(filter_col) == selected).drop(filter_col)
+
+        df_pd = df.copy()
+        if "condition" in df_pd.columns:
+            condition = df_pd["condition"].astype("string").str.lower()
+        elif "drug" in df_pd.columns:
+            drug = df_pd["drug"].astype("string").str.strip().str.lower()
+            condition = pd.Series(pd.NA, index=df_pd.index, dtype="string")
+            condition.loc[drug.isin(["rest", "saline", "drug"])] = drug.loc[drug.isin(["rest", "saline", "drug"])]
+            condition.loc[drug.notna() & ~drug.isin(["rest", "saline", "drug"])] = "drug"
+        else:
+            raise ValueError("MCDR requires a 'condition' or 'drug' column for condition filtering.")
+
+        if selected == "nan":
+            return df_pd.loc[condition.isna()].copy()
+        return df_pd.loc[condition == selected].copy()
+
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
         """Return the MCDR trial dataframe with all derived regressors."""
         df_sub = df_sub.sort(self.sort_col)
+        fallback_exprs: list[pl.Expr] = []
+        if "onset" not in df_sub.columns:
+            fallback_exprs.append(pl.lit(0.0).cast(pl.Float32).alias("onset"))
+        if "offset" not in df_sub.columns:
+            if "stim_d" in df_sub.columns:
+                fallback_exprs.append(pl.col("stim_d").cast(pl.Float32).alias("offset"))
+            else:
+                fallback_exprs.append(pl.lit(0.0).cast(pl.Float32).alias("offset"))
+        if "timepoint_1" not in df_sub.columns and "stim_d" in df_sub.columns:
+            fallback_exprs.append((pl.col("stim_d") * 0.25).cast(pl.Float32).alias("timepoint_1"))
+        if "timepoint_2" not in df_sub.columns and "stim_d" in df_sub.columns:
+            fallback_exprs.append((pl.col("stim_d") * 0.50).cast(pl.Float32).alias("timepoint_2"))
+        if "timepoint_3" not in df_sub.columns and "stim_d" in df_sub.columns:
+            fallback_exprs.append((pl.col("stim_d") * 0.75).cast(pl.Float32).alias("timepoint_3"))
+        if "timepoint_4" not in df_sub.columns:
+            if "stim_d" in df_sub.columns and "delay_d" in df_sub.columns:
+                fallback_exprs.append((pl.col("stim_d") + pl.col("delay_d")).cast(pl.Float32).alias("timepoint_4"))
+            elif "stim_d" in df_sub.columns:
+                fallback_exprs.append(pl.col("stim_d").cast(pl.Float32).alias("timepoint_4"))
+            else:
+                fallback_exprs.append(pl.lit(1.0).cast(pl.Float32).alias("timepoint_4"))
+        if fallback_exprs:
+            df_sub = df_sub.with_columns(fallback_exprs)
         subject = str(df_sub["subject"][0]) if "subject" in df_sub.columns and df_sub.height else None
         action_half_life = _resolve_choice_action_half_life(
             subject=subject,
@@ -1262,6 +1460,119 @@ class MCDRAdapter(TaskAdapter):
         U = jnp.asarray(feature_df.select(ucols).to_numpy().astype(np.float32)) if ucols else jnp.empty((len(y), 0), dtype=jnp.float32)
         names = {"X_cols": list(ecols), "U_cols": list(ucols)}
         return y, X, U, names
+
+    def build_private_design_matrices(
+        self,
+        feature_df,
+        transition_cols: List[str] | None = None,
+        private_alternative_variant: str | None = None,
+    ) -> Tuple[Any, Any, Any, Dict]:
+        """Return ``(y, X_private, U, names)`` for alternative-private GLMs.
+
+        ``X_private[t, i, :]`` describes alternative ``i`` in class order
+        Left, Center, Right.  The fitted GLM shares one weight vector over
+        these private alternative rows.
+        """
+        ucols = transition_cols if transition_cols is not None else self.default_transition_cols()
+        allowed_ucols = self.available_transition_cols()
+        bad_u = [c for c in ucols if c not in allowed_ucols]
+        if bad_u:
+            raise ValueError(f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}")
+        private_variant = _normalize_private_alternative_variant(
+            private_alternative_variant or get_private_alternative_variant()
+        )
+
+        y_np = (
+            feature_df.select(pl.col("response").fill_null(0).fill_nan(0).cast(pl.Int32))
+            .to_series()
+            .to_numpy()
+            .astype(np.int32)
+        )
+        def _numeric_feature_col(col: str, *, fallback_col: str | None = None) -> np.ndarray:
+            if col in feature_df.columns:
+                raw = feature_df[col].to_numpy()
+                try:
+                    return raw.astype(np.float32)
+                except (TypeError, ValueError):
+                    pass
+            if fallback_col is not None and fallback_col in feature_df.columns:
+                return feature_df[fallback_col].to_numpy().astype(np.float32)
+            raise ValueError(
+                f"Private alternative batch3b needs numeric '{col}'"
+                + (f" or fallback '{fallback_col}'." if fallback_col else ".")
+            )
+
+        def _batch3b_ttype_values() -> np.ndarray:
+            if "ttype_c" in feature_df.columns:
+                labels = feature_df["ttype_c"].to_numpy().astype(str)
+                values = [
+                    _PRIVATE_BATCH3B_TTYPE_CODE_BY_LABEL.get(label.strip().upper(), np.nan)
+                    for label in labels
+                ]
+                values_np = np.asarray(values, dtype=np.float32)
+                if not np.isnan(values_np).any():
+                    return values_np
+            if "ttype_n" in feature_df.columns:
+                numeric = feature_df["ttype_n"].to_numpy().astype(np.float32)
+                values_np = np.asarray(
+                    [
+                        _PRIVATE_BATCH3B_TTYPE_CODE_BY_EXISTING_NUMERIC.get(float(value), np.nan)
+                        for value in numeric
+                    ],
+                    dtype=np.float32,
+                )
+                if np.isnan(values_np).any():
+                    bad_values = sorted({float(value) for value in numeric[np.isnan(values_np)]})
+                    raise ValueError(f"Unknown numeric ttype_n values for batch3b private encoding: {bad_values}")
+                return values_np
+            return _numeric_feature_col("ttype_c", fallback_col="ttype_n")
+
+        private_cols = list(_PRIVATE_ALTERNATIVE_VARIANTS[private_variant])
+        ttype_values = (
+            _batch3b_ttype_values()
+            if private_variant == "batch3b"
+            else None
+        )
+        side_frames: list[np.ndarray] = []
+        for side in _CHOICE_LAG_SIDES:
+            if private_variant == "batch3b":
+                side_mask = (feature_df["x_c"].to_numpy().astype(str) == side).astype(np.float32)
+                columns = [
+                    side_mask * feature_df["stim_d"].to_numpy().astype(np.float32),
+                    side_mask * feature_df["delay_d"].to_numpy().astype(np.float32),
+                    side_mask * ttype_values,
+                    *[
+                        feature_df[f"{_CHOICE_LAG_COL_PREFIX}{lag_idx:02d}{side}"].to_numpy().astype(np.float32)
+                        for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)
+                    ],
+                ]
+            else:
+                columns = [
+                    *[
+                        feature_df[f"stim{stim_idx}{side}"].to_numpy().astype(np.float32)
+                        for stim_idx in range(1, 5)
+                    ],
+                    *[
+                        feature_df[f"{_CHOICE_LAG_COL_PREFIX}{lag_idx:02d}{side}"].to_numpy().astype(np.float32)
+                        for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)
+                    ],
+                ]
+            side_frames.append(np.stack(columns, axis=1))
+
+        X_private_np = np.stack(side_frames, axis=1).astype(np.float32)
+        X_private_np = np.nan_to_num(X_private_np, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        y = jnp.asarray(y_np)
+        X_private = jnp.asarray(X_private_np)
+        U = jnp.asarray(feature_df.select(ucols).to_numpy().astype(np.float32)) if ucols else jnp.empty((len(y), 0), dtype=jnp.float32)
+        names = {
+            "X_cols": list(private_cols),
+            "X_private_cols": list(private_cols),
+            "U_cols": list(ucols),
+            "emission_model": "private_alternative",
+            "private_alternative_variant": private_variant,
+            "alternative_order": list(_CHOICE_LAG_SIDES),
+        }
+        return y, X_private, U, names
 
     # ── column defaults ─────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.22.0"
+__generated_with = "0.23.5"
 app = marimo.App(width="full")
 
 
@@ -104,7 +104,7 @@ def _(load_metrics_dir, model_aliases_for_kind, paths):
             }
         )
 
-    return model_aliases, model_k_options
+    return load_metrics_dir_for_notebook, model_aliases, model_k_options
 
 
 @app.cell
@@ -184,7 +184,7 @@ def _(adapter, mo):
 
 @app.cell
 def _(
-    load_metrics_dir,
+    load_metrics_dir_for_notebook,
     mo,
     pl,
     ui_glm_dir,
@@ -199,8 +199,9 @@ def _(
         (ui_glmhmmt_dir.value, "glmhmmt"),
     ]:
         for _name in _names:
-            _p = load_metrics_dir(task_name=ui_task.value,alias=_name, model_kind=_kind)
-        
+            _p = load_metrics_dir_for_notebook(task_name=ui_task.value,folder_name=_name, expected_model_kind=_kind)
+            print(f"{ui_task.value},{_name}, {_kind}")
+            print(_p)
             if _p is not None:
                 _parts.append(_p)
 
@@ -227,11 +228,11 @@ def _(
 
 
 @app.cell
-def _(K_min, pl, results_long, ui_K_range, ui_subjects):
+def _(pl, results_long, ui_K_range, ui_subjects):
     _min, K_max = ui_K_range.value
     results_filtered = results_long.filter(
         pl.col("subject").is_in(ui_subjects.value)
-        & pl.col("K").is_between(K_min, K_max)
+        # & pl.col("K").is_between(K_min, K_max)
     )
     results_filtered
     return (results_filtered,)
@@ -1449,6 +1450,7 @@ def _(
 
 @app.cell
 def _(
+    build_emission_weights_df,
     mo,
     pairwise_K,
     pairwise_adapter_a,
@@ -1457,12 +1459,10 @@ def _(
     pairwise_alias_b,
     pairwise_arrays_a,
     pairwise_arrays_b,
-    pairwise_common_subjects,
     pairwise_names_a,
     pairwise_names_b,
     pairwise_views_a,
     pairwise_views_b,
-    build_emission_weights_df,
 ):
     def _emission_summary(_adapter, _views, _arrays_store, _names):
         _plots = _adapter.get_plots()
@@ -1978,6 +1978,7 @@ def _(mo, model_aliases, ui_task, ui_viz_model):
 
 @app.cell
 def _(
+    build_emission_weights_df,
     load_fit_bundle,
     mo,
     ui_subjects,
@@ -1985,7 +1986,6 @@ def _(
     ui_viz_K,
     ui_viz_alias,
     ui_viz_model,
-    build_emission_weights_df,
 ):
     mo.stop(
         not ui_viz_alias.value,

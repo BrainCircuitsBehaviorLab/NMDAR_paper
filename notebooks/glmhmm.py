@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.2"
+__generated_with = "0.23.5"
 app = marimo.App(width="full")
 
 
@@ -56,13 +56,13 @@ def _():
     from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
     from src.process import MCDR as process_mcdr
     from src.process import two_afc as process_two_afc
-    from src.process import two_afc_delay as process_two_afc_delay
+    from src.process import two_adc as process_two_adc
 
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
             return process_mcdr.prepare_predictions_df(df, cfg=load_app_config())
-        if task_name == "2AFC_delay":
-            return process_two_afc_delay.prepare_predictions_df(df)
+        if task_name in {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}:
+            return process_two_adc.prepare_predictions_df(df)
         return process_two_afc.prepare_predictions_df(df)
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
@@ -98,6 +98,7 @@ def _():
         model_plots,
         np,
         paths,
+        pd,
         pl,
         plt,
         prepare_predictions_df,
@@ -420,7 +421,10 @@ def _(
     build_emission_weights_df,
     mo,
     model_plots,
+    np,
     paths,
+    pd,
+    pl,
     save_plot,
     selected,
     views,
@@ -433,17 +437,305 @@ def _(
         _weights_df,
         K=K,
     )
-    _summary_figs = model_plots.emission_weights_summary_boxplot(_weights_df, connect_subjects=True)
+
+    _feature_labels = {
+        "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
+        "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
+        "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
+        "at_choice_param": r"$\mathrm{A}_t$",
+        "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
+    }
+
+    feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
+
+    _summary_figs = model_plots.emission_weights_summary_boxplot(_weights_df.filter(pl.col("feature").str.contains("bias").not_()), connect_subjects=True, show_ttests=True, feature_labeler = feature_labeler)
+    _emission_subject_lines = [
+        _line
+        for _line in _summary_figs.lines
+        if _line.get_alpha() == 0.15
+        and _line.get_linestyle() == "-"
+        and len(_line.get_xdata()) >= 2
+        and len(_line.get_ydata()) >= 2
+    ]
+    _weights_pdf = _weights_df.to_pandas() if hasattr(_weights_df, "to_pandas") else pd.DataFrame(_weights_df)
+    _weights_pdf = _weights_pdf.copy()
+    _weights_pdf["subject"] = _weights_pdf["subject"].astype(str)
+    _weights_pdf["feature"] = _weights_pdf["feature"].astype(str)
+    _weights_pdf["weight"] = pd.to_numeric(_weights_pdf["weight"], errors="coerce")
+    _weights_pdf = _weights_pdf.dropna(subset=["weight"])
+    _line_keys = []
+    for _feature in pd.unique(_weights_pdf["feature"]):
+        _feature_df = _weights_pdf[_weights_pdf["feature"] == _feature]
+        for _subject in sorted(pd.unique(_feature_df["subject"]).tolist()):
+            if _feature_df[_feature_df["subject"] == _subject]["weight"].notna().sum() >= 2:
+                _line_keys.append((str(_subject), str(_feature), str(feature_labeler(_feature))))
+    emission_summary_selection_points = []
+    for (_subject, _feature, _feature_label), _line in zip(_line_keys, _emission_subject_lines, strict=False):
+        _xs = _line.get_xdata()
+        _ys = _line.get_ydata()
+        for _left in range(len(_xs) - 1):
+            if not (np.isfinite(_xs[_left]) and np.isfinite(_xs[_left + 1]) and np.isfinite(_ys[_left]) and np.isfinite(_ys[_left + 1])):
+                continue
+            for _x, _y in zip(np.linspace(_xs[_left], _xs[_left + 1], 24), np.linspace(_ys[_left], _ys[_left + 1], 24), strict=False):
+                emission_summary_selection_points.append(
+                    {
+                        "subject": _subject,
+                        "feature": _feature,
+                        "feature_label": _feature_label,
+                        "x": float(_x),
+                        "y": float(_y),
+                    }
+                )
+    ui_emission_summary = mo.ui.matplotlib(_summary_figs, debounce=True)
     mo.vstack([
                # _fig_by_subject,
                #  save_plot(_fig_by_subject, f"Emission Weights",
                #                      stem=f"emissions_summary", location = (0,1)),
-               _summary_figs,
+               ui_emission_summary,
                mo.hstack([save_plot(_summary_figs, f"Emission Weights lineplot",
                                     stem=f"emissions_lineplot", location=(0,0)), 
                           save_plot(_summary_figs, f"Emission Weights boxplot",
                                     stem=f"emissions_boxplot",location=(0,1)),
              ], gap = "15"), ], align="center")
+    return emission_summary_selection_points, ui_emission_summary
+
+
+@app.cell
+def _(emission_summary_selection_points, mo, pd, ui_emission_summary):
+    _points = pd.DataFrame(emission_summary_selection_points)
+    if _points.empty or not ui_emission_summary.value:
+        selected_emission_subjects = []
+    else:
+        _mask = ui_emission_summary.value.get_mask(
+            _points["x"].to_numpy(),
+            _points["y"].to_numpy(),
+        )
+        selected_emission_subjects = sorted(_points.loc[_mask, "subject"].unique().tolist())
+    mo.md(
+        "Selected subjects: "
+        + (", ".join(selected_emission_subjects) if selected_emission_subjects else "_none_")
+    )
+    return
+
+
+@app.cell
+def _(K, build_emission_weights_df, mo, np, pd, selected, views):
+    from itertools import combinations
+
+    import plotly.graph_objects as _go
+    from scipy.stats import ttest_rel
+
+    from glmhmmt.plots.common import significance_label
+    from glmhmmt.plots.emissions import (
+        _emission_boxplot_payload,
+        _fold_three_choice_raw_weights,
+        _prepare_weights_df,
+    )
+
+    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
+
+    _views_sel = {s: views[s] for s in selected}
+    _weights_df = build_emission_weights_df(_views_sel)
+
+    _feature_labels = {
+        "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
+        "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
+        "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
+        "at_choice_param": r"$\mathrm{A}_t$",
+        "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
+    }
+    _feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
+
+    _plot_weights = _fold_three_choice_raw_weights(_weights_df)
+    if _plot_weights is None:
+        _plot_weights = _weights_df
+
+    _df, _features, _display_features, _state_order, _palette = _prepare_weights_df(
+        _plot_weights,
+        K=K,
+        feature_labeler=_feature_labeler,
+    )
+    _grouped_values, _subject_lines = _emission_boxplot_payload(
+        _df,
+        features=_features,
+        states=_state_order,
+    )
+
+    _n_features = len(_features)
+    _n_states = len(_state_order)
+    _group_width = 0.8
+    _hue_width = _group_width / max(1, _n_states)
+    _colors = [_palette[_state] for _state in _state_order]
+    _subjects = sorted(pd.unique(_df["subject"]).tolist())
+
+    _fig_plotly = _go.Figure()
+
+    for _feat_idx, _feature in enumerate(_features):
+        _positions = [
+            _feat_idx + (_state_idx - (_n_states - 1) / 2.0) * _hue_width
+            for _state_idx in range(_n_states)
+        ]
+
+        for _subject, _ys in zip(_subjects, _subject_lines[_feat_idx], strict=False):
+            _ys = np.asarray(_ys, dtype=float)
+            _valid_idx = np.flatnonzero(np.isfinite(_ys))
+            if _valid_idx.size < 2:
+                continue
+            _split_points = np.where(np.diff(_valid_idx) > 1)[0] + 1
+            for _segment in np.split(_valid_idx, _split_points):
+                if _segment.size < 2:
+                    continue
+                _x_segment = [float(_positions[_idx]) for _idx in _segment]
+                _y_segment = [float(_ys[_idx]) for _idx in _segment]
+                _fig_plotly.add_trace(
+                    _go.Scatter(
+                        x=_x_segment,
+                        y=_y_segment,
+                        mode="lines+markers",
+                        line=dict(color="rgba(122, 122, 122, 0.15)", width=1.0),
+                        marker=dict(color="rgba(122, 122, 122, 0.01)", size=10),
+                        customdata=[
+                            [_subject, _feature, _feature_labeler(_feature)]
+                            for _ in _segment
+                        ],
+                        hovertemplate=(
+                            "Subject: %{customdata[0]}<br>"
+                            "Feature: %{customdata[2]}<br>"
+                            "Weight: %{y:.4f}<extra></extra>"
+                        ),
+                        showlegend=False,
+                        selected=dict(marker=dict(color="rgba(0, 0, 0, 0.45)", size=10)),
+                        unselected=dict(marker=dict(opacity=0.01)),
+                    )
+                )
+
+        for _state_idx, _state in enumerate(_state_order):
+            _values = np.asarray(_grouped_values[_state_idx][_feat_idx], dtype=float)
+            _values = _values[np.isfinite(_values)]
+            if _values.size == 0:
+                continue
+            _fig_plotly.add_trace(
+                _go.Box(
+                    x=[_positions[_state_idx]] * len(_values),
+                    y=_values,
+                    name=str(_state),
+                    width=_hue_width * 0.78,
+                    boxpoints=False,
+                    fillcolor="rgba(255, 255, 255, 0.85)",
+                    line=dict(color="#666666", width=1.1),
+                    marker_color=_colors[_state_idx],
+                    quartilemethod="linear",
+                    whiskerwidth=0,
+                    showlegend=_feat_idx == 0,
+                    hovertemplate=(
+                        f"State: {_state}<br>"
+                        f"Feature: {_feature_labeler(_feature)}<br>"
+                        "Weight: %{y:.4f}<extra></extra>"
+                    ),
+                )
+            )
+            _box_half_width = (_hue_width * 0.78) / 2.0
+            _fig_plotly.add_shape(
+                type="line",
+                x0=_positions[_state_idx] - _box_half_width,
+                x1=_positions[_state_idx] + _box_half_width,
+                y0=float(np.median(_values)),
+                y1=float(np.median(_values)),
+                line=dict(color=_colors[_state_idx], width=3.0),
+            )
+
+    for _feat_idx, _per_subject_values in enumerate(_subject_lines):
+        _finite_groups = [
+            _values[np.isfinite(_values)]
+            for _values in (
+                _grouped_values[_state_idx][_feat_idx]
+                for _state_idx in range(_n_states)
+            )
+            if np.isfinite(_values).any()
+        ]
+        if not _finite_groups or _n_states < 2:
+            continue
+
+        _finite_values = np.concatenate(_finite_groups)
+        _y_range = float(np.max(_finite_values) - np.min(_finite_values))
+        if not np.isfinite(_y_range) or _y_range <= 0:
+            _y_range = 1.0
+        _y_base = float(np.max(_finite_values))
+        _step = _y_range * 0.08
+        _bracket_height = _y_range * 0.02
+
+        for _pair_idx, (_state_a, _state_b) in enumerate(combinations(range(_n_states), 2)):
+            _paired = _per_subject_values[
+                np.isfinite(_per_subject_values[:, _state_a])
+                & np.isfinite(_per_subject_values[:, _state_b])
+            ]
+            if _paired.shape[0] < 2:
+                continue
+
+            _pvalue = float(ttest_rel(_paired[:, _state_a], _paired[:, _state_b]).pvalue)
+            _x1 = _feat_idx + (_state_a - (_n_states - 1) / 2.0) * _hue_width
+            _x2 = _feat_idx + (_state_b - (_n_states - 1) / 2.0) * _hue_width
+            _y = _y_base + _step * (_pair_idx + 1)
+            _fig_plotly.add_shape(
+                type="path",
+                path=(
+                    f"M {_x1},{_y} "
+                    f"L {_x1},{_y + _bracket_height} "
+                    f"L {_x2},{_y + _bracket_height} "
+                    f"L {_x2},{_y}"
+                ),
+                line=dict(color="black", width=1.0),
+            )
+            _fig_plotly.add_annotation(
+                x=(_x1 + _x2) / 2.0,
+                y=_y + _bracket_height,
+                text=significance_label(_pvalue),
+                showarrow=False,
+                yanchor="bottom",
+                font=dict(color="black", size=12),
+            )
+
+    _fig_plotly.add_hline(y=0, line_color="black", line_dash="dash", line_width=0.8)
+    _fig_plotly.update_xaxes(
+        tickmode="array",
+        tickvals=list(range(_n_features)),
+        ticktext=_display_features,
+        tickangle=35,
+        title_text="",
+    )
+    _fig_plotly.update_yaxes(title_text="Weight", zeroline=False)
+    _fig_plotly.update_layout(
+        template="simple_white",
+        boxmode="overlay",
+        dragmode="select",
+        height=430,
+        width=max(650, int(140 * max(1, _n_features))),
+        margin=dict(l=60, r=140, t=25, b=95),
+        legend=dict(x=1.01, y=1.0, xanchor="left", yanchor="top"),
+    )
+
+    ui_emission_summary_plotly = mo.ui.plotly(_fig_plotly)
+    selected_emission_subjects_plotly = sorted(
+        {
+            str(_point.get("customdata", [None])[0])
+            for _point in ui_emission_summary_plotly.points
+            if _point.get("customdata")
+        }
+    )
+    mo.vstack(
+        [
+            ui_emission_summary_plotly,
+            mo.md(
+                "Selected subjects: "
+                + (
+                    ", ".join(selected_emission_subjects_plotly)
+                    if selected_emission_subjects_plotly
+                    else "_none_"
+                )
+            ),
+        ],
+        align="center",
+    )
     return
 
 
@@ -632,10 +924,10 @@ def _(
 
     mo.stop(_trial_df_sel.height == 0, mo.md("No subjects with matching data lengths."))
 
-    _plot_df_all = prepare_predictions_df(task_name, _trial_df_sel)
+    plot_df_all = prepare_predictions_df(task_name, _trial_df_sel)
     _perf_kwargs = {"views": _views_sel} if is_2afc else {}
     _fig_all, _ = plots.plot_categorical_performance_all(
-        _plot_df_all,
+        plot_df_all,
         f"glmhmm K={K}",
         background_style=ui_psychometric_background.value,
         **_perf_kwargs,
@@ -647,7 +939,7 @@ def _(
         _fig_all._suptitle.set_text("")
     _fig_all.tight_layout()
 
-    _plot_df_state = prepare_predictions_df(task_name, _trial_df_sel)
+    _plot_df_state = plot_df_all
     _fig_state, _ = plots.plot_categorical_performance_by_state(
         df=_plot_df_state,
         views=_views_sel,
@@ -768,6 +1060,111 @@ def _(
                 align="center",
             ),
             _reg_section,
+        ],
+        align="center",
+    )
+    return (plot_df_all,)
+
+
+@app.cell
+def _():
+    from src.process.common import build_action_trace_model_prediction_rb
+    from src.plots.common import (
+        plot_action_trace_parameter_fixed_lag_match,
+        plot_action_trace_parameter_fixed_rb,
+        plot_action_trace_parameter_fixed_subject_scatter,
+    )
+
+    return (
+        build_action_trace_model_prediction_rb,
+        plot_action_trace_parameter_fixed_lag_match,
+        plot_action_trace_parameter_fixed_rb,
+        plot_action_trace_parameter_fixed_subject_scatter,
+    )
+
+
+@app.cell
+def _(mo, task_name):
+    ui_glmhmm_model_rb_max_lag = mo.ui.slider(
+        start=1,
+        stop=15,
+        step=1,
+        value=10,
+        label="Max history lag",
+    )
+    _supported = task_name in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}
+    (
+        mo.hstack([ui_glmhmm_model_rb_max_lag], justify="start")
+        if _supported
+        else mo.md("Trial-level model RB is implemented for 2AFC and 2ADC.")
+    )
+    return (ui_glmhmm_model_rb_max_lag,)
+
+
+@app.cell
+def _(
+    build_action_trace_model_prediction_rb,
+    mo,
+    plot_action_trace_parameter_fixed_lag_match,
+    plot_action_trace_parameter_fixed_rb,
+    plot_action_trace_parameter_fixed_subject_scatter,
+    plot_df_all,
+    save_plot,
+    task_name,
+    ui_glmhmm_model_rb_max_lag,
+):
+    mo.stop(
+        task_name not in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"},
+    )
+
+    _summary, _lag_summary, _subject_scatter, _meta = build_action_trace_model_prediction_rb(
+        plot_df_all,
+        task_name=task_name,
+        max_history_lag=int(ui_glmhmm_model_rb_max_lag.value),
+    )
+    mo.stop(
+        _summary.empty,
+        mo.md("No trial-level model repetition-bias result; check pR/p_pred and previous choices."),
+    )
+
+    _fig_model_rb, _ax_model_rb = plot_action_trace_parameter_fixed_rb(
+        _summary,
+        _meta,
+    )
+    _fig_model_lag, _ax_model_lag = plot_action_trace_parameter_fixed_lag_match(
+        _lag_summary,
+        _meta,
+    )
+    _fig_model_scatter, _ax_model_scatter = plot_action_trace_parameter_fixed_subject_scatter(
+        _subject_scatter,
+        _meta,
+    )
+
+    mo.vstack(
+        [
+            mo.md("#### Trial-level full-model repetition bias"),
+            _fig_model_rb,
+            save_plot(
+                _fig_model_rb,
+                "glmhmm trial-level full-model repetition bias",
+                stem="glmhmm_trial_model_rb",
+            ),
+            _fig_model_lag,
+            save_plot(
+                _fig_model_lag,
+                "glmhmm trial-level full-model lag match",
+                stem="glmhmm_trial_model_lag_match",
+            ),
+            _fig_model_scatter,
+            save_plot(
+                _fig_model_scatter,
+                "glmhmm trial-level full-model repetition bias by animal",
+                stem="glmhmm_trial_model_rb_by_animal",
+            ),
+            mo.md(
+                "Full fitted uses each trial's inferred model P(right), compares it with the same animal's empirical previous choice, "
+                "and aggregates RB conditional on previous choice side within animal. No refit or choice simulation is run."
+            ),
         ],
         align="center",
     )
@@ -1244,6 +1641,8 @@ def _(
     build_state_occupancy_payload,
     mo,
     model_plots,
+    np,
+    pd,
     pl,
     save_plot,
     selected,
@@ -1260,8 +1659,42 @@ def _(
     _fig_occ_overall_by_subject = model_plots.state_occupancy_overall_by_subject(_occupancy_payload)
     _fig_occ_sessions_summary = model_plots.state_session_occupancy_summary(_occupancy_payload)
     _fig_occ_sessions_by_subject = model_plots.state_session_occupancy_by_subject(_occupancy_payload)
-    _fig_occ_switchessummary = model_plots.state_switches_summary(_occupancy_payload)
+    _fig_occ_switches_summary = model_plots.state_switches_summary(_occupancy_payload)
     _fig_occ_switches_by_subject = model_plots.state_switches_by_subject(_occupancy_payload)
+    state_switch_sessions_df = _occupancy_payload["switches_df"]
+    state_switch_sessions_df = (
+        state_switch_sessions_df.to_pandas()
+        if hasattr(state_switch_sessions_df, "to_pandas")
+        else pd.DataFrame(state_switch_sessions_df)
+    )
+    state_switch_sessions_df = state_switch_sessions_df.copy()
+    state_switch_sessions_df["subject"] = state_switch_sessions_df["subject"].astype(str)
+    state_switch_sessions_df["session"] = state_switch_sessions_df["session"].astype(str)
+    state_switch_sessions_df["n_switches"] = pd.to_numeric(
+        state_switch_sessions_df["n_switches"],
+        errors="coerce",
+    )
+    state_switch_sessions_df = state_switch_sessions_df.dropna(subset=["n_switches"]).copy()
+    state_switch_sessions_df["n_switches"] = state_switch_sessions_df["n_switches"].astype(int)
+
+    _switch_counts = (
+        state_switch_sessions_df.groupby("n_switches", as_index=False, observed=True)
+        .size()
+        .rename(columns={"size": "n_sessions"})
+        .sort_values("n_switches")
+    )
+    state_switch_selection_points = []
+    for _row in _switch_counts.itertuples(index=False):
+        for _y in range(int(_row.n_sessions)):
+            for _x in np.linspace(float(_row.n_switches) - 0.45, float(_row.n_switches) + 0.45, 9):
+                state_switch_selection_points.append(
+                    {
+                        "n_switches": int(_row.n_switches),
+                        "x": float(_x),
+                        "y": float(_y) + 0.5,
+                    }
+                )
+    ui_occ_switches_summary = mo.ui.matplotlib(_fig_occ_switches_summary, debounce=True)
     mo.hstack([
         mo.vstack([
             mo.vstack([
@@ -1305,7 +1738,7 @@ def _(
         ], align="center"),
         mo.vstack([
             mo.vstack([
-                _fig_occ_switches_summary,
+                ui_occ_switches_summary,
                 save_plot(
                     _fig_occ_switches_summary,
                     "state switches summary",
@@ -1324,6 +1757,54 @@ def _(
             # ], align="center"),
         ], align="center"),
     ], align="center")
+    return (
+        state_switch_selection_points,
+        state_switch_sessions_df,
+        ui_occ_switches_summary,
+    )
+
+
+@app.cell
+def _(
+    mo,
+    pd,
+    state_switch_selection_points,
+    state_switch_sessions_df,
+    ui_occ_switches_summary,
+):
+    _points = pd.DataFrame(state_switch_selection_points)
+    if _points.empty or not ui_occ_switches_summary.value:
+        selected_state_switch_counts = []
+    else:
+        _mask = ui_occ_switches_summary.value.get_mask(
+            _points["x"].to_numpy(),
+            _points["y"].to_numpy(),
+        )
+        selected_state_switch_counts = sorted(
+            _points.loc[_mask, "n_switches"].unique().tolist()
+        )
+    selected_state_switch_sessions = (
+        state_switch_sessions_df[
+            state_switch_sessions_df["n_switches"].isin(selected_state_switch_counts)
+        ]
+        .sort_values(["n_switches", "subject", "session"])
+        .reset_index(drop=True)
+    )
+    mo.vstack(
+        [
+            mo.md(
+                "Selected switch counts: "
+                + (
+                    ", ".join(map(str, selected_state_switch_counts))
+                    if selected_state_switch_counts
+                    else "_none_"
+                )
+            ),
+            selected_state_switch_sessions
+            if selected_state_switch_counts
+            else mo.md("Select one or more histogram bars to list matching sessions."),
+        ]
+    )
     return
 
 
@@ -1467,6 +1948,7 @@ def _(
             engaged_trace_mode=ui_engaged_trace_mode.value,
             chance_level=1.0 / adapter.num_classes,
             num_classes=adapter.num_classes,
+            views=views,
         )
     )
     mo.vstack([
@@ -1478,6 +1960,12 @@ def _(
             stem=f"session_stats_{_subj}_{_sess}",
         ),
     ], align="center")
+    return
+
+
+@app.cell
+def _(pl, trial_df):
+    trial_df.filter(pl.col("subject") == "E10", pl.col("session") == 32)["drug"].unique()
     return
 
 
@@ -2201,7 +2689,7 @@ def _(
             sharey=True,
         )
         axes_flat = coef_axes.ravel()
-        for ax, key in zip(axes_flat, panel_keys, strict=False):
+        for _ax, key in zip(axes_flat, panel_keys, strict=False):
             mask = (
                 (coef_pd["state_rank"] == key["state_rank"])
                 & (coef_pd["state_label"] == key["state_label"])
@@ -2212,7 +2700,7 @@ def _(
                 data=panel_df,
                 x="feature",
                 y="delta_ssm_minus_dynamax",
-                ax=ax,
+                ax=_ax,
                 showfliers=False,
                 color="#D9D9D9",
                 boxprops={"alpha": 0.8},
@@ -2221,21 +2709,21 @@ def _(
                 data=panel_df,
                 x="feature",
                 y="delta_ssm_minus_dynamax",
-                ax=ax,
+                ax=_ax,
                 color="black",
                 alpha=0.7,
                 size=4,
                 jitter=0.22,
             )
-            ax.axhline(0, color="black", lw=0.9, ls="--", alpha=0.7)
-            ax.set_title(f"{key['state_label']}  ({key['contrast']})")
-            ax.set_xlabel("")
-            ax.set_ylabel("SSM - Dynamax coefficient")
-            ax.tick_params(axis="x", rotation=35)
-            ax.set_yscale("log")
-            sns.despine(ax=ax)
-        for ax in axes_flat[n_panels:]:
-            ax.set_visible(False)
+            _ax.axhline(0, color="black", lw=0.9, ls="--", alpha=0.7)
+            _ax.set_title(f"{key['state_label']}  ({key['contrast']})")
+            _ax.set_xlabel("")
+            _ax.set_ylabel("SSM - Dynamax coefficient")
+            _ax.tick_params(axis="x", rotation=35)
+            _ax.set_yscale("log")
+            sns.despine(ax=_ax)
+        for _ax in axes_flat[n_panels:]:
+            _ax.set_visible(False)
         ssm_coef_fig.tight_layout()
 
     t0_ssm, t1_ssm = ui_trial_range.value

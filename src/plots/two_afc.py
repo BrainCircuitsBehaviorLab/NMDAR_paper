@@ -1223,6 +1223,63 @@ pick_choice_history_regressor = _pick_choice_history_regressor
 _resolve_ild_max = resolve_ild_max
 _mean_glm_curve = process.mean_glm_ild_curve
 _subject_glm_curves = process.subject_glm_ild_curves
+
+
+def _attach_weighted_stimulus_evidence(
+    plot_df,
+    *,
+    views: dict | None,
+    output_col: str = "_weighted_stimulus_evidence",
+) -> pd.DataFrame | None:
+    df_pd = to_pandas_df(plot_df).copy()
+    if "subject" not in df_pd.columns:
+        return None
+
+    view_by_subject = {str(subject): view for subject, view in (views or {}).items()}
+    out = pd.Series(np.nan, index=df_pd.index, dtype=float)
+    computed_any = False
+
+    for subject, idx in df_pd.groupby("subject", observed=True).groups.items():
+        view = view_by_subject.get(str(subject))
+        if view is None:
+            continue
+        feat_names = [str(name) for name in (getattr(view, "feat_names", []) or [])]
+        weights = np.asarray(getattr(view, "emission_weights", []), dtype=float)
+        if weights.ndim != 3 or weights.shape[0] < 1 or weights.shape[1] < 1:
+            continue
+
+        weighted = np.zeros(len(idx), dtype=float)
+        used_any = False
+        for feat_idx, feat_name in enumerate(feat_names):
+            if not (feat_name.startswith("stim_") and feat_name.removeprefix("stim_").isdigit()):
+                continue
+            if feat_name not in df_pd.columns or feat_idx >= weights.shape[2]:
+                continue
+            x = pd.to_numeric(df_pd.loc[idx, feat_name], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            weighted += x * float(weights[0, 0, feat_idx])
+            used_any = True
+        if used_any:
+            out.loc[idx] = weighted
+            computed_any = True
+
+    if "stim_param" in df_pd.columns:
+        fallback = pd.to_numeric(df_pd["stim_param"], errors="coerce")
+        out = out.fillna(fallback) if computed_any else fallback
+    elif not computed_any:
+        return None
+
+    df_pd[output_col] = out
+    if "ILD" in df_pd.columns:
+        ild = pd.to_numeric(df_pd["ILD"], errors="coerce")
+        pooled = (
+            pd.DataFrame({"ILD": ild, output_col: df_pd[output_col]})
+            .dropna(subset=["ILD", output_col])
+            .groupby("ILD", observed=True)[output_col]
+            .median()
+        )
+        if not pooled.empty:
+            df_pd[output_col] = ild.map(pooled)
+    return df_pd
 _mean_glm_feature_curve = process.mean_glm_feature_curve
 _subject_glm_feature_curves = process.subject_glm_feature_curves
 _mean_weighted_empirical_curve = mean_weighted_empirical_curve
@@ -1264,7 +1321,7 @@ def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
         figsize=figsize,
     )
 
-def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
+def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC", color=None):
     df_pd = to_pandas_df(plot_df).copy()
     df_pd["abs_ILD"] = pd.to_numeric(df_pd["ILD"], errors="coerce").abs()
 
@@ -1281,7 +1338,7 @@ def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
         title=title,
         baseline=0.5,
         baseline_area=True,
-        color="tab:blue",
+        color=color if color is not None else "tab:blue",
         ax=ax,
         figsize=figsize,
     )
@@ -1338,6 +1395,24 @@ def plot_binned_accuracy_figure(
             is_mcdr=False,
             baseline=process.BASELINE,
         )
+    elif x_axis_key in {
+        "weighted_stimulus",
+        "weighted stimulus",
+        "weighted_stimulus_evidence",
+        "weighted stimulus evidence",
+        "stim_one_hot_weight",
+        "stim one-hot weight",
+    }:
+        _weighted_df = _attach_weighted_stimulus_evidence(plot_df, views=views)
+        if _weighted_df is None:
+            panels, legend_title = None, None
+        else:
+            panels, legend_title = process.prepare_binned_accuracy_figure(
+                _weighted_df,
+                regressor_col=regressor_col,
+                x_col="_weighted_stimulus_evidence",
+                xlabel="Weighted stimulus evidence",
+            )
     else:
         panels, legend_title = process.prepare_binned_accuracy_figure(
             plot_df,

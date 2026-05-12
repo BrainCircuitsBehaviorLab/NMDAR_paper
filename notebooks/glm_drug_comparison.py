@@ -1,13 +1,13 @@
 import marimo
 
-__generated_with = "0.23.2"
+__generated_with = "0.23.5"
 app = marimo.App(width="full")
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # 2AFC drug versus rest fits
+    # Drug versus saline fits
     """)
     return
 
@@ -34,13 +34,18 @@ def _():
         load_model_config,
         model_aliases_for_kind,
     )
-    from glmhmmt.plots.common import custom_boxplot
+    from scipy.stats import ttest_rel
+
+    from glmhmmt.plots.common import custom_boxplot, significance_label
     from glmhmmt.postprocess import build_emission_weights_df, build_trial_df
     from glmhmmt.runtime import configure_paths, get_runtime_paths
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import build_views
     from plot_saver import make_plot_saver
+    from src.process import MCDR as process_mcdr
     from src.process import two_afc as process_two_afc
+    from src.process import two_adc as process_two_adc
+    from src.process.common import add_choice_lag_summary_regressor
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     paths = get_runtime_paths()
@@ -49,17 +54,21 @@ def _():
     sns.set_context("notebook")
 
     CONDITION_PALETTE = {
-        "rest": "#3B6EA8",
-        "drug": "#C44E52",
+        "saline": "tab:cyan",
+        "rest": "tab:gray",
+        "drug": "tab:pink",
         "nan": "#666666",
         "all": "#333333",
     }
-    TASK_NAME = "2AFC_DRUG"
-
+    TASK_OPTIONS = ["2AFC_DRUG", "2ADC_DRUG", "MCDR"]
+    DEFAULT_TASK_NAME = "2ADC_DRUG"
+    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
     return (
         CONDITION_PALETTE,
+        DEFAULT_TASK_NAME,
         Line2D,
-        TASK_NAME,
+        TASK_OPTIONS,
+        add_choice_lag_summary_regressor,
         build_emission_weights_df,
         build_trial_df,
         build_views,
@@ -75,9 +84,29 @@ def _():
         pd,
         pl,
         plt,
+        process_mcdr,
+        process_two_adc,
         process_two_afc,
+        significance_label,
         sns,
+        ttest_rel,
     )
+
+
+@app.cell
+def _(DEFAULT_TASK_NAME, TASK_OPTIONS, mo):
+    ui_task = mo.ui.dropdown(
+        options=TASK_OPTIONS,
+        value=DEFAULT_TASK_NAME,
+        label="Task",
+    )
+    return (ui_task,)
+
+
+@app.cell
+def _(ui_task):
+    TASK_NAME = ui_task.value
+    return (TASK_NAME,)
 
 
 @app.cell
@@ -130,7 +159,7 @@ def _(aliases_by_kind, mo, ui_model_kind):
     ui_rest_alias = mo.ui.dropdown(
         options=fit_aliases or [""],
         value=_default_rest_alias,
-        label="Rest fit",
+        label="Saline fit",
     )
     ui_drug_alias = mo.ui.dropdown(
         options=fit_aliases or [""],
@@ -146,10 +175,19 @@ def _(aliases_by_kind, mo, ui_model_kind):
 
 
 @app.cell
-def _(condition_counts, fit_aliases, mo, ui_drug_alias, ui_k, ui_model_kind, ui_rest_alias):
+def _(
+    condition_counts,
+    fit_aliases,
+    mo,
+    ui_drug_alias,
+    ui_k,
+    ui_model_kind,
+    ui_rest_alias,
+    ui_task,
+):
     mo.vstack(
         [
-            mo.hstack([ui_model_kind, ui_k, ui_rest_alias, ui_drug_alias]),
+            mo.hstack([ui_task, ui_model_kind, ui_k, ui_rest_alias, ui_drug_alias]),
             mo.md(f"Available aliases: `{len(fit_aliases)}`"),
             condition_counts,
         ]
@@ -158,7 +196,16 @@ def _(condition_counts, fit_aliases, mo, ui_drug_alias, ui_k, ui_model_kind, ui_
 
 
 @app.cell
-def _(TASK_NAME, load_model_config, mo, paths, ui_drug_alias, ui_model_kind, ui_rest_alias):
+def _(
+    TASK_NAME,
+    adapter,
+    load_model_config,
+    mo,
+    paths,
+    ui_drug_alias,
+    ui_model_kind,
+    ui_rest_alias,
+):
     _root = paths.RESULTS / "fits" / TASK_NAME / ui_model_kind.value
 
     def _saved_condition(alias: str, fallback: str) -> str:
@@ -168,18 +215,19 @@ def _(TASK_NAME, load_model_config, mo, paths, ui_drug_alias, ui_model_kind, ui_
             alias=alias,
             local_root=_root,
         )
-        value = str(cfg.get("condition_filter", fallback) or fallback).lower()
-        return "rest" if value == "saline" else value
+        return str(cfg.get("condition_filter", fallback) or fallback).lower()
+
+    _condition_options = adapter.condition_filter_options() or ["all"]
 
     ui_rest_condition = mo.ui.dropdown(
-        options=["rest", "drug", "nan", "all", "saline"],
-        value=_saved_condition(ui_rest_alias.value, "rest"),
-        label="Rest condition",
+        options=_condition_options,
+        value=_saved_condition(ui_rest_alias.value, "rest" if "rest" in _condition_options else _condition_options[0]),
+        label="Condition A",
     )
     ui_drug_condition = mo.ui.dropdown(
-        options=["drug", "rest", "nan", "all", "saline"],
-        value=_saved_condition(ui_drug_alias.value, "drug"),
-        label="Drug condition",
+        options=_condition_options,
+        value=_saved_condition(ui_drug_alias.value, "drug" if "drug" in _condition_options else _condition_options[0]),
+        label="Condition B",
     )
     return ui_drug_condition, ui_rest_condition
 
@@ -241,19 +289,7 @@ def _(
     )
     common_subjects = sorted(set(rest_views) & set(drug_views))
     mo.stop(not common_subjects, mo.md("The selected fits have no subjects in common."))
-    return (
-        K,
-        common_subjects,
-        drug_adapter,
-        drug_arrays,
-        drug_names,
-        drug_views,
-        model_kind,
-        rest_adapter,
-        rest_arrays,
-        rest_names,
-        rest_views,
-    )
+    return common_subjects, drug_views, model_kind, rest_views
 
 
 @app.cell
@@ -273,7 +309,7 @@ def _(
 ):
     def _fit_label(condition: str) -> str:
         value = str(condition or "all").lower()
-        return "rest" if value == "saline" else value
+        return "saline" if value in {"rest", "saline"} else value
 
     def _trial_df_for_fit(views: dict, *, condition_filter: str, label: str, alias: str):
         _df = adapter.filter_condition_df(df_all, condition_filter)
@@ -313,13 +349,54 @@ def _(
         else pl.DataFrame()
     )
     mo.stop(comparison_trial_df.is_empty(), mo.md("No aligned trials for the selected condition filters."))
-    return comparison_trial_df, drug_trial_df, rest_trial_df
+    return drug_trial_df, rest_trial_df
 
 
 @app.cell
-def _(drug_trial_df, process_two_afc, rest_trial_df):
-    rest_plot_df = process_two_afc.prepare_predictions_df(rest_trial_df)
-    drug_plot_df = process_two_afc.prepare_predictions_df(drug_trial_df)
+def _(
+    TASK_NAME,
+    adapter,
+    add_choice_lag_summary_regressor,
+    drug_trial_df,
+    drug_views,
+    pl,
+    process_mcdr,
+    process_two_adc,
+    process_two_afc,
+    rest_trial_df,
+    rest_views,
+):
+    def _choice_lag_cols_for(views: dict, trial_df):
+        _cols = []
+        for _view in views.values():
+            for _feat in list(getattr(_view, "feat_names", []) or []):
+                _feat = str(_feat)
+                if _feat.startswith("choice_lag_") and _feat not in _cols:
+                    _cols.append(_feat)
+        if not _cols:
+            _cols = adapter.choice_lag_cols(trial_df)
+        return _cols
+
+    def _prepare_plot_df(trial_df, views):
+        _processor = (
+            process_mcdr
+            if TASK_NAME == "MCDR"
+            else
+            process_two_adc
+            if TASK_NAME in {"2ADC_DRUG", "2AFC_delay_DRUG", "2ADC", "2AFC_delay"}
+            else process_two_afc
+        )
+        _plot_df = _processor.prepare_predictions_df(trial_df)
+        _plot_df = add_choice_lag_summary_regressor(
+            _plot_df,
+            choice_lag_cols=_choice_lag_cols_for(views, trial_df),
+        )
+        if isinstance(_plot_df, pl.DataFrame) and "Choice" not in _plot_df.columns and "response" in _plot_df.columns:
+            _plot_df = _plot_df.with_columns(pl.col("response").alias("Choice"))
+        return _plot_df
+
+    rest_plot_df = _prepare_plot_df(rest_trial_df, rest_views)
+    drug_plot_df = _prepare_plot_df(drug_trial_df, drug_views)
     return drug_plot_df, rest_plot_df
 
 
@@ -327,6 +404,7 @@ def _(drug_trial_df, process_two_afc, rest_trial_df):
 def _(drug_plot_df, mo, plots, rest_plot_df):
     _columns = set(rest_plot_df.columns) & set(drug_plot_df.columns)
     _preferred = [
+        "choice_lag_one_hot_sum",
         "at_choice",
         "at_choice_param",
         "stim_vals",
@@ -341,22 +419,31 @@ def _(drug_plot_df, mo, plots, rest_plot_df):
             for col in _columns
             if col not in {"subject", "fit_alias", "fit_condition", "Session", "Filename"}
         )[:10]
-    ui_regressor = mo.ui.dropdown(
-        options=regressor_options or [""],
-        value=plots.pick_choice_history_regressor(regressor_options) or (regressor_options[0] if regressor_options else ""),
-        label="Regressor",
+    choice_history_regressor = (
+        "choice_lag_one_hot_sum"
+        if "choice_lag_one_hot_sum" in regressor_options
+        else plots.pick_choice_history_regressor(regressor_options)
     )
-    return regressor_options, ui_regressor
+    mo.stop(choice_history_regressor is None, mo.md("No choice-history regressor available."))
+    return (choice_history_regressor,)
 
 
 @app.cell
-def _(mo, ui_regressor):
-    ui_regressor
-    return
-
-
-@app.cell
-def _(CONDITION_PALETTE, Line2D, adapter, drug_plot_df, drug_views, np, plots, plt, rest_plot_df, rest_views, ui_regressor):
+def _(
+    CONDITION_PALETTE,
+    Line2D,
+    TASK_NAME,
+    adapter,
+    choice_history_regressor,
+    drug_plot_df,
+    drug_views,
+    plots,
+    plt,
+    rest_plot_df,
+    rest_views,
+    ui_drug_condition,
+    ui_rest_condition,
+):
     def _artist_snapshot(ax):
         return {
             "lines": set(ax.lines),
@@ -386,14 +473,20 @@ def _(CONDITION_PALETTE, Line2D, adapter, drug_plot_df, drug_views, np, plots, p
         return _result
 
     fig_overlay, axd = plt.subplot_mosaic(
-        [["accuracy", "repeat_evidence"], ["repeat_regressor", "right_regressor"]],
-        figsize=(7.0, 5.8),
+        [
+            ["accuracy", "repeat_evidence"],
+            ["binned_accuracy", "right_regressor"],
+            ["repeat_bias", "repeat_bias"],
+        ],
+        figsize=(7.0, 8.3),
         layout="constrained",
     )
     _payloads = [
-        ("rest", rest_plot_df, rest_views),
-        ("drug", drug_plot_df, drug_views),
+        (str(ui_rest_condition.value), rest_plot_df, rest_views),
+        (str(ui_drug_condition.value), drug_plot_df, drug_views),
     ]
+    _is_delay_task = TASK_NAME in {"2ADC_DRUG", "2AFC_delay_DRUG", "2ADC", "2AFC_delay"}
+    _accuracy_x_axis = "raw_delay" if _is_delay_task else "ILD"
     for _label, _plot_df, _views in _payloads:
         _color = CONDITION_PALETTE.get(_label, "#333333")
         _overlay(
@@ -420,21 +513,24 @@ def _(CONDITION_PALETTE, Line2D, adapter, drug_plot_df, drug_views, np, plots, p
             color=_color,
         )
         _overlay(
-            lambda _ax, _df=_plot_df, _vs=_views: plots.plot_repeat_by_regressor_simple(
+            lambda _ax, _df=_plot_df, _vs=_views: plots.plot_binned_accuracy_figure(
                 _df,
-                regressor_col=ui_regressor.value,
+                regressor_col=choice_history_regressor,
+                x_axis=_accuracy_x_axis,
+                adapter=adapter,
                 views=_vs,
-                ax=_ax,
+                axes=[_ax],
+                max_panels=1,
                 legend=False,
             ),
-            axd["repeat_regressor"],
+            axd["binned_accuracy"],
             label=_label,
             color=_color,
         )
         _overlay(
             lambda _ax, _df=_plot_df: plots.plot_right_by_regressor(
                 _df,
-                regressor_col=ui_regressor.value,
+                regressor_col=choice_history_regressor,
                 ax=_ax,
                 legend=False,
             ),
@@ -442,17 +538,40 @@ def _(CONDITION_PALETTE, Line2D, adapter, drug_plot_df, drug_views, np, plots, p
             label=_label,
             color=_color,
         )
+        _overlay(
+            lambda _ax, _df=_plot_df: plots.plot_rb(
+                _df,
+                ax=_ax,
+                title=None,
+            ),
+            axd["repeat_bias"],
+            label=_label,
+            color=_color,
+        )
 
     axd["accuracy"].set_title("Accuracy by fitted evidence")
     axd["repeat_evidence"].set_title("Repeat by fitted evidence")
-    axd["repeat_regressor"].set_title("Repeat by regressor")
-    axd["right_regressor"].set_title("Right choice by regressor")
-    for _axis in axd.values():
+    axd["binned_accuracy"].set_title("Psychometric by choice lag")
+    axd["right_regressor"].set_title("Right choice by choice lag")
+    axd["repeat_bias"].set_title("Repeat bias by delay" if _is_delay_task else "Repeat bias by stimulus strength")
+    for _key, _axis in axd.items():
         _axis.set_box_aspect(1)
     fig_overlay.legend(
         handles=[
-            Line2D([0], [0], color=CONDITION_PALETTE["rest"], lw=2, marker="o", label="rest"),
-            Line2D([0], [0], color=CONDITION_PALETTE["drug"], lw=2, marker="o", label="drug"),
+            Line2D(
+                [0], [0],
+                color=CONDITION_PALETTE.get(str(ui_rest_condition.value), "#333333"),
+                lw=2,
+                marker="o",
+                label=str(ui_rest_condition.value),
+            ),
+            Line2D(
+                [0], [0],
+                color=CONDITION_PALETTE.get(str(ui_drug_condition.value), "#333333"),
+                lw=2,
+                marker="o",
+                label=str(ui_drug_condition.value),
+            ),
         ],
         frameon=False,
         loc="center left",
@@ -462,7 +581,16 @@ def _(CONDITION_PALETTE, Line2D, adapter, drug_plot_df, drug_views, np, plots, p
 
 
 @app.cell
-def _(TASK_NAME, fig_overlay, make_plot_saver, mo, model_kind, paths, ui_drug_alias, ui_rest_alias):
+def _(
+    TASK_NAME,
+    fig_overlay,
+    make_plot_saver,
+    mo,
+    model_kind,
+    paths,
+    ui_drug_alias,
+    ui_rest_alias,
+):
     save_plot = make_plot_saver(
         mo,
         results_dir=paths.RESULTS,
@@ -473,7 +601,7 @@ def _(TASK_NAME, fig_overlay, make_plot_saver, mo, model_kind, paths, ui_drug_al
     mo.vstack(
         [
             fig_overlay,
-            save_plot(fig_overlay, "drug rest overlay", stem="drug_rest_overlay"),
+            save_plot(fig_overlay, "drug saline overlay", stem="drug_saline_overlay"),
         ],
         align="center",
     )
@@ -481,16 +609,72 @@ def _(TASK_NAME, fig_overlay, make_plot_saver, mo, model_kind, paths, ui_drug_al
 
 
 @app.cell
-def _(build_emission_weights_df, drug_views, pl, rest_views):
-    rest_weights_df = build_emission_weights_df(rest_views).with_columns(pl.lit("rest").alias("fit_condition"))
-    drug_weights_df = build_emission_weights_df(drug_views).with_columns(pl.lit("drug").alias("fit_condition"))
+def _(
+    build_emission_weights_df,
+    drug_views,
+    mo,
+    pl,
+    rest_views,
+    ui_drug_condition,
+    ui_rest_condition,
+):
+    rest_weights_df = build_emission_weights_df(rest_views).with_columns(pl.lit(str(ui_rest_condition.value)).alias("fit_condition"))
+    drug_weights_df = build_emission_weights_df(drug_views).with_columns(pl.lit(str(ui_drug_condition.value)).alias("fit_condition"))
     comparison_weights_df = pl.concat([rest_weights_df, drug_weights_df], how="diagonal_relaxed")
-    return comparison_weights_df, drug_weights_df, rest_weights_df
+    _features = (
+        comparison_weights_df.select("feature").unique().sort("feature").to_series().to_list()
+        if not comparison_weights_df.is_empty()
+        else []
+    )
+    _preferred_rank_features = [
+        "stim_param",
+        "stim_vals",
+        "stim",
+        "evidence_param",
+        "at_choice_param",
+        "choice_lag_param",
+    ]
+    _default_rank_feature = next(
+        (feature for feature in _preferred_rank_features if feature in _features),
+        _features[0] if _features else "",
+    )
+    ui_state_rank_feature = mo.ui.dropdown(
+        options=_features or [""],
+        value=_default_rank_feature,
+        label="State ranking coefficient",
+    )
+    return comparison_weights_df, ui_state_rank_feature
 
 
 @app.cell
-def _(CONDITION_PALETTE, comparison_weights_df, custom_boxplot, np, pd, plt, sns):
-    def plot_emission_condition_boxplot(weights_df, *, feature_order: list[str] | None = None):
+def _(mo, ui_state_rank_feature):
+    mo.hstack([ui_state_rank_feature])
+    return
+
+
+@app.cell
+def _(
+    CONDITION_PALETTE,
+    TASK_NAME,
+    comparison_weights_df,
+    custom_boxplot,
+    np,
+    pd,
+    pl,
+    plt,
+    significance_label,
+    sns,
+    ttest_rel,
+    ui_drug_condition,
+    ui_rest_condition,
+    ui_state_rank_feature,
+):
+    def plot_emission_condition_boxplot(
+        weights_df,
+        *,
+        feature_order: list[str] | None = None,
+        title: str | None = None,
+    ):
         _raw = weights_df.to_pandas() if hasattr(weights_df, "to_pandas") else pd.DataFrame(weights_df)
         if _raw.empty:
             return None
@@ -501,25 +685,123 @@ def _(CONDITION_PALETTE, comparison_weights_df, custom_boxplot, np, pd, plt, sns
             )["weight"]
             .mean()
         )
-        _feature_order = feature_order or list(dict.fromkeys(_raw["feature"].astype(str)))
+        _rank_feature = str(ui_state_rank_feature.value or "")
+        if _rank_feature in set(_raw["feature"]):
+            _rank_source = (
+                _raw[_raw["feature"] == _rank_feature]
+                .groupby(["subject", "fit_condition", "state_rank", "state_label"], as_index=False)["weight"]
+                .mean()
+            )
+            _rank_source = _rank_source.sort_values(
+                ["subject", "fit_condition", "weight"],
+                ascending=[True, True, False],
+            )
+            _rank_source["plot_state_rank"] = (
+                _rank_source.groupby(["subject", "fit_condition"]).cumcount()
+            )
+            _rank_source["plot_state_label"] = _rank_source["plot_state_rank"].map(
+                lambda rank: "Engaged" if int(rank) == 0 else "Disengaged" if int(rank) == 1 else f"Disengaged {int(rank)}"
+            )
+            _raw = _raw.merge(
+                _rank_source[
+                    [
+                        "subject",
+                        "fit_condition",
+                        "state_rank",
+                        "state_label",
+                        "plot_state_rank",
+                        "plot_state_label",
+                    ]
+                ],
+                on=["subject", "fit_condition", "state_rank", "state_label"],
+                how="left",
+            )
+        else:
+            _raw["plot_state_rank"] = _raw["state_rank"]
+            _raw["plot_state_label"] = _raw["state_label"]
+        _raw = _raw.dropna(subset=["plot_state_rank"]).copy()
+        _raw["plot_state_rank"] = _raw["plot_state_rank"].astype(int)
+        _feature_order = [feature for feature in (feature_order or list(dict.fromkeys(_raw["feature"].astype(str)))) if feature in set(_raw["feature"])]
+        if not _feature_order:
+            return None
+        _raw = _raw[_raw["feature"].isin(_feature_order)].copy()
         _state_rows = (
-            _raw[["state_rank", "state_label"]]
+            _raw[["plot_state_rank", "plot_state_label"]]
             .drop_duplicates()
-            .sort_values("state_rank")
+            .sort_values("plot_state_rank")
+            .head(2)
         )
-        _cond_order = [cond for cond in ["rest", "drug"] if cond in set(_raw["fit_condition"])]
+        _cond_order = [
+            cond
+            for cond in [str(ui_rest_condition.value), str(ui_drug_condition.value)]
+            if cond in set(_raw["fit_condition"])
+        ]
         _fig, _axes = plt.subplots(
             1,
             max(1, len(_state_rows)),
-            figsize=(max(5.0, 1.0 * len(_feature_order)) * max(1, len(_state_rows)), 3.8),
+            figsize=(max(5.0, 0.9 * len(_feature_order)) * max(1, len(_state_rows)), 4.2),
             sharey=True,
             squeeze=False,
+            layout="constrained",
         )
         _axes = _axes.ravel()
         _width = 0.34
         _offsets = np.linspace(-_width / 2, _width / 2, max(1, len(_cond_order)))
+        _selection_points = []
+        _subject_line_axes = []
+
+        def _add_line_selection_points(_subject, _feature, _state_label, _x1, _x2, _y1, _y2):
+            for _x, _y in zip(np.linspace(_x1, _x2, 24), np.linspace(_y1, _y2, 24), strict=False):
+                _selection_points.append(
+                    {
+                        "subject": str(_subject),
+                        "feature": str(_feature),
+                        "state": str(_state_label),
+                        "x": float(_x),
+                        "y": float(_y),
+                    }
+                )
+
+        def _annotate_feature_significance(_ax, _state_df, _feature_order, _pos_by_pair):
+            _y_top = None
+            for _feature in _feature_order:
+                _pivot = (
+                    _state_df[_state_df["feature"] == _feature]
+                    .pivot(index="subject", columns="fit_condition", values="weight")
+                )
+                if len(_cond_order) < 2 or not set(_cond_order[:2]).issubset(_pivot.columns):
+                    continue
+                _paired = _pivot[_cond_order[:2]].dropna()
+                if len(_paired) < 2:
+                    continue
+
+                _pvalue = float(ttest_rel(_paired[_cond_order[0]], _paired[_cond_order[1]], nan_policy="omit").pvalue)
+                _label = significance_label(_pvalue)
+                _feature_values = _state_df[_state_df["feature"] == _feature]["weight"].dropna().to_numpy(dtype=float)
+                if _feature_values.size == 0:
+                    continue
+
+                _x1 = _pos_by_pair.get((_feature, _cond_order[0]))
+                _x2 = _pos_by_pair.get((_feature, _cond_order[1]))
+                if _x1 is None or _x2 is None:
+                    continue
+
+                _yrange = float(np.nanmax(_state_df["weight"]) - np.nanmin(_state_df["weight"]))
+                if not np.isfinite(_yrange) or _yrange <= 0:
+                    _yrange = 1.0
+                _y = float(np.nanmax(_feature_values)) + 0.08 * _yrange
+                _h = 0.025 * _yrange
+                _ax.plot([_x1, _x1, _x2, _x2], [_y, _y + _h, _y + _h, _y], color="black", lw=1.0)
+                _ax.text((_x1 + _x2) / 2, _y + _h, _label, ha="center", va="bottom", color="black")
+                _y_top = max(_y_top if _y_top is not None else _y + _h, _y + _h)
+            if _y_top is not None:
+                _lo, _hi = _ax.get_ylim()
+                if _y_top >= _hi:
+                    _ax.set_ylim(_lo, _y_top + 0.08 * max(_hi - _lo, 1.0))
+
         for _ax, (_, _state_row) in zip(_axes, _state_rows.iterrows(), strict=False):
-            _state_df = _raw[_raw["state_rank"] == _state_row["state_rank"]].copy()
+            _subject_line_axes.append((str(_state_row["plot_state_label"]), _ax))
+            _state_df = _raw[_raw["plot_state_rank"] == _state_row["plot_state_rank"]].copy()
             _values = []
             _positions = []
             _median_colors = []
@@ -533,7 +815,7 @@ def _(CONDITION_PALETTE, comparison_weights_df, custom_boxplot, np, pd, plt, sns
                     ]["weight"].dropna().to_numpy(dtype=float)
                     _values.append(_vals)
                     _positions.append(_pos)
-                    _median_colors.append(CONDITION_PALETTE[_cond])
+                    _median_colors.append(CONDITION_PALETTE.get(_cond, "#333333"))
                     _pos_by_pair[(_feature, _cond)] = _pos
             custom_boxplot(
                 _ax,
@@ -549,20 +831,32 @@ def _(CONDITION_PALETTE, comparison_weights_df, custom_boxplot, np, pd, plt, sns
                     _state_df[_state_df["feature"] == _feature]
                     .pivot(index="subject", columns="fit_condition", values="weight")
                 )
-                if {"rest", "drug"}.issubset(_pivot.columns):
-                    for _, _row in _pivot.iterrows():
-                        _ys = [_row["rest"], _row["drug"]]
+                if len(_cond_order) >= 2 and set(_cond_order[:2]).issubset(_pivot.columns):
+                    for _subject, _row in _pivot.iterrows():
+                        _ys = [_row[_cond_order[0]], _row[_cond_order[1]]]
                         if np.all(np.isfinite(_ys)):
+                            _x1 = _pos_by_pair[(_feature, _cond_order[0])]
+                            _x2 = _pos_by_pair[(_feature, _cond_order[1])]
                             _ax.plot(
-                                [_pos_by_pair[(_feature, "rest")], _pos_by_pair[(_feature, "drug")]],
+                                [_x1, _x2],
                                 _ys,
                                 color="#B0B0B0",
                                 alpha=0.25,
                                 linewidth=1.0,
                                 zorder=1,
                             )
+                            _add_line_selection_points(
+                                _subject,
+                                _feature,
+                                _state_row["plot_state_label"],
+                                _x1,
+                                _x2,
+                                _ys[0],
+                                _ys[1],
+                            )
+            _annotate_feature_significance(_ax, _state_df, _feature_order, _pos_by_pair)
             _ax.axhline(0.0, color="black", linewidth=0.8, linestyle="--", alpha=0.7)
-            _ax.set_title(str(_state_row["state_label"]))
+            _ax.set_title(f"{_state_row['plot_state_label']} by {_rank_feature}")
             _ax.set_xticks(range(len(_feature_order)))
             _ax.set_xticklabels(_feature_order, rotation=35, ha="right")
             _ax.set_xlabel("")
@@ -570,30 +864,168 @@ def _(CONDITION_PALETTE, comparison_weights_df, custom_boxplot, np, pd, plt, sns
         _axes[0].set_ylabel("Emission weight")
         _fig.legend(
             handles=[
-                plt.Line2D([0], [0], color=CONDITION_PALETTE["rest"], lw=3, label="rest"),
-                plt.Line2D([0], [0], color=CONDITION_PALETTE["drug"], lw=3, label="drug"),
+                plt.Line2D([0], [0], color=CONDITION_PALETTE.get(str(ui_rest_condition.value), "#333333"), lw=3, label=str(ui_rest_condition.value)),
+                plt.Line2D([0], [0], color=CONDITION_PALETTE.get(str(ui_drug_condition.value), "#333333"), lw=3, label=str(ui_drug_condition.value)),
             ],
             frameon=False,
             loc="center left",
             bbox_to_anchor=(1.01, 0.5),
         )
+        if title is not None:
+            _fig.suptitle(title, y=1.02)
         _fig.tight_layout()
+        _fig._subject_line_selection_points = _selection_points
+        _fig._subject_line_axes = _subject_line_axes
         return _fig
 
-    fig_emission = plot_emission_condition_boxplot(comparison_weights_df)
-    return fig_emission, plot_emission_condition_boxplot
+    _features = (
+        comparison_weights_df.select("feature").unique().sort("feature").to_series().to_list()
+        if not comparison_weights_df.is_empty()
+        else []
+    )
+
+    def _suffix_int(feature: str) -> int:
+        suffix = feature.rsplit("_", 1)[-1]
+        return int(suffix) if suffix.isdigit() else 10**9
+
+    if TASK_NAME == "MCDR":
+        _stimulus_features = [
+            feature
+            for feature in [
+                "stim_param",
+                "SL", "SC", "SR",
+                "SLxdelay", "SCxdelay", "SRxdelay",
+                "SLxD", "SCxD", "SRxD",
+                "stim1L", "stim1C", "stim1R",
+                "stim2L", "stim2C", "stim2R",
+                "stim3L", "stim3C", "stim3R",
+                "stim4L", "stim4C", "stim4R",
+            ]
+            if feature in _features
+        ]
+        _choice_lag_features = [
+            feature
+            for feature in ["choice_param", "choice_lag_param"]
+            if feature in _features
+        ] + sorted(
+            [
+                feature
+                for feature in _features
+                if str(feature).startswith("choice_lag_")
+            ],
+            key=_suffix_int,
+        )
+        _combined_features = list(dict.fromkeys([*_stimulus_features, *_choice_lag_features]))
+        fig_emission_coefficients = plot_emission_condition_boxplot(
+            comparison_weights_df,
+            feature_order=_combined_features,
+            title="Emission weights",
+        )
+    else:
+        _is_delay_task = TASK_NAME in {"2ADC_DRUG", "2AFC_delay_DRUG", "2ADC", "2AFC_delay"}
+        _stimulus_base_features = (
+            ["stim", "stim_vals", "stim_param", "delay", "delay_param", "stim_x_delay", "stim_x_delay_param"]
+            if _is_delay_task
+            else ["stim_vals", "stim_param", "stim"]
+        )
+        _stimulus_prefixes = (
+            ("stim_", "delay_", "stim_x_delay_hot_")
+            if _is_delay_task
+            else ("stim_",)
+        )
+
+        _stimulus_features = [
+            feature
+            for feature in _stimulus_base_features
+            if feature in _features
+        ] + sorted(
+            [
+                feature
+                for feature in _features
+                if any(str(feature).startswith(prefix) for prefix in _stimulus_prefixes)
+                and feature not in _stimulus_base_features
+                and not str(feature).startswith("stim_x_delay_param")
+            ],
+            key=_suffix_int,
+        )
+        _choice_lag_features = [
+            feature
+            for feature in ["choice_param", "at_choice", "at_choice_param"]
+            if feature in _features
+        ] + sorted(
+            [
+                feature
+                for feature in _features
+                if str(feature).startswith("choice_lag_")
+            ],
+            key=_suffix_int,
+        )
+
+        _combined_features = list(dict.fromkeys([*_stimulus_features, *_choice_lag_features]))
+        fig_emission_coefficients = plot_emission_condition_boxplot(
+            comparison_weights_df.filter(pl.col("subject").is_in(["E10"]).not_()),
+            feature_order=_combined_features,
+            title="Emission weights",
+        )
+    return (fig_emission_coefficients,)
 
 
 @app.cell
-def _(fig_emission, mo, save_plot):
-    mo.stop(fig_emission is None, mo.md("No emission weights available for the selected fits."))
+def _(fig_emission_coefficients, mo, save_plot):
+    mo.stop(
+        fig_emission_coefficients is None,
+        mo.md("No emission weights available for the selected fits."),
+    )
+    ui_emission_coefficients_by_state = {
+        _state_label: mo.ui.matplotlib(_ax, debounce=True)
+        for _state_label, _ax in getattr(fig_emission_coefficients, "_subject_line_axes", [])
+    }
+    ui_emission_coefficients = mo.ui.tabs(
+        ui_emission_coefficients_by_state,
+        value=next(iter(ui_emission_coefficients_by_state), None),
+    )
     mo.vstack(
         [
-            fig_emission,
-            save_plot(fig_emission, "emission weights rest drug", stem="emission_weights_rest_drug"),
+            ui_emission_coefficients,
+            save_plot(
+                fig_emission_coefficients,
+                "emission weights saline drug",
+                stem="emission_weights_saline_drug",
+            ),
         ],
         align="center",
     )
+    return (ui_emission_coefficients_by_state,)
+
+
+@app.cell
+def _(fig_emission_coefficients, mo, pd, ui_emission_coefficients_by_state):
+    _points = pd.DataFrame(
+        getattr(fig_emission_coefficients, "_subject_line_selection_points", [])
+    )
+    _selected_subjects = set()
+    if not _points.empty:
+        for _state_label, _ui in ui_emission_coefficients_by_state.items():
+            if not _ui.value:
+                continue
+            _state_points = _points[_points["state"] == _state_label]
+            if _state_points.empty:
+                continue
+            _mask = _ui.value.get_mask(
+                _state_points["x"].to_numpy(),
+                _state_points["y"].to_numpy(),
+            )
+            _selected_subjects.update(_state_points.loc[_mask, "subject"].tolist())
+    selected_emission_subjects = sorted(_selected_subjects)
+    mo.md(
+        "Selected subjects: "
+        + (", ".join(selected_emission_subjects) if selected_emission_subjects else "_none_")
+    )
+    return
+
+
+@app.cell
+def _():
     return
 
 

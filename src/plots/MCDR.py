@@ -33,6 +33,17 @@ from src.process.common import (
     lapse_logistic_label,
     pick_choice_history_regressor,
     prepare_evidence_curve,
+    attach_repeat_choice_evidence,
+    attach_total_fitted_evidence,
+    display_regressor_name,
+    format_lapse_logistic_fits,
+    lapse_logistic_label,
+    pick_choice_history_regressor,
+    prepare_evidence_curve,
+    prepare_right_integration_maps,
+    REPEAT_EVIDENCE_TAIL_QUANTILES,
+    add_choice_lag_summary_regressor,
+    compute_rb_by_x
 )
 from src.plots.common import (
     add_shared_figure_legend,
@@ -45,7 +56,19 @@ from src.plots.common import (
     plot_simple_summary,
     plot_repeat_by_regressor_simple as _plot_repeat_by_regressor_simple,
     resolve_axes,
+    add_shared_figure_legend,
+    fit_lapse_logistic_for_panel,
+    make_single_panel_figure,
+    prepare_binned_accuracy_total_evidence_panels,
+    plot_grouped_summary,
+    plot_lapse_fit_parameter_panels,
+    plot_mean_over_data,
+    plot_integration_map_panels,
+    plot_simple_summary,
+    plot_repeat_by_regressor_simple as _plot_repeat_by_regressor_simple,
 )
+
+from src.process import MCDR as process
 
 cfg = load_app_config()
 CI_BAND_ERR_KWS = {"edgecolor": "none", "linewidth": 0}
@@ -672,35 +695,6 @@ def plot_delay_binned_1d(df, model_name, subject=None, n_bins=7):
     return fig_delay, fig_stim
 
 
-
-from src.process.common import (
-    attach_repeat_choice_evidence,
-    attach_total_fitted_evidence,
-    display_regressor_name,
-    format_lapse_logistic_fits,
-    lapse_logistic_label,
-    pick_choice_history_regressor,
-    prepare_evidence_curve,
-    prepare_right_integration_maps,
-    REPEAT_EVIDENCE_TAIL_QUANTILES,
-    add_choice_lag_summary_regressor,
-    compute_rb_by_x
-)
-from src.process import MCDR as process
-from src.plots.common import (
-    add_shared_figure_legend,
-    fit_lapse_logistic_for_panel,
-    make_single_panel_figure,
-    prepare_binned_accuracy_total_evidence_panels,
-    plot_grouped_summary,
-    plot_lapse_fit_parameter_panels,
-    plot_mean_over_data,
-    plot_integration_map_panels,
-    plot_simple_summary,
-    plot_repeat_by_regressor_simple as _plot_repeat_by_regressor_simple,
-)
-
-
 def plot_accuracy(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
     df_pd = df.to_pandas().copy() if hasattr(df, "to_pandas") else pd.DataFrame(df).copy()
     if "ttype_c" not in df_pd.columns and "ttype_n" in df_pd.columns:
@@ -724,7 +718,7 @@ def plot_accuracy(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
         figsize=figsize,
     )
 
-def plot_rb(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
+def plot_rb(df, ax=None, figsize=(3.0, 3.0), title="MCDR", **kwargs):
     df_pd = df.to_pandas().copy() if hasattr(df, "to_pandas") else pd.DataFrame(df).copy()
     if "ttype_c" not in df_pd.columns and "ttype_n" in df_pd.columns:
         ttype_map = {float(key): value for key, value in cfg["encoding"]["ttype"].items()}
@@ -743,7 +737,7 @@ def plot_rb(df, ax=None, figsize=(3.0, 3.0), title="MCDR"):
         title=title,
         baseline=1 / 3,
         baseline_area=True,
-        color="tab:blue",
+        color=kwargs.get("color") if kwargs.get("color") is not None else "tab:blue",
         ax=ax,
         figsize=figsize,
     )

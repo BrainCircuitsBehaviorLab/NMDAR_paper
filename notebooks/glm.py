@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.2"
+__generated_with = "0.23.5"
 app = marimo.App(width="full")
 
 
@@ -16,6 +16,7 @@ def _(mo):
 def _():
     from pathlib import Path
     import sys
+    import importlib
     import marimo as mo
     import numpy as np
     import polars as pl
@@ -43,28 +44,32 @@ def _():
         resolve_selected_model_id,
         select_subject_behavior_df,
     )
-    from glmhmmt.cli.fit_glm import main as fit_main, generate_model_id
+    import glmhmmt.cli.fit_glm as _fit_glm_cli
+    _fit_glm_cli = importlib.reload(_fit_glm_cli)
+    fit_main = _fit_glm_cli.main
+    generate_model_id = _fit_glm_cli.generate_model_id
     from glmhmmt.glm import fit_glm
-    from glmhmmt.postprocess import (
-        build_trial_df,
-        build_emission_weights_df,
-        build_weights_boxplot_payload,
-    )
+    import glmhmmt.postprocess as _postprocess
+    build_trial_df = _postprocess.build_trial_df
+    build_emission_weights_df = _postprocess.build_emission_weights_df
+    build_weights_boxplot_payload = _postprocess.build_weights_boxplot_payload
+    import glmhmmt.plots.emissions as _emission_plots
     import glmhmmt.plots as model_plots
     from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import get_state_color
     from src.plots.common import plot_prepared_weight_family, plot_regressor_net_impact
     from src.process import MCDR as process_mcdr
+    process_mcdr = importlib.reload(process_mcdr)
     from src.process import two_afc as process_two_afc
-    from src.process import two_afc_delay as process_two_afc_delay
+    from src.process import two_adc as process_two_adc
     from src.process.common import add_choice_lag_summary_regressor, display_regressor_name
 
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
             return process_mcdr.prepare_predictions_df(df, cfg=load_app_config())
-        if task_name == "2AFC_delay":
-            return process_two_afc_delay.prepare_predictions_df(df)
+        if task_name in {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}:
+            return process_two_adc.prepare_predictions_df(df)
         return process_two_afc.prepare_predictions_df(df)
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
@@ -101,6 +106,7 @@ def _():
         plot_regressor_net_impact,
         plt,
         prepare_predictions_df,
+        process_mcdr,
         resolve_selected_model_id,
         select_subject_behavior_df,
         sns,
@@ -160,13 +166,62 @@ def _(ModelCfg, ui_model_manager):
 
 @app.cell
 def _(mo):
+    ui_emission_model = mo.ui.dropdown(
+        options=["standard", "private_alternative"],
+        value="standard",
+        label="Emission model",
+    )
+    return (ui_emission_model,)
+
+
+@app.cell
+def _(mo):
+    ui_private_alternative_variant = mo.ui.dropdown(
+        options={"private batch 11": "batch11", "private batch 3B": "batch3b"},
+        value="private batch 11",
+        label="Private design",
+    )
+    return (ui_private_alternative_variant,)
+
+
+@app.cell
+def _(task_name, ui_emission_model):
+    emission_model = (
+        ui_emission_model.value
+        if task_name == "MCDR"
+        else "standard"
+    )
+    return (emission_model,)
+
+
+@app.cell
+def _(emission_model, task_name, ui_private_alternative_variant):
+    private_alternative_variant = (
+        ui_private_alternative_variant.value
+        if task_name == "MCDR" and emission_model == "private_alternative"
+        else "batch11"
+    )
+    return (private_alternative_variant,)
+
+
+@app.cell
+def _(mo):
     get_last_fit_click, set_last_fit_click = mo.state(0)
     return get_last_fit_click, set_last_fit_click
 
 
 @app.cell
-def _(adapter, generate_model_id, model_cfg, task_name):
-    current_hash = generate_model_id(
+def _(
+    adapter,
+    emission_model,
+    generate_model_id,
+    model_cfg,
+    private_alternative_variant,
+    process_mcdr,
+    task_name,
+):
+    current_hash = process_mcdr.generate_private_alternative_model_id(
+        generate_model_id,
         task_name,
         model_cfg.tau,
         model_cfg.emission_cols,
@@ -174,6 +229,8 @@ def _(adapter, generate_model_id, model_cfg, task_name):
         lapse_max=model_cfg.lapse_max,
         baseline_class_idx=adapter.baseline_class_idx,
         condition_filter=model_cfg.condition_filter,
+        emission_model=emission_model,
+        private_alternative_variant=private_alternative_variant,
     )
     return (current_hash,)
 
@@ -209,9 +266,18 @@ def _(mo):
 
 
 @app.cell
-def _(current_hash, mo, save_plot, ui_model_manager):
+def _(
+    current_hash,
+    mo,
+    save_plot,
+    ui_emission_model,
+    ui_model_manager,
+    ui_private_alternative_variant,
+):
     mo.vstack([
         ui_model_manager,
+        ui_emission_model,
+        ui_private_alternative_variant,
         save_plot.save_all_widget(label="Save all model plots"),
         mo.md(f"**Current params hash:** `{current_hash}`"),
     ])
@@ -219,15 +285,30 @@ def _(current_hash, mo, save_plot, ui_model_manager):
 
 
 @app.cell
+def _(trial_df):
+    trial_df.group_by(["batch", "subject", "drug"]).len()
+    return
+
+
+@app.cell
+def _(weights_df):
+    weights_df
+    return
+
+
+@app.cell
 def _(
     adapter,
     current_hash,
+    emission_model,
     fit_main,
     get_last_fit_click,
     mm_widget,
     mo,
     model_cfg,
     paths,
+    private_alternative_variant,
+    process_mcdr,
     set_last_fit_click,
     task_name,
 ):
@@ -279,6 +360,9 @@ def _(
                         subtitle=_progress_subtitle(info),
                     )
 
+            if task_name == "MCDR" and emission_model == "private_alternative":
+                process_mcdr.set_private_alternative_variant(private_alternative_variant)
+
             fit_main(
                 subjects=model_cfg.subjects,
                 out_dir=_OUT,
@@ -292,6 +376,7 @@ def _(
                 progress_callback=_on_progress,
                 baseline_class_idx=adapter.baseline_class_idx,
                 condition_filter=model_cfg.condition_filter,
+                emission_model=emission_model,
             )
         mm_widget.saved_model_name = _selected_id
         mm_widget.alias_error = ""
@@ -305,6 +390,12 @@ def _(
         mm_widget.is_running = False
 
     mo.md("✅ Fit complete — plots below update automatically.")
+    return
+
+
+@app.cell
+def _(private_alternative_variant):
+    private_alternative_variant
     return
 
 
@@ -618,6 +709,12 @@ def _(ui_mcdr_one_hot_mode):
 
 
 @app.cell
+def _(pl, weights_df):
+    weights_df.filter(pl.col("feature").str.contains("session").not_(), pl.col("feature").str.contains("bias").not_(),)
+    return
+
+
+@app.cell
 def _(
     K,
     mo,
@@ -643,7 +740,7 @@ def _(
     #     K=K,
     # )
 
-    _fig_summary = model_plots.emission_weights_summary_boxplot(weights_df)
+    _fig_summary = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("session").not_(), pl.col("feature").str.contains("choice").not_(),))
     # _lr_df = build_regressor_lr_df(
     #     {s: arrays_store[s] for s in selected},
     #     lapse_max=model_cfg.lapse_max,
@@ -660,7 +757,9 @@ def _(
     # _fig_lr = None if _ax_lr is None else _ax_lr.figure
     _fig_stim_hot = plot_stim_hot_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
     _fig_choice_lag = plot_choice_lag_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
+    _fig_choice_lag = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("choice")))
     _fig_bias_hot = plot_bias_hot_weights(_weights_df_sel)
+    _fig_bias_hot = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("choice").not_(), pl.col("feature").str.contains("stim").not_()))
     _fig_lapses = model_plots.lapse_rates_boxplot(views=views_sel, K=K)
     _fig_seq = plot_sequence_feature_weights(_weights_df_sel)
     # _items = [mo.md("#### By subject"), _fig_by_subject]
@@ -678,7 +777,7 @@ def _(
     if _fig_summary is not None:
         _summary_cards.append(
             mo.vstack(
-                [_fig_summary, save_plot(_fig_summary, "emission weights", stem="emission_weights")],
+                [_fig_summary, save_plot(_fig_summary.figure, "emission weights", stem="emission_weights")],
                 align="center",
             )
         )
@@ -699,7 +798,7 @@ def _(
             mo.vstack(
                 [
                     _fig_stim_hot,
-                    save_plot(_fig_stim_hot, "stim one-hot", stem="stim_one_hot"),
+                    save_plot(_fig_stim_hot.figure, "stim one-hot", stem="stim_one_hot"),
                 ],
                 align="center",
             )
@@ -709,7 +808,7 @@ def _(
             mo.vstack(
                 [
                     _fig_choice_lag,
-                    save_plot(_fig_choice_lag, "choice lag one-hot", stem="prev_choice_one_hot"),
+                    save_plot(_fig_choice_lag.figure, "choice lag one-hot", stem="prev_choice_one_hot"),
                 ],
                 align="center",
             )
@@ -719,7 +818,7 @@ def _(
             mo.vstack(
                 [
                     _fig_bias_hot,
-                    save_plot(_fig_bias_hot, "bias hot", stem="bias_one_hot"),
+                    save_plot(_fig_bias_hot.figure, "bias hot", stem="bias_one_hot"),
                 ],
                 align="center",
             )
@@ -740,6 +839,8 @@ def _(
             ]
         )
     mo.vstack(_items, align="center")
+    # _fig_summary
+    # _fig_choice_lag
     return
 
 
@@ -819,7 +920,8 @@ def _(adapter, mo, task_name, trial_df, views):
     if not _choice_lag_cols:
         _choice_lag_cols = [col for col in adapter.choice_lag_cols(trial_df) if col in _available_cols]
 
-    if task_name in {"MCDR", "2AFC_delay"}:
+    is_2adc = task_name in {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}
+    if task_name == "MCDR" or is_2adc:
         regressor_options = [col for col in ["choice_lag_param"] if col in _available_cols]
     else:
         regressor_options = [col for col in ["at_choice_param"] if col in _available_cols]
@@ -846,10 +948,10 @@ def _(adapter, mo, task_name, trial_df, views):
         ui_accuracy_binning = mo.ui.checkbox(value=False, label="Enable")
         if task_name == "MCDR":
             _accuracy_x_options = ["ttype", "stimd", "delay", "total_evidence"]
-        elif task_name == "2AFC_delay":
-            _accuracy_x_options = ["delay", "total_evidence"]
+        elif is_2adc:
+            _accuracy_x_options = ["delay", "weighted_stimulus", "total_evidence"]
         else:
-            _accuracy_x_options = ["ILD", "total_evidence"]
+            _accuracy_x_options = ["ILD", "weighted_stimulus", "total_evidence"]
         ui_accuracy_x_axis = mo.ui.dropdown(
             options=_accuracy_x_options,
             value=_accuracy_x_options[0],
@@ -989,7 +1091,7 @@ def _(
         title=None,
     )
 
-    mo.stop(_fig_regressor is None, mo.md(f"No p(repeat) plot available for {_regressor_label}."))
+    # mo.stop(_fig_regressor is None, mo.md(f"No p(repeat) plot available for {_regressor_label}."))
 
     mo.hstack(
         [
@@ -1013,6 +1115,7 @@ def _(
             ),
         ]
     )
+    _fig_all
     return
 
 
@@ -1154,6 +1257,354 @@ def _(
         ],
         align="center"
     )
+    return
+
+
+@app.cell
+def _(df_all, mo):
+    ui_filter_subject = mo.ui.multiselect(options = df_all["subject"].unique(), value = [df_all["subject"].unique()[1]])
+    ui_filter_subject
+    return (ui_filter_subject,)
+
+
+@app.cell
+def _(mo, pl, plot_df_all, ui_filter_subject):
+    df_filter_subject = plot_df_all.filter(pl.col("subject") == ui_filter_subject.value[0]) 
+    ui_filter_session = mo.ui.dropdown(options = df_filter_subject["session"].unique())
+    ui_filter_session
+    return df_filter_subject, ui_filter_session
+
+
+@app.cell
+def _(session_df):
+    session_df
+    return
+
+
+@app.cell
+def _(mo):
+    ui_show_glm_autocorr = mo.ui.checkbox(
+        value=False,
+        label="Overlay fitted GLM autocorrelogram",
+    )
+    ui_glm_autocorr_n_simulations = mo.ui.slider(
+        start=1,
+        stop=100,
+        step=1,
+        value=20,
+        label="GLM simulations",
+    )
+    mo.hstack([ui_show_glm_autocorr, ui_glm_autocorr_n_simulations])
+    return ui_glm_autocorr_n_simulations, ui_show_glm_autocorr
+
+
+@app.cell
+def _(
+    adapter,
+    arrays_store,
+    df_all,
+    df_filter_subject,
+    mo,
+    model_cfg,
+    pl,
+    plot_df_all,
+    ui_filter_session,
+    ui_glm_autocorr_n_simulations,
+    ui_show_glm_autocorr,
+):
+    from src.process.common import (
+        prepare_corrected_behavior_autocorrelograms,
+        prepare_glm_simulated_corrected_behavior_autocorrelograms,
+        prepare_session_accuracy_repetition_timescale,
+    )
+    from src.plots.common import (
+        plot_corrected_behavior_autocorrelograms,
+        plot_session_accuracy_repetition_timescale,
+    )
+    session_df = df_filter_subject.filter(pl.col("session") == ui_filter_session.value)
+    prepared_session_timescale = prepare_session_accuracy_repetition_timescale(
+        session_df,
+        choice_col="response",
+        outcome_col="performance",
+        trial_index_col="trial",
+        running_window=20,
+        max_lag=50,
+    )
+    prepared_corrected_autocorr = prepare_corrected_behavior_autocorrelograms(
+        plot_df_all,
+        subject_col="subject",
+        session_col="session",
+        choice_col="response",
+        outcome_col="performance",
+        trial_index_col="trial",
+        max_lag=50,
+        min_cross_pairs=20,
+        max_cross_pairs=80,
+        seed=0,
+    )
+    if ui_show_glm_autocorr.value:
+        prepared_glm_autocorr = prepare_glm_simulated_corrected_behavior_autocorrelograms(
+            df_all,
+            arrays_store,
+            adapter=adapter,
+            subject_col="subject",
+            session_col=adapter.session_col,
+            trial_index_col=adapter.behavioral_cols["trial"],
+            tau=model_cfg.tau,
+            emission_cols=list(model_cfg.emission_cols),
+            recursive=True,
+            n_simulations=int(ui_glm_autocorr_n_simulations.value),
+            max_lag=50,
+            min_cross_pairs=20,
+            max_cross_pairs=80,
+            seed=1,
+        )
+    else:
+        prepared_glm_autocorr = None
+
+    fig_session_timescale, _ = plot_session_accuracy_repetition_timescale(prepared_session_timescale)
+    fig_corrected_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+        prepared_corrected_autocorr,
+        glm_autocorr=(
+            prepared_glm_autocorr["autocorr"]
+            if prepared_glm_autocorr is not None
+            else None
+        ),
+    )
+    mo.vstack([
+        fig_session_timescale, 
+               "2ADC", fig_corrected_autocorr])
+    return (session_df,)
+
+
+@app.cell
+def _():
+    from src.process.common import (
+        build_action_trace_model_prediction_rb,
+        build_action_trace_parameter_fixed_simulations,
+    )
+    from src.plots.common import (
+        plot_action_trace_parameter_fixed_lag_match,
+        plot_action_trace_parameter_fixed_rb,
+        plot_action_trace_parameter_fixed_subject_scatter,
+    )
+
+    return (
+        build_action_trace_model_prediction_rb,
+        build_action_trace_parameter_fixed_simulations,
+        plot_action_trace_parameter_fixed_lag_match,
+        plot_action_trace_parameter_fixed_rb,
+        plot_action_trace_parameter_fixed_subject_scatter,
+    )
+
+
+@app.cell
+def _(mo, task_name):
+    ui_counterfactual_n_simulations = mo.ui.slider(
+        start=50,
+        stop=1000,
+        step=50,
+        value=200,
+        label="Parameter-fixed simulations",
+    )
+    ui_counterfactual_seed = mo.ui.number(
+        start=0,
+        stop=1_000_000,
+        step=1,
+        value=7,
+        label="Seed",
+    )
+    ui_counterfactual_max_lag = mo.ui.slider(
+        start=1,
+        stop=15,
+        step=1,
+        value=10,
+        label="Max history lag",
+    )
+
+    _controls = (
+        mo.hstack(
+            [
+                ui_counterfactual_n_simulations,
+                ui_counterfactual_max_lag,
+                ui_counterfactual_seed,
+            ],
+            justify="center",
+        )
+        if task_name in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}
+        else mo.md("Action-trace parameter-fixed simulations are implemented only for 2AFC and 2ADC.")
+    )
+    _controls
+    return (
+        ui_counterfactual_max_lag,
+        ui_counterfactual_n_simulations,
+        ui_counterfactual_seed,
+    )
+
+
+@app.cell
+def _(
+    build_action_trace_model_prediction_rb,
+    mo,
+    plot_action_trace_parameter_fixed_lag_match,
+    plot_action_trace_parameter_fixed_rb,
+    plot_action_trace_parameter_fixed_subject_scatter,
+    plot_df_all,
+    save_plot,
+    task_name,
+    ui_counterfactual_max_lag,
+):
+    mo.stop(
+        task_name not in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"},
+    )
+
+    _summary, _lag_summary, _subject_scatter, _meta = build_action_trace_model_prediction_rb(
+        plot_df_all,
+        task_name=task_name,
+        max_history_lag=int(ui_counterfactual_max_lag.value),
+    )
+    mo.stop(
+        _summary.empty,
+        mo.md("No trial-level model repetition-bias result; check pR/p_pred and previous choices."),
+    )
+
+    _fig_model_rb, _ax_model_rb = plot_action_trace_parameter_fixed_rb(
+        _summary,
+        _meta,
+    )
+    _fig_model_lag, _ax_model_lag = plot_action_trace_parameter_fixed_lag_match(
+        _lag_summary,
+        _meta,
+    )
+    _fig_model_scatter, _ax_model_scatter = plot_action_trace_parameter_fixed_subject_scatter(
+        _subject_scatter,
+        _meta,
+    )
+
+    mo.vstack(
+        [
+            mo.md("#### Trial-level full-model repetition bias"),
+            _fig_model_rb,
+            save_plot(
+                _fig_model_rb,
+                "glm trial-level full-model repetition bias",
+                stem="glm_trial_model_rb",
+            ),
+            _fig_model_lag,
+            save_plot(
+                _fig_model_lag,
+                "glm trial-level full-model lag match",
+                stem="glm_trial_model_lag_match",
+            ),
+            _fig_model_scatter,
+            save_plot(
+                _fig_model_scatter,
+                "glm trial-level full-model repetition bias by animal",
+                stem="glm_trial_model_rb_by_animal",
+            ),
+            mo.md(
+                "Full fitted uses each trial's model P(right), compares it with the same animal's empirical previous choice, "
+                "and aggregates RB conditional on previous choice side within animal. No refit or choice simulation is run."
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    run_simulations = mo.ui.run_button(
+        kind="neutral",
+        label="Run parameter-fixed simulations from A_t-binned psychometrics",
+    )
+    run_simulations
+    return (run_simulations,)
+
+
+@app.cell
+def _(
+    build_action_trace_parameter_fixed_simulations,
+    mo,
+    plot_action_trace_parameter_fixed_lag_match,
+    plot_action_trace_parameter_fixed_rb,
+    plot_action_trace_parameter_fixed_subject_scatter,
+    plot_df_all,
+    run_simulations,
+    save_plot,
+    task_name,
+    ui_accuracy_regressor,
+    ui_counterfactual_max_lag,
+    ui_counterfactual_n_simulations,
+    ui_counterfactual_seed,
+):
+    mo.stop(
+        ((task_name not in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}) or (not run_simulations.value)),
+    )
+
+    _summary, _lag_summary, _subject_scatter, _fit_table, _meta = build_action_trace_parameter_fixed_simulations(
+        plot_df_all,
+        task_name=task_name,
+        regressor_col=ui_accuracy_regressor.value,
+        n_simulations=int(ui_counterfactual_n_simulations.value),
+        max_history_lag=int(ui_counterfactual_max_lag.value),
+        seed=int(ui_counterfactual_seed.value),
+    )
+    mo.stop(
+        _summary.empty,
+        mo.md("No parameter-fixed repetition-bias result; check that each Action-trace bin has enough psychometric x levels."),
+    )
+
+    _fig_simulations, _ax_simulations = plot_action_trace_parameter_fixed_rb(
+        _summary,
+        _meta,
+    )
+    _fig_lag_match, _ax_lag_match = plot_action_trace_parameter_fixed_lag_match(
+        _lag_summary,
+        _meta,
+    )
+    _fig_subject_scatter, _ax_subject_scatter = plot_action_trace_parameter_fixed_subject_scatter(
+        _subject_scatter,
+        _meta,
+    )
+    _fit_display = _fit_table.copy()
+    for _col in ["slope", "bias", "lapse_left", "lapse_right"]:
+        if _col in _fit_display.columns:
+            _fit_display[_col] = _fit_display[_col].round(3)
+
+    _parameter_fixed_panel = mo.vstack(
+        [
+            _fig_simulations,
+            save_plot(
+                _fig_simulations,
+                "action trace psychometric parameter-fixed repetition bias",
+                stem=f"action_trace_parameter_fixed_rb_{ui_accuracy_regressor.value}",
+            ),
+            _fig_lag_match,
+            save_plot(
+                _fig_lag_match,
+                "action trace psychometric parameter-fixed lag match",
+                stem=f"action_trace_parameter_fixed_lag_match_{ui_accuracy_regressor.value}",
+            ),
+            _fig_subject_scatter,
+            save_plot(
+                _fig_subject_scatter,
+                "action trace psychometric parameter-fixed full model by animal",
+                stem=f"action_trace_parameter_fixed_full_by_animal_{ui_accuracy_regressor.value}",
+            ),
+            mo.md(
+                "Each simulated trial compares the simulated current response with the same animal's empirical previous choice. "
+                "RB is computed conditional on previous choice side within animal, then sides and animals are averaged. "
+                "Full fitted uses the real continuous Action-trace value to interpolate fitted parameters; "
+                "Fixed bias and Fixed lapses replace only that parameter family by its across-bin average. "
+                "The lag-match panel plots p(simulated response at t equals experimental response at t-L). "
+                "The scatter shows one animal per point for the full fitted simulation."
+            ),
+            mo.ui.table(_fit_display),
+        ],
+        align="center",
+    )
+    _parameter_fixed_panel
     return
 
 
