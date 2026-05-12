@@ -34,7 +34,7 @@ def _():
     from glmhmmt.views import build_views
     from src.process import MCDR as process_mcdr
     from src.process import two_afc as process_two_afc
-    from src.process import two_afc_delay as process_two_afc_delay
+    from src.process import two_adc as process_two_adc
     from src.process.common import add_choice_lag_summary_regressor
     from src.plots.common import fig_size
     from figure_layout_widget import FigureLayoutWidget
@@ -42,8 +42,8 @@ def _():
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
             return process_mcdr.prepare_predictions_df(df, cfg=load_app_config())
-        if task_name == "2AFC_delay":
-            return process_two_afc_delay.prepare_predictions_df(df)
+        if task_name in {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}:
+            return process_two_adc.prepare_predictions_df(df)
         return process_two_afc.prepare_predictions_df(df)
 
     configure_paths(config_path=ROOT / "config.toml")
@@ -137,6 +137,7 @@ def _(adapters):
         _task_name: list(_df["subject"].unique())
         for _task_name, _df in dfs.items()
     }
+    dfs["MCDR"]
     return dfs, subjects_by_task
 
 
@@ -309,6 +310,11 @@ def _(ROOT, fig_size, mpimg, plot_payloads, plt, sns):
 
     fig.savefig(out_path, dpi=300)
     fig
+    return
+
+
+@app.cell
+def _():
     return
 
 
