@@ -48,6 +48,7 @@ from src.process.common import (
 from src.plots.common import (
     add_shared_figure_legend,
     apply_axis_style,
+    fig_size,
     fit_lapse_logistic_for_panel,
     make_single_panel_figure,
     prepare_binned_accuracy_total_evidence_panels,
@@ -72,6 +73,7 @@ from src.process import MCDR as process
 
 cfg = load_app_config()
 CI_BAND_ERR_KWS = {"edgecolor": "none", "linewidth": 0}
+TTYPE_LABELS = ["Med" if label == "Medium" else label for label in cfg["plots"]["ttype"]["labels"]]
 
 
 def truncate_colormap(cmap_name, minval=0.2, maxval=0.9, n=256):
@@ -143,10 +145,10 @@ def plot_cat_panel(ax, df, group_col, order, title, xlabel, ylabel=None, palette
     if df["subject"].n_unique() > 1:
         ax.fill_between(np.arange(len(cats)), mm - sm, mm + sm, color="black", alpha=0.12)
         for i, (xpos, yval, err) in enumerate(zip(np.arange(len(cats)), md, sd)):
-            ax.errorbar(xpos, yval, yerr=err, fmt="o", color=colors_used[i], ms=7, capsize=3)
+            ax.errorbar(xpos, yval, yerr=err, fmt="o", color=colors_used[i], ms=5, capsize=3)
     else:
         for i, (xpos, yval) in enumerate(zip(np.arange(len(cats)), md)):
-            ax.errorbar(xpos, yval, fmt="o", color=colors_used[i], ms=7, capsize=3)
+            ax.errorbar(xpos, yval, fmt="o", color=colors_used[i], ms=5, capsize=3)
 
     ax.set_xticks(np.arange(len(cats)))
     if labels:
@@ -284,7 +286,7 @@ def plot_categorical_performance_by_state(
             cfg["plots"]["ttype"]["order"],
             "a) Trial difficulty",
             "Trial difficulty",
-            cfg["plots"]["ttype"]["labels"],
+            TTYPE_LABELS,
         ),
         (
             ax2,
@@ -351,10 +353,27 @@ def plot_categorical_performance_all(
     X_cols: Optional[Sequence[str]] = None,
     ild_max: Optional[float] = None,
     background_style: str = "data",
+    figsize: tuple[float, float] | None = None,
+    ax: Optional[Sequence[plt.Axes]] = None,
+    axes: Optional[Sequence[plt.Axes]] = None,
 ):
     # Accepted for notebook API compatibility; MCDR keeps its current plot style.
     _ = (views, X_cols, ild_max, background_style)
-    fig, axes = plt.subplots(1, 3, figsize=(10, 4), sharey=True)
+    if ax is not None and axes is not None:
+        raise ValueError("Pass only one of ax or axes.")
+    axes_arg = axes if axes is not None else ax
+    if axes_arg is None:
+        panel_figsize = figsize or fig_size(3, 1)
+        panel_pairs = [plt.subplots(figsize=panel_figsize) for _ in range(3)]
+        figs = tuple(pair[0] for pair in panel_pairs)
+        axes = tuple(pair[1] for pair in panel_pairs)
+    else:
+        axes = tuple(np.asarray(axes_arg, dtype=object).ravel())
+        if len(axes) < 3:
+            raise ValueError(f"Expected at least 3 axes, got {len(axes)}.")
+        axes = axes[:3]
+        figs = tuple(axis.figure for axis in axes)
+
     ax1, ax2, ax3 = axes
     df = df.drop("p_model_correct").rename({"p_model_correct_marginal": "p_model_correct"})
 
@@ -363,18 +382,18 @@ def plot_categorical_performance_all(
         df.clone(),
         "ttype_c",
         cfg["plots"]["ttype"]["order"],
-        title="a) Trial difficulty",
+        title="",
         xlabel="Trial difficulty",
         ylabel="Accuracy",
         palette=cfg["plots"]["ttype"]["palette"],
-        labels=cfg["plots"]["ttype"]["labels"],
+        labels=TTYPE_LABELS,
     )
     plot_cat_panel(
         ax2,
         df.filter(pl.col("ttype_c") == "DS"),
         "stimd_c",
         cfg["plots"]["stimd"]["order"],
-        title="b) Stim duration",
+        title="",
         xlabel="Stimulus type",
         palette=cfg["plots"]["stimd"]["palette"],
         labels=cfg["plots"]["stimd"]["labels"],
@@ -384,13 +403,14 @@ def plot_categorical_performance_all(
         df.filter(pl.col("stimd_c") == "SS"),
         "ttype_c",
         cfg["plots"]["delay"]["order"],
-        title="c) Delay duration",
+        title="",
         xlabel="Delay type",
         palette=cfg["plots"]["delay"]["palette"],
         labels=cfg["plots"]["delay"]["labels"],
     )
-    fig.tight_layout()
-    return fig, axes
+    for fig in dict.fromkeys(figs):
+        fig.tight_layout()
+    return figs, axes
 
 
 def plot_delay_or_stim_1d_on_ax(ax, df, subject, n_bins, which):
@@ -738,6 +758,7 @@ def plot_rb(df, ax=None, figsize=(3.0, 3.0), title="MCDR", **kwargs):
         baseline=1 / 3,
         baseline_area=True,
         color=kwargs.get("color") if kwargs.get("color") is not None else "tab:blue",
+        show_baseline_ttest=bool(kwargs.get("show_baseline_ttest", False)),
         ax=ax,
         figsize=figsize,
     )
@@ -779,6 +800,9 @@ def plot_binned_accuracy_figure(
     lapse_max: float = 0.4,
     share_lapse_logistic_core: bool = False,
     fit_lapse_by_subject: bool = True,
+    n_bins: int = 4,
+    ax: plt.Axes | None = None,
+    legend_ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     _ = (
@@ -792,6 +816,8 @@ def plot_binned_accuracy_figure(
     style = dict(plot_kwargs)
     axes_arg = style.pop("axes", None)
     figsize_arg = style.pop("figsize", None)
+    if ax is not None:
+        axes_arg = [ax]
     x_axis_key = str(x_axis).lower() if x_axis is not None else None
     if x_axis_key in {"total_evidence", "total evidence", "fitted_total_evidence", "evidence"}:
         panels, legend_title = prepare_binned_accuracy_total_evidence_panels(
@@ -801,12 +827,14 @@ def plot_binned_accuracy_figure(
             views=views,
             is_mcdr=True,
             baseline=process.BASELINE,
+            n_bins=int(n_bins),
         )
     else:
         panels, legend_title = process.prepare_binned_accuracy_figure(
             plot_df,
             regressor_col=regressor_col,
             cfg=cfg,
+            n_bins=int(n_bins),
         )
         if panels and x_axis_key in {"ttype", "trial_type", "trial type", "difficulty"}:
             panels = panels[:1]
@@ -831,6 +859,8 @@ def plot_binned_accuracy_figure(
             resolved_figsize[1],
         )
     n_axes = len(panels) + extra_fit_axes
+    if ax is not None and n_axes != 1:
+        raise ValueError("ax can only be used when plot_binned_accuracy_figure resolves to one axis.")
     if extra_fit_axes:
         fig, axes_grid, _ = resolve_axes_grid(
             axes=axes_arg,
@@ -919,8 +949,14 @@ def plot_binned_accuracy_figure(
             meta=diagnostic_meta or {},
             regressor_label=display_regressor_name(regressor_col),
         )
-    add_shared_figure_legend(fig, source_ax=panel_axes[-1], title=legend_title, legend=legend)
-    fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
+    add_shared_figure_legend(
+        fig,
+        source_ax=panel_axes[-1],
+        title=legend_title,
+        legend_ax=legend_ax,
+        legend=legend,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0 if legend_ax is not None else 0.92, 1.0))
     for ax in panel_axes:
         apply_axis_style(ax, **style)
     return fig, axes[: len(panels) + extra_fit_axes]
@@ -959,6 +995,7 @@ def plot_right_by_regressor(
     xlabel: str | None = None,
     n_bins: int = 10,
     legend: bool = True,
+    legend_ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     _ = title
@@ -972,19 +1009,29 @@ def plot_right_by_regressor(
     if summary is None or summary.empty:
         return None
 
-    _, ax = make_single_panel_figure(
+    fig, ax = make_single_panel_figure(
         extra_right_legend=True,
         ax=plot_kwargs.get("ax"),
         figsize=plot_kwargs.get("figsize", (3.0, 3.0)),
     )
-    return plot_grouped_summary(
+    ax = plot_grouped_summary(
         ax,
         summary,
         line_group_col=meta.get("line_group_col", "ttype_c"),
         x_col="x_center",
         meta=meta,
-        legend=legend,
+        legend=False if legend_ax is not None else legend,
     )
+    if legend_ax is not None:
+        legend_ax.axis("off")
+        add_shared_figure_legend(
+            fig,
+            source_ax=ax,
+            title=meta.get("legend_title"),
+            legend_ax=legend_ax,
+            legend=legend,
+        )
+    return ax
 
 
 def plot_accuracy_by_total_evidence(

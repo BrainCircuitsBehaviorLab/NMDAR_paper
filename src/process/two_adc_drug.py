@@ -9,7 +9,45 @@ from glmhmmt.tasks import _register
 from .two_adc import TRANSITION_COLS as BASE_TRANSITION_COLS, TwoAFCDelayAdapter
 
 
-TRANSITION_COLS: list[str] = [*BASE_TRANSITION_COLS, "drug_code"]
+_DRUG_INTERACTION_SOURCES: tuple[str, ...] = (
+    "cumulative_reward",
+    "filtered_choice",
+    "filtered_reward",
+    "filtered_stim_side",
+    "trial_index",
+)
+DRUG_INTERACTION_COLS: list[str] = [
+    f"drug_x_{source_col}" for source_col in _DRUG_INTERACTION_SOURCES
+]
+TRANSITION_COLS: list[str] = [*BASE_TRANSITION_COLS, "drug_code", *DRUG_INTERACTION_COLS]
+
+
+def _add_drug_interactions(feature_df: pl.DataFrame | pd.DataFrame) -> pl.DataFrame | pd.DataFrame:
+    if "drug_code" not in feature_df.columns:
+        return feature_df
+
+    if isinstance(feature_df, pl.DataFrame):
+        drug_expr = pl.col("drug_code").cast(pl.Float32, strict=False).fill_null(0.0)
+        interaction_exprs = [
+            (
+                drug_expr
+                * pl.col(source_col).cast(pl.Float32, strict=False).fill_null(0.0)
+            ).alias(f"drug_x_{source_col}")
+            for source_col in _DRUG_INTERACTION_SOURCES
+            if source_col in feature_df.columns
+        ]
+        exprs = [drug_expr.alias("drug_code"), *interaction_exprs]
+        return feature_df.with_columns(exprs) if exprs else feature_df
+
+    df_pd = feature_df.copy()
+    drug = pd.to_numeric(df_pd["drug_code"], errors="coerce").fillna(0.0)
+    df_pd["drug_code"] = drug.astype("float32")
+    for source_col in _DRUG_INTERACTION_SOURCES:
+        if source_col in df_pd.columns:
+            df_pd[f"drug_x_{source_col}"] = (
+                drug * pd.to_numeric(df_pd[source_col], errors="coerce").fillna(0.0)
+            ).astype("float32")
+    return df_pd
 
 
 @_register(["two_afc_delay_drug", "2afc_delay_drug", "2AFC_delay_DRUG", "2adc_drug", "2ADC_DRUG"])
@@ -114,5 +152,20 @@ class TwoADCDrugAdapter(TwoAFCDelayAdapter):
         del subject
         return None
 
+    def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
+        return _add_drug_interactions(super().build_feature_df(df_sub, tau=tau))
 
-__all__ = ["TRANSITION_COLS", "TwoADCDrugAdapter"]
+    def build_design_matrices(
+        self,
+        feature_df,
+        emission_cols=None,
+        transition_cols=None,
+    ):
+        return super().build_design_matrices(
+            _add_drug_interactions(feature_df),
+            emission_cols=emission_cols,
+            transition_cols=transition_cols,
+        )
+
+
+__all__ = ["TRANSITION_COLS", "DRUG_INTERACTION_COLS", "TwoADCDrugAdapter"]

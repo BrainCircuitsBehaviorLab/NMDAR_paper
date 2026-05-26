@@ -171,6 +171,8 @@ def prepare_grouped_weight_family_plot(
 def display_regressor_name(regressor_col: str) -> str:
     if regressor_col == "choice_lag_one_hot_sum":
         return r"$A_t$"
+    if regressor_col == "choice_lag_glm_weighted_sum":
+        return r"$A_t^{\mathrm{choice,ref}}$"
     return regressor_col.replace("_", " ")
 
 
@@ -1162,28 +1164,19 @@ def attach_signed_delay_columns(df_pd: pd.DataFrame) -> pd.DataFrame:
     stim_sign = np.sign(pd.to_numeric(df[stim_col], errors="coerce"))
     delay_values = pd.to_numeric(df[delay_col], errors="coerce")
 
-    display_delay = delay_values.mask(np.isclose(delay_values, 0.1), 0.0)
-    signed_delay = display_delay * stim_sign
+    signed_delay = delay_values * stim_sign
     df["_signed_delay"] = signed_delay
 
-    # eje categórico para permitir dos ceros
     cat = pd.Series(pd.NA, index=df.index, dtype="object")
-    valid = np.isfinite(display_delay) & np.isfinite(stim_sign)
+    valid = np.isfinite(delay_values) & np.isfinite(stim_sign)
+    cat.loc[valid] = signed_delay.loc[valid].map(lambda value: f"{float(value):g}")
 
-    zero_left = valid & np.isclose(display_delay, 0.0) & (stim_sign < 0)
-    zero_right = valid & np.isclose(display_delay, 0.0) & (stim_sign > 0)
-    nonzero = valid & ~np.isclose(display_delay, 0.0)
-
-    cat.loc[zero_left] = "0L"
-    cat.loc[zero_right] = "0R"
-    cat.loc[nonzero] = signed_delay.loc[nonzero].map(lambda value: f"{float(value):g}")
-
-    preferred_order = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
+    preferred_order = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
     present = set(cat.dropna())
     existing = [x for x in preferred_order if x in present]
     extras = sorted(
         (x for x in present if x not in set(existing)),
-        key=lambda x: float(x) if x not in {"0L", "0R"} else 0.0,
+        key=lambda x: float(x),
     )
 
     df["_signed_delay_cat"] = pd.Categorical(cat, categories=existing + extras, ordered=True)
@@ -1749,15 +1742,29 @@ def _stimulus_grid_components(
         and name.startswith("stim_")
         and name.removeprefix("stim_").isdigit()
     }
+    abs_level_indices: dict[str, dict[int, int]] = {}
+    for prefix in ("abs_ILD_hot_", "abs_ild_hot_"):
+        indices = {
+            int(name.removeprefix(prefix)): idx
+            for idx, name in enumerate(names)
+            if isinstance(name, str)
+            and name.startswith(prefix)
+            and name.removeprefix(prefix).isdigit()
+        }
+        if indices:
+            abs_level_indices[prefix] = indices
     stim_param_idx = next((idx for idx, name in enumerate(names) if name == "stim_param"), None)
     stim_param_weights = stim_param_weight_map() if stim_param_idx is not None and stim_param_weight_map else {}
     ild_idx = next(
         (idx for idx, name in enumerate(names) if name in {"stim_vals", "stim_d", "ild_norm", "ILD", "ild", "stimulus"}),
         None,
     )
+    stim_side_idx = next((idx for idx, name in enumerate(names) if name == "stim_side"), None)
+    abs_ild_idx = next((idx for idx, name in enumerate(names) if name == "abs_ILD"), None)
 
-    if stim_abs_indices or stim_param_idx is not None:
-        levels = sorted(set(stim_abs_indices) | set(stim_param_weights) | {0})
+    abs_levels = set().union(*(set(indices) for indices in abs_level_indices.values())) if abs_level_indices else set()
+    if stim_abs_indices or abs_levels or stim_param_idx is not None:
+        levels = sorted(set(stim_abs_indices) | abs_levels | set(stim_param_weights) | {0})
         grid = np.asarray(
             sorted({0.0} | {signed for level in levels if level != 0 for signed in (-float(level), float(level))}),
             dtype=float,
@@ -1768,7 +1775,10 @@ def _stimulus_grid_components(
     feature_indices = sorted(
         set(
             ([ild_idx] if ild_idx is not None else [])
+            + ([stim_side_idx] if stim_side_idx is not None else [])
+            + ([abs_ild_idx] if abs_ild_idx is not None else [])
             + list(stim_abs_indices.values())
+            + [idx for indices in abs_level_indices.values() for idx in indices.values()]
             + ([stim_param_idx] if stim_param_idx is not None else [])
         )
     )
@@ -1777,8 +1787,11 @@ def _stimulus_grid_components(
         "norm": grid / ild_max,
         "ild_idx": ild_idx,
         "stim_abs_indices": stim_abs_indices,
+        "abs_level_indices": abs_level_indices,
         "stim_param_idx": stim_param_idx,
         "stim_param_weights": stim_param_weights,
+        "stim_side_idx": stim_side_idx,
+        "abs_ild_idx": abs_ild_idx,
         "feature_indices": feature_indices,
     }
 
@@ -1787,11 +1800,18 @@ def _stimulus_values_for_grid(component: dict, ild_value: float, ild_norm: float
     values = {}
     if component["ild_idx"] is not None:
         values[component["ild_idx"]] = float(ild_norm)
+    if component.get("stim_side_idx") is not None:
+        values[component["stim_side_idx"]] = 0.0 if np.isclose(ild_value, 0.0) else float(np.sign(ild_value))
+    if component.get("abs_ild_idx") is not None:
+        values[component["abs_ild_idx"]] = float(abs(ild_norm))
     for stim_abs, stim_abs_idx in component["stim_abs_indices"].items():
         if stim_abs == 0:
             values[stim_abs_idx] = 1.0 if ild_value == 0 else 0.0
         else:
             values[stim_abs_idx] = float(np.sign(ild_value)) if abs(ild_value) == float(stim_abs) else 0.0
+    for level_indices in component.get("abs_level_indices", {}).values():
+        for abs_level, abs_level_idx in level_indices.items():
+            values[abs_level_idx] = 1.0 if abs(ild_value) == float(abs_level) else 0.0
     if component["stim_param_idx"] is not None:
         weights = component["stim_param_weights"]
         if ild_value == 0:
@@ -2474,6 +2494,193 @@ def ranked_state_labels(views: dict) -> dict[int, str]:
     return labels
 
 
+STATE_SCORING_RULES: tuple[str, ...] = ("+", "-", "abs")
+
+
+def normalize_state_scoring_rule(rule: str | None) -> str:
+    """Normalize UI/legacy state-scoring rule names."""
+    key = str(rule or "+").strip().lower()
+    if key in {"+", "pos", "positive", "w"}:
+        return "+"
+    if key in {"-", "neg", "negative", "-w"}:
+        return "-"
+    if key in {"abs", "|w|", "absolute", "absolute value"}:
+        return "abs"
+    raise ValueError(f"Unknown state scoring rule {rule!r}; expected one of {STATE_SCORING_RULES}.")
+
+
+def choose_state_scoring_feature(
+    feature_names: Sequence[str],
+    preferred: Sequence[str] = (),
+    requested: str | None = None,
+) -> str | None:
+    """Pick a fitted regressor for state scoring."""
+    features = [str(feature) for feature in feature_names]
+    feature_set = set(features)
+    if requested and requested in feature_set:
+        return str(requested)
+    for feature in preferred:
+        if feature in feature_set:
+            return str(feature)
+    for feature in features:
+        if feature != "bias" and not feature.startswith("bias_"):
+            return feature
+    return features[0] if features else None
+
+
+def score_states_by_regressor(
+    weights: np.ndarray,
+    feature_names: Sequence[str],
+    feature_name: str | None,
+    rule: str | None = "+",
+    *,
+    weight_row_idx: int = 0,
+) -> np.ndarray:
+    """Score each state from one fitted emission-regressor column."""
+    W = np.asarray(weights, dtype=float)
+    if W.ndim == 2:
+        W = W[:, None, :]
+    if W.ndim != 3:
+        raise ValueError(f"Expected emission weights with shape (K, C-1, M), got {W.shape}.")
+    if W.shape[0] == 0:
+        return np.asarray([], dtype=float)
+
+    feature = choose_state_scoring_feature(feature_names, requested=feature_name)
+    name2fi = {str(name): idx for idx, name in enumerate(feature_names)}
+    if feature is None or feature not in name2fi:
+        vals = W[:, min(max(int(weight_row_idx), 0), W.shape[1] - 1), :].mean(axis=1)
+    else:
+        row_idx = min(max(int(weight_row_idx), 0), W.shape[1] - 1)
+        vals = W[:, row_idx, name2fi[feature]]
+
+    normalized_rule = normalize_state_scoring_rule(rule)
+    if normalized_rule == "-":
+        return -vals
+    if normalized_rule == "abs":
+        return np.abs(vals)
+    return vals
+
+
+def label_states_by_regressor(
+    arrays_store: dict,
+    names: dict,
+    K: int,
+    subjects: Sequence,
+    *,
+    primary_feature: str | None = None,
+    primary_rule: str | None = "+",
+    split_feature: str | None = None,
+    split_rule: str | None = "+",
+    preferred_features: Sequence[str] = (),
+    preferred_split_features: Sequence[str] = ("bias", "bias_param"),
+    weight_row_idx: int = 0,
+) -> tuple[dict, dict]:
+    """Label HMM states from fitted emission weights using a generic rule.
+
+    The primary regressor ranks engagement. For K=4 the top two primary-score
+    states become Engaged L/R and the remaining two become Disengaged L/R; the
+    optional split regressor orders each pair into L/R. For K=3 the split
+    regressor separates the two non-engaged states into Biased L/R.
+    """
+    base_feat = [str(feature) for feature in names.get("X_cols", [])]
+    state_labels: dict = {}
+    state_order: dict = {}
+
+    for subj in subjects:
+        subject_store = arrays_store.get(subj) if subj in arrays_store else arrays_store.get(str(subj))
+        W = subject_store.get("emission_weights") if subject_store is not None else None
+        if W is None:
+            state_labels[subj] = {k: f"State {k + 1}" for k in range(K)}
+            state_order[subj] = list(range(K))
+            continue
+
+        feat = [str(feature) for feature in subject_store.get("X_cols", base_feat)]
+        score_feature = choose_state_scoring_feature(
+            feat,
+            preferred=preferred_features,
+            requested=primary_feature,
+        )
+        primary_scores = score_states_by_regressor(
+            W,
+            feat,
+            score_feature,
+            primary_rule,
+            weight_row_idx=weight_row_idx,
+        )
+        if primary_scores.size == 0:
+            state_labels[subj] = {k: f"State {k + 1}" for k in range(K)}
+            state_order[subj] = list(range(K))
+            continue
+
+        split_requested = None if split_feature in {None, "", "(none)", "None"} else split_feature
+        resolved_split_feature = choose_state_scoring_feature(
+            feat,
+            preferred=preferred_split_features,
+            requested=split_requested,
+        )
+        split_scores = score_states_by_regressor(
+            W,
+            feat,
+            resolved_split_feature,
+            split_rule,
+            weight_row_idx=weight_row_idx,
+        )
+
+        ranking = sorted(range(K), key=lambda k: (primary_scores[k], -k), reverse=True)
+
+        if K <= 0:
+            labels = {}
+            order = []
+        elif K == 1:
+            labels = {0: "Engaged"}
+            order = [0]
+        elif K == 2:
+            engaged_k = int(ranking[0])
+            other_k = next(k for k in range(K) if k != engaged_k)
+            labels = {engaged_k: "Engaged", other_k: "Disengaged"}
+            order = [engaged_k, other_k]
+        elif K == 3:
+            engaged_k = int(ranking[0])
+            others = [k for k in range(K) if k != engaged_k]
+            ordered_by_split = sorted(others, key=lambda k: (split_scores[k], k))
+            biased_l, biased_r = int(ordered_by_split[0]), int(ordered_by_split[-1])
+            labels = {
+                engaged_k: "Engaged",
+                biased_l: "Biased L",
+                biased_r: "Biased R",
+            }
+            order = [engaged_k, biased_l, biased_r]
+        elif K == 4:
+            engaged_states = [int(k) for k in ranking[:2]]
+            disengaged_states = [int(k) for k in range(K) if k not in set(engaged_states)]
+
+            def _split_left_right(state_ids: Sequence[int]) -> tuple[int, int]:
+                ordered = sorted(state_ids, key=lambda k: (split_scores[k], k))
+                return int(ordered[0]), int(ordered[-1])
+
+            engaged_l, engaged_r = _split_left_right(engaged_states)
+            disengaged_l, disengaged_r = _split_left_right(disengaged_states)
+            labels = {
+                engaged_l: "Engaged L",
+                engaged_r: "Engaged R",
+                disengaged_l: "Disengaged L",
+                disengaged_r: "Disengaged R",
+            }
+            order = [engaged_l, engaged_r, disengaged_l, disengaged_r]
+        else:
+            engaged_k = int(ranking[0])
+            labels = {engaged_k: "Engaged"}
+            rest = [int(k) for k in ranking[1:]]
+            for idx, state_idx in enumerate(rest, start=1):
+                labels[state_idx] = f"Disengaged {idx}"
+            order = [engaged_k, *rest]
+
+        state_labels[subj] = labels
+        state_order[subj] = order
+
+    return state_labels, state_order
+
+
 def _ticks_from_values(values, tick_values: Optional[Sequence[float]]) -> np.ndarray:
     source = tick_values if tick_values is not None else values
     ticks = sorted({float(value) for value in source if pd.notna(value)})
@@ -2873,8 +3080,6 @@ def _counterfactual_subject_expected_lag_match(
 
 def _format_delay_tick(value: float) -> str:
     value = float(value)
-    if np.isclose(value, 0.1):
-        return "0"
     if value.is_integer():
         return str(int(value))
     return f"{value:g}"
@@ -2888,8 +3093,6 @@ def _signed_delay_order_and_labels(df: pd.DataFrame) -> tuple[list[str], list[st
         order = [str(value) for value in series.dropna().unique()]
 
     def label(value: str) -> str:
-        if value in {"0L", "0R"}:
-            return "0"
         return _format_delay_tick(float(value))
 
     return order, [label(value) for value in order]
@@ -3393,7 +3596,7 @@ def build_action_trace_model_prediction_rb(
         previous_choice_col="_prev_response_right",
     )
     if not empirical.empty:
-        empirical["scenario"] = "Empirical"
+        empirical["scenario"] = "Data"
         empirical["rb_lo"] = np.clip(empirical["rb_mean"] - empirical["rb_sem"], 0.0, 1.0)
         empirical["rb_hi"] = np.clip(empirical["rb_mean"] + empirical["rb_sem"], 0.0, 1.0)
 
@@ -3416,7 +3619,7 @@ def build_action_trace_model_prediction_rb(
         subject_col="subject",
     )
     if not empirical_lag.empty:
-        empirical_lag["scenario"] = "Empirical"
+        empirical_lag["scenario"] = "Data"
     model_lag = _counterfactual_subject_expected_lag_match(
         work,
         p_right,
@@ -3804,14 +4007,17 @@ def prepare_corrected_behavior_autocorrelograms(
             autocorr=("autocorr", "mean"),
             autocorr_std=("autocorr", "std"),
             raw_autocorr=("raw_autocorr", "mean"),
+            raw_autocorr_std=("raw_autocorr", "std"),
             crosscorr=("crosscorr", "mean"),
+            crosscorr_std=("crosscorr", "std"),
             n_subjects=("subject", "count"),
         )
         .reset_index()
     )
-    summary["autocorr_sem"] = summary["autocorr_std"].fillna(0.0) / np.sqrt(
-        summary["n_subjects"].clip(lower=1)
-    )
+    _sem_denominator = np.sqrt(summary["n_subjects"].clip(lower=1))
+    summary["autocorr_sem"] = summary["autocorr_std"].fillna(0.0) / _sem_denominator
+    summary["raw_autocorr_sem"] = summary["raw_autocorr_std"].fillna(0.0) / _sem_denominator
+    summary["crosscorr_sem"] = summary["crosscorr_std"].fillna(0.0) / _sem_denominator
 
     return {
         "autocorr": summary,
@@ -3845,13 +4051,21 @@ def prepare_glm_simulated_corrected_behavior_autocorrelograms(
     min_cross_pairs: int = 20,
     max_cross_pairs: int = 80,
     seed: int = 0,
+    summary_only: bool = False,
 ) -> dict:
     """Simulate fitted GLM choices and prepare corrected autocorrelograms."""
     from glmhmmt.glm import glm_probs_from_weights, simulate_glm_choices
 
     df = to_pandas_df(df_like)
     required = {subject_col, session_col}
-    if not recursive:
+    adapter_behavioral_cols = dict(getattr(adapter, "behavioral_cols", {})) if adapter is not None else {}
+    can_infer_correct_label = (
+        not recursive
+        and bool(adapter_behavioral_cols)
+        and adapter_behavioral_cols.get("stimulus") in df.columns
+        and adapter_behavioral_cols.get("performance") in df.columns
+    )
+    if not recursive and not can_infer_correct_label:
         required.add(correct_label_col)
     if trial_index_col is not None:
         required.add(trial_index_col)
@@ -3870,6 +4084,99 @@ def prepare_glm_simulated_corrected_behavior_autocorrelograms(
     sort_cols = [session_col]
     if trial_index_col is not None:
         sort_cols.append(trial_index_col)
+
+    correction_rng = np.random.default_rng(int(seed))
+    subject_summary_rows = []
+
+    def summarize_simulated_subject(
+        *,
+        pseudo_subject: str,
+        sessions: np.ndarray,
+        choices: np.ndarray,
+        correct_label: np.ndarray,
+    ) -> None:
+        sim_df = pd.DataFrame(
+            {
+                "session": sessions,
+                "response": np.asarray(choices, dtype=int),
+                "performance": (np.asarray(choices, dtype=float) == correct_label).astype(float),
+            }
+        )
+        sim_df["_order"] = np.arange(len(sim_df), dtype=float)
+        sim_df = sim_df.sort_values(["session", "_order"], kind="mergesort")
+        sim_df["repetition"] = (
+            sim_df["response"]
+            .eq(sim_df.groupby("session", observed=True)["response"].shift(1))
+            .where(sim_df.groupby("session", observed=True)["response"].shift(1).notna(), np.nan)
+            .astype(float)
+        )
+
+        signal_cols = {"Outcome": "performance", "Repetition": "repetition"}
+        raw_rows = []
+        session_map = {}
+        for session, session_df in sim_df.groupby("session", observed=True):
+            session_map[session] = session_df
+            for signal, value_col in signal_cols.items():
+                ac = binary_autocorrelation(session_df[value_col], max_lag=max_lag)
+                if ac.empty:
+                    continue
+                ac["signal"] = signal
+                raw_rows.append(ac[["signal", "lag", "autocorr"]])
+        if not raw_rows:
+            return
+        subject_raw = (
+            pd.concat(raw_rows, ignore_index=True)
+            .groupby(["signal", "lag"], observed=True)["autocorr"]
+            .mean()
+            .reset_index(name="raw_autocorr")
+        )
+
+        session_values = list(session_map)
+        cross_rows = []
+        if len(session_values) >= 2:
+            all_pairs = [
+                (left, right)
+                for idx, left in enumerate(session_values)
+                for right in session_values[idx + 1 :]
+            ]
+            if len(all_pairs) > int(max_cross_pairs):
+                pair_idx = correction_rng.choice(len(all_pairs), size=int(max_cross_pairs), replace=False)
+                pairs = [all_pairs[int(idx)] for idx in pair_idx]
+            else:
+                pairs = all_pairs
+            if len(pairs) < int(min_cross_pairs) and len(all_pairs) >= int(min_cross_pairs):
+                pair_idx = correction_rng.choice(len(all_pairs), size=int(min_cross_pairs), replace=False)
+                pairs = [all_pairs[int(idx)] for idx in pair_idx]
+            for left, right in pairs:
+                left_df = session_map[left]
+                right_df = session_map[right]
+                for signal, value_col in signal_cols.items():
+                    cc = binary_crosscorrelation(
+                        left_df[value_col],
+                        right_df[value_col],
+                        max_lag=max_lag,
+                    )
+                    if cc.empty:
+                        continue
+                    cc["signal"] = signal
+                    cross_rows.append(cc[["signal", "lag", "crosscorr"]])
+
+        if cross_rows:
+            subject_cross = (
+                pd.concat(cross_rows, ignore_index=True)
+                .groupby(["signal", "lag"], observed=True)["crosscorr"]
+                .mean()
+                .reset_index()
+            )
+        else:
+            subject_cross = pd.DataFrame(columns=["signal", "lag", "crosscorr"])
+        subject_autocorr = subject_raw.merge(subject_cross, on=["signal", "lag"], how="left")
+        subject_autocorr["crosscorr"] = subject_autocorr["crosscorr"].fillna(0.0)
+        subject_autocorr["autocorr"] = (
+            subject_autocorr["raw_autocorr"] - subject_autocorr["crosscorr"]
+        )
+        subject_autocorr["subject"] = pseudo_subject
+        subject_summary_rows.append(subject_autocorr)
 
     def apply_lapse_to_step_probs(
         probs: np.ndarray,
@@ -3965,7 +4272,7 @@ def prepare_glm_simulated_corrected_behavior_autocorrelograms(
         lapse_rates = np.asarray(arrays.get("lapse_rates", []), dtype=float)
 
         if recursive:
-            behavioral_cols = dict(getattr(adapter, "behavioral_cols"))
+            behavioral_cols = adapter_behavioral_cols
             response_col = behavioral_cols["response"]
             performance_col = behavioral_cols["performance"]
             stimulus_col = behavioral_cols["stimulus"]
@@ -4026,9 +4333,34 @@ def prepare_glm_simulated_corrected_behavior_autocorrelograms(
                 seed=int(rng.integers(0, np.iinfo(np.int32).max)),
                 n_simulations=n_simulations,
             )
-            correct_label = pd.to_numeric(subject_df[correct_label_col], errors="coerce").to_numpy(dtype=float)
+            correct_label = None
+            if can_infer_correct_label and y.shape[0] == len(subject_df):
+                stimulus_col = adapter_behavioral_cols["stimulus"]
+                performance_col = adapter_behavioral_cols["performance"]
+                inferred_correct_label = infer_correct_classes(
+                    subject_df,
+                    stimulus_col=stimulus_col,
+                    performance_col=performance_col,
+                    y_values=y,
+                )
+                if np.isfinite(inferred_correct_label).any():
+                    correct_label = inferred_correct_label
+            if correct_label is None:
+                if correct_label_col not in subject_df.columns:
+                    raise ValueError(
+                        f"Missing required columns for GLM simulation: {[correct_label_col]}."
+                    )
+                correct_label = pd.to_numeric(subject_df[correct_label_col], errors="coerce").to_numpy(dtype=float)
 
         for simulation_idx, simulated_choice in enumerate(simulations):
+            if summary_only:
+                summarize_simulated_subject(
+                    pseudo_subject=f"{subject}__glm_sim_{simulation_idx:03d}",
+                    sessions=subject_df[session_col].to_numpy(),
+                    choices=simulated_choice,
+                    correct_label=correct_label,
+                )
+                continue
             sim_frame = pd.DataFrame(
                 {
                     "subject": f"{subject}__glm_sim_{simulation_idx:03d}",
@@ -4044,6 +4376,42 @@ def prepare_glm_simulated_corrected_behavior_autocorrelograms(
             )
             frames.append(sim_frame)
 
+    if summary_only and subject_summary_rows:
+        subject_autocorr = pd.concat(subject_summary_rows, ignore_index=True)
+        summary = (
+            subject_autocorr.groupby(["signal", "lag"], observed=True)
+            .agg(
+                autocorr=("autocorr", "mean"),
+                autocorr_std=("autocorr", "std"),
+                raw_autocorr=("raw_autocorr", "mean"),
+                raw_autocorr_std=("raw_autocorr", "std"),
+                crosscorr=("crosscorr", "mean"),
+                crosscorr_std=("crosscorr", "std"),
+                n_subjects=("subject", "count"),
+            )
+            .reset_index()
+        )
+        sem_denominator = np.sqrt(summary["n_subjects"].clip(lower=1))
+        summary["autocorr_sem"] = summary["autocorr_std"].fillna(0.0) / sem_denominator
+        summary["raw_autocorr_sem"] = summary["raw_autocorr_std"].fillna(0.0) / sem_denominator
+        summary["crosscorr_sem"] = summary["crosscorr_std"].fillna(0.0) / sem_denominator
+        return {
+            "autocorr": summary,
+            "subject_autocorr": subject_autocorr,
+            "session_autocorr": pd.DataFrame(),
+            "crosscorr": pd.DataFrame(),
+            "sequences": pd.DataFrame(),
+            "meta": {
+                "max_lag": int(max_lag),
+                "min_cross_pairs": int(min_cross_pairs),
+                "max_cross_pairs": int(max_cross_pairs),
+                "seed": int(seed),
+                "n_simulations": n_simulations,
+                "simulation": "recursive_glm" if recursive else "fixed_design_glm",
+                "summary_only": True,
+            },
+        }
+
     if not frames:
         return {
             "autocorr": pd.DataFrame(),
@@ -4056,6 +4424,7 @@ def prepare_glm_simulated_corrected_behavior_autocorrelograms(
                 "n_simulations": n_simulations,
                 "seed": int(seed),
                 "simulation": "recursive_glm" if recursive else "fixed_design_glm",
+                "summary_only": bool(summary_only),
             },
         }
 
@@ -4076,5 +4445,148 @@ def prepare_glm_simulated_corrected_behavior_autocorrelograms(
         **prepared.get("meta", {}),
         "n_simulations": n_simulations,
         "simulation": "recursive_glm" if recursive else "fixed_design_glm",
+    }
+    return prepared
+
+
+def prepare_model_simulated_corrected_behavior_autocorrelograms(
+    df_like,
+    *,
+    subject_col: str = "subject",
+    session_col: str = "session",
+    trial_index_col: str | None = None,
+    response_col: str = "response",
+    performance_col: str = "performance",
+    stimulus_col: str = "stimulus",
+    prob_cols: Sequence[str] | None = None,
+    n_simulations: int = 20,
+    max_lag: int = 50,
+    min_cross_pairs: int = 20,
+    max_cross_pairs: int = 80,
+    seed: int = 0,
+) -> dict:
+    """Simulate choices from fitted trial-level probabilities and prepare autocorrelograms."""
+    df = to_pandas_df(df_like).copy()
+    required = {subject_col, session_col}
+    if trial_index_col is not None:
+        required.add(trial_index_col)
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns for model autocorrelogram simulation: {sorted(missing)}.")
+
+    if prob_cols is None:
+        if {"pL", "pC", "pR"}.issubset(df.columns):
+            prob_cols = ("pL", "pC", "pR")
+            classes = np.asarray([0, 1, 2], dtype=int)
+        elif {"pL", "pR"}.issubset(df.columns):
+            prob_cols = ("pL", "pR")
+            classes = np.asarray([0, 1], dtype=int)
+        elif "p_pred" in df.columns:
+            prob_cols = ("_p_model_left", "p_pred")
+            df["_p_model_left"] = 1.0 - pd.to_numeric(df["p_pred"], errors="coerce")
+            classes = np.asarray([0, 1], dtype=int)
+        else:
+            raise ValueError("Need pL/pR, pL/pC/pR, or p_pred to simulate model choices.")
+    else:
+        prob_cols = tuple(prob_cols)
+        classes = np.arange(len(prob_cols), dtype=int)
+
+    for col in prob_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    sort_cols = [subject_col, session_col]
+    if trial_index_col is not None:
+        sort_cols.append(trial_index_col)
+    df = df.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
+
+    stimulus_values = pd.to_numeric(df[stimulus_col], errors="coerce") if stimulus_col in df.columns else None
+    correct_class = None
+    if stimulus_values is not None:
+        stim = stimulus_values.to_numpy(dtype=float)
+        if len(classes) == 2:
+            correct_class = np.where(
+                np.isin(stim, [0.0, 1.0]),
+                stim,
+                np.where(np.isfinite(stim), (stim > 0.0).astype(float), np.nan),
+            )
+        elif len(classes) == 3:
+            correct_class = np.where(np.isin(stim, classes.astype(float)), stim, np.nan)
+
+    p_model_correct = (
+        pd.to_numeric(df["p_model_correct"], errors="coerce")
+        if "p_model_correct" in df.columns
+        else None
+    )
+    observed_performance = (
+        pd.to_numeric(df[performance_col], errors="coerce")
+        if performance_col in df.columns
+        else None
+    )
+
+    rng = np.random.default_rng(int(seed))
+    frames = []
+    n_simulations = int(n_simulations)
+    if n_simulations < 1:
+        raise ValueError("n_simulations must be at least 1.")
+
+    probabilities = df[list(prob_cols)].to_numpy(dtype=float)
+    row_sums = np.nansum(probabilities, axis=1)
+    valid_probs = np.isfinite(probabilities).all(axis=1) & (row_sums > 0)
+    probabilities[valid_probs] = probabilities[valid_probs] / row_sums[valid_probs, None]
+
+    for simulation_idx in range(n_simulations):
+        simulated_response = np.full(len(df), np.nan, dtype=float)
+        for row_idx, probs in enumerate(probabilities):
+            if not valid_probs[row_idx]:
+                continue
+            simulated_response[row_idx] = int(rng.choice(classes, p=probs))
+
+        if correct_class is not None and np.isfinite(correct_class).any():
+            simulated_performance = (simulated_response == correct_class).astype(float)
+            simulated_performance[~np.isfinite(simulated_response) | ~np.isfinite(correct_class)] = np.nan
+        elif p_model_correct is not None:
+            p_correct = p_model_correct.to_numpy(dtype=float)
+            simulated_performance = (
+                rng.random(len(df)) < np.clip(np.nan_to_num(p_correct, nan=0.0), 0.0, 1.0)
+            ).astype(float)
+            simulated_performance[~np.isfinite(p_correct)] = np.nan
+        elif observed_performance is not None:
+            simulated_performance = observed_performance.to_numpy(dtype=float)
+        else:
+            simulated_performance = np.full(len(df), np.nan, dtype=float)
+
+        frames.append(
+            pd.DataFrame(
+                {
+                    "subject": df[subject_col].astype(str) + f"__model_sim_{simulation_idx:03d}",
+                    "session": df[session_col].to_numpy(),
+                    "trial_index": (
+                        pd.to_numeric(df[trial_index_col], errors="coerce").to_numpy(dtype=float)
+                        if trial_index_col is not None
+                        else np.arange(len(df), dtype=float)
+                    ),
+                    "response": simulated_response,
+                    "performance": simulated_performance,
+                }
+            )
+        )
+
+    simulated_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    prepared = prepare_corrected_behavior_autocorrelograms(
+        simulated_df,
+        subject_col="subject",
+        session_col="session",
+        choice_col="response",
+        outcome_col="performance",
+        trial_index_col="trial_index",
+        max_lag=max_lag,
+        min_cross_pairs=min_cross_pairs,
+        max_cross_pairs=max_cross_pairs,
+        seed=seed,
+    )
+    prepared["meta"] = {
+        **prepared.get("meta", {}),
+        "n_simulations": n_simulations,
+        "simulation": "trial_probability_model",
     }
     return prepared

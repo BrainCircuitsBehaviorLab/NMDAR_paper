@@ -131,9 +131,10 @@ def plot_weights(
     width = 0.8 / K
 
     style = dict(plot_kwargs)
-    ax = style.get("ax")
+    ax = style.pop("ax", None)
+    figsize_arg = style.pop("figsize", None)
     if ax is None:
-        _, ax = plt.subplots(figsize=style.get("figsize", (max(5, 0.7 * M), 3.5)))
+        _, ax = plt.subplots(figsize=figsize_arg or (max(5, 0.7 * M), 3.5))
     fig = ax.figure
 
     for k in range(K):
@@ -170,11 +171,13 @@ def plot_weights_per_contrast(
     bar_w = 0.8 / K
 
     style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=C_m1,
-        figsize=style.get("figsize", (max(5, 0.7 * M) * C_m1, 3.5)),
-        sharey=extra_fit_axes == 0,
+        figsize=figsize_arg or (max(5, 0.7 * M) * C_m1, 3.5),
+        sharey=True,
     )
     for c, ax in enumerate(axes):
         for k in range(K):
@@ -643,12 +646,14 @@ def _plot_delay_accuracy_panel(
     color: str,
     delay_col: str = "delay",
     weight_col: str | None = None,
+    model_col: str = "p_model_correct",
     ylabel: str = "Accuracy",
 ) -> None:
     summary, meta = process.prepare_delay_accuracy_summary(
         df_pd,
         delay_col=delay_col,
         weight_col=weight_col,
+        model_col=model_col,
     )
     if summary.empty:
         ax.text(0.5, 0.5, "No valid delay data", ha="center", va="center", transform=ax.transAxes)
@@ -675,6 +680,151 @@ def _plot_delay_accuracy_panel(
     ax.legend(frameon=False, fontsize=8)
 
 
+def _signed_delay_psych_summary(
+    df_pd: pd.DataFrame,
+    *,
+    choice_col: str,
+    pred_col: str,
+    subj_col: str,
+    weight_col: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str], list[str]]:
+    source = df_pd.copy()
+    if choice_col != "response" and choice_col in source.columns:
+        source["response"] = source[choice_col]
+    work = attach_response_right_column(source, response_mode=process.RESPONSE_MODE)
+    work = attach_signed_delay_columns(work)
+    if pred_col not in work.columns:
+        return pd.DataFrame(), pd.DataFrame(), [], []
+    work = work[
+        work["_signed_delay_cat"].notna()
+        & np.isfinite(pd.to_numeric(work["_response_right"], errors="coerce"))
+        & np.isfinite(pd.to_numeric(work[pred_col], errors="coerce"))
+    ].copy()
+    if work.empty:
+        return pd.DataFrame(), pd.DataFrame(), [], []
+
+    order, labels = process.signed_delay_order_and_labels(work)
+    if not order:
+        return pd.DataFrame(), pd.DataFrame(), [], []
+    work = work[work["_signed_delay_cat"].astype(str).isin(order)].copy()
+    work["_signed_delay_cat"] = pd.Categorical(work["_signed_delay_cat"].astype(str), categories=order, ordered=True)
+    work["_x_code"] = work["_signed_delay_cat"].astype(str).map({value: idx for idx, value in enumerate(order)})
+
+    rows: list[dict] = []
+    group_cols = [subj_col, "_signed_delay_cat", "_x_code"]
+    for keys, grp in work.groupby(group_cols, observed=True):
+        subj, signed_delay, x_code = keys
+        response = pd.to_numeric(grp["_response_right"], errors="coerce").to_numpy(dtype=float)
+        model = pd.to_numeric(grp[pred_col], errors="coerce").to_numpy(dtype=float)
+        mask = np.isfinite(response) & np.isfinite(model)
+        if weight_col is not None and weight_col in grp.columns:
+            weights = pd.to_numeric(grp[weight_col], errors="coerce").to_numpy(dtype=float)
+            mask &= np.isfinite(weights) & (weights > 0)
+            if not np.any(mask):
+                continue
+            weights = weights[mask]
+            weight_sum = float(weights.sum())
+            if weight_sum <= 0:
+                continue
+            data_mean = float(np.dot(response[mask], weights) / weight_sum)
+            model_mean = float(np.dot(model[mask], weights) / weight_sum)
+            n_trials = float(weight_sum)
+        else:
+            if not np.any(mask):
+                continue
+            data_mean = float(np.nanmean(response[mask]))
+            model_mean = float(np.nanmean(model[mask]))
+            n_trials = float(np.sum(mask))
+        rows.append(
+            {
+                subj_col: subj,
+                "_signed_delay_cat": str(signed_delay),
+                "_x_code": float(x_code),
+                "data_mean": data_mean,
+                "model_mean": model_mean,
+                "n_trials": n_trials,
+            }
+        )
+
+    subject_summary = pd.DataFrame(rows)
+    if subject_summary.empty:
+        return pd.DataFrame(), subject_summary, order, labels
+    summary = (
+        subject_summary.groupby(["_signed_delay_cat", "_x_code"], observed=True)
+        .agg(
+            data_mean=("data_mean", "mean"),
+            data_sem=("data_mean", lambda values: float(np.nanstd(values, ddof=1) / np.sqrt(max(len(values), 1))) if len(values) > 1 else 0.0),
+            model_mean=("model_mean", "mean"),
+        )
+        .reset_index()
+        .sort_values("_x_code")
+    )
+    return summary, subject_summary, order, labels
+
+
+def _plot_signed_delay_psych_panel(
+    ax: plt.Axes,
+    df_pd: pd.DataFrame,
+    *,
+    color: str,
+    label: str | None = None,
+    choice_col: str = "response",
+    pred_col: str = "p_pred",
+    subj_col: str = "subject",
+    weight_col: str | None = None,
+    legend: bool = False,
+) -> None:
+    summary, subject_summary, order, labels = _signed_delay_psych_summary(
+        df_pd,
+        choice_col=choice_col,
+        pred_col=pred_col,
+        subj_col=subj_col,
+        weight_col=weight_col,
+    )
+    if summary.empty:
+        ax.text(0.5, 0.5, "No valid signed-delay data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return
+    x = summary["_x_code"].to_numpy(dtype=float)
+    for _, grp in subject_summary.groupby(subj_col, observed=True):
+        grp = grp.sort_values("_x_code")
+        ax.plot(
+            grp["_x_code"].to_numpy(dtype=float),
+            grp["model_mean"].to_numpy(dtype=float),
+            "-",
+            color=color,
+            alpha=0.12,
+            lw=1.0,
+            zorder=2,
+        )
+
+    ax.plot(x, summary["model_mean"].to_numpy(dtype=float), color="black", lw=2.0, label="Model", zorder=6)
+    ax.errorbar(
+        x,
+        summary["data_mean"].to_numpy(dtype=float),
+        yerr=summary["data_sem"].fillna(0.0).to_numpy(dtype=float),
+        fmt="o",
+        color=color,
+        ecolor=color,
+        elinewidth=1.0,
+        capsize=0,
+        ms=5,
+        label=label,
+        zorder=5,
+    )
+    ax.axhline(0.5, color="#888888", lw=0.8, ls="--", zorder=0)
+    if "-10" in order and "10" in order:
+        ax.axvline((order.index("-10") + order.index("10")) / 2.0, color="#888888", lw=0.8, ls="--", zorder=0)
+    ax.set_xlim(-0.5, len(order) - 0.5)
+    ax.set_xticks(range(len(order)), labels=labels)
+    ax.set_xlabel("Signed delay")
+    ax.set_ylabel(r"$P(\mathrm{right})$")
+    ax.set_ylim(0, 1)
+    ax.set_yticks([0, 0.5, 1.0])
+    if legend:
+        ax.legend(frameon=False, fontsize=8)
+
+
 def plot_categorical_performance_all(
     df,
     model_name: str,
@@ -690,9 +840,11 @@ def plot_categorical_performance_all(
     background_style: str = "data",
     **plot_kwargs,
 ) -> plt.Figure:
-    """Plot task accuracy as a function of delay, ignoring stimulus sign."""
+    """Plot P(right) as a function of signed delay."""
     style = dict(plot_kwargs)
-    del ild_col, choice_col, pred_col, subj_col, views, X_cols, ild_max, background_style
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
+    del ild_col, views, X_cols, ild_max, background_style
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas()
     else:
@@ -702,37 +854,46 @@ def plot_categorical_performance_all(
     exps = sorted(df_pd[exp_col].dropna().unique()) if exp_col in df_pd.columns else []
     n_panels = 1 + len(conds) + len(exps)
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=n_panels,
-        figsize=style.get("figsize", (4 * n_panels, 4)),
+        figsize=figsize_arg or (4 * n_panels, 4),
         sharey=True,
     )
     ax_idx = 0
 
-    _plot_delay_accuracy_panel(
+    _plot_signed_delay_psych_panel(
         axes[ax_idx],
         df_pd,
         color="#2b7bba",
+        choice_col=choice_col,
+        pred_col=pred_col,
+        subj_col=subj_col,
     )
     ax_idx += 1
 
     if conds:
         cond_colors = {"rest": "#444444", "saline": "#1f77b4", "drug": "#d62728"}
         for ci, cond in enumerate(conds):
-            _plot_delay_accuracy_panel(
+            _plot_signed_delay_psych_panel(
                 axes[ax_idx],
                 df_pd[df_pd[cond_col] == cond],
                 color=cond_colors.get(cond, "k"),
+                choice_col=choice_col,
+                pred_col=pred_col,
+                subj_col=subj_col,
             )
             ax_idx += 1
 
     if exps:
         exp_palette = sns.color_palette("Set2", len(exps))
         for ei, exp in enumerate(exps):
-            _plot_delay_accuracy_panel(
+            _plot_signed_delay_psych_panel(
                 axes[ax_idx],
                 df_pd[df_pd[exp_col] == exp],
                 color=exp_palette[ei],
+                choice_col=choice_col,
+                pred_col=pred_col,
+                subj_col=subj_col,
             )
             ax_idx += 1
     fig.tight_layout()
@@ -759,11 +920,18 @@ def plot_categorical_performance_all_by_state(
     overlay_only: bool = False,
     model_line_mode: str = "smooth",
     state_assignment_mode: str = "weighted",
+    ax: Optional[plt.Axes] = None,
     **plot_kwargs,
 ) -> plt.Figure:
-    """Per-state accuracy by delay, ignoring stimulus sign."""
+    """Per-state psychometric, P(right), over signed delay."""
     style = dict(plot_kwargs)
-    del ild_col, choice_col, pred_col, X_cols, ild_max, background_style
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
+    if ax is not None:
+        if not overlay_only:
+            raise ValueError("ax can only be used when overlay_only=True.")
+        axes_arg = [ax]
+    del ild_col, X_cols, ild_max, background_style
     del show_weighted_points, show_data_smooth, show_model_smooth, model_line_mode
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas().reset_index(drop=True)
@@ -782,25 +950,23 @@ def plot_categorical_performance_all_by_state(
 
     df_pd = df_pd.copy()
     df_pd["_state_k"] = _arr
+    df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
     if state_assignment_mode == "weighted":
         df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
-        df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
 
     slbls = ranked_state_labels(views)
 
     panel_w = 4
 
-    _include_overlay = K > 1
-    if overlay_only:
-        _include_overlay = True
+    _include_overlay = bool(overlay_only)
     _n_panels = K + int(_include_overlay)
     if overlay_only:
         _n_panels = 1
     _figsize = (3, 3) if overlay_only else (panel_w * _n_panels, 4)
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=_n_panels,
-        figsize=style.get("figsize", _figsize),
+        figsize=figsize_arg or _figsize,
         sharey=True,
         dpi=figure_dpi,
     )
@@ -814,13 +980,17 @@ def plot_categorical_performance_all_by_state(
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
             _df_state = df_pd if _weight_col is not None else df_pd[df_pd["_state_k"] == k]
-            _plot_delay_accuracy_panel(
+            _plot_signed_delay_psych_panel(
                 _ax_overlay,
                 _df_state,
                 color=color,
+                label=lbl,
+                choice_col=choice_col,
                 weight_col=_weight_col,
+                pred_col=f"_pR_state_rank_{k}" if f"_pR_state_rank_{k}" in _df_state.columns else pred_col,
+                subj_col=subj_col,
+                legend=False,
             )
-        _ax_overlay.set_xlabel("Delay")
         _ax_overlay.legend(frameon=False, fontsize=8)
 
     if not overlay_only:
@@ -831,15 +1001,18 @@ def plot_categorical_performance_all_by_state(
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
             _df_state = df_pd if _weight_col is not None else df_pd[df_pd["_state_k"] == k]
-            _plot_delay_accuracy_panel(
+            _plot_signed_delay_psych_panel(
                 ax,
                 _df_state,
                 color=color,
+                label=lbl,
+                choice_col=choice_col,
                 weight_col=_weight_col,
+                pred_col=f"_pR_state_rank_{k}" if f"_pR_state_rank_{k}" in _df_state.columns else pred_col,
+                subj_col=subj_col,
             )
-            ax.set_xlabel("Delay")
             if k == 0:
-                ax.set_ylabel("Accuracy")
+                ax.set_ylabel(r"$P(\mathrm{right})$")
             else:
                 ax.set_ylabel("")
     fig.tight_layout()
@@ -849,6 +1022,50 @@ def plot_categorical_performance_all_by_state(
 
 
 # Alias used by the analysis notebooks
+def plot_categorical_performance_state_overlay(
+    df,
+    views: dict,
+    model_name: str,
+    ild_col: str = "delay",
+    choice_col: str = "response",
+    pred_col: str = "p_pred",
+    subj_col: str = "subject",
+    X_cols: Optional[Sequence[str]] = None,
+    ild_max: Optional[float] = None,
+    background_style: str = "data",
+    show_weighted_points: bool = True,
+    show_data_smooth: bool = True,
+    show_model_smooth: bool = True,
+    figure_dpi: float = 80.0,
+    model_line_mode: str = "smooth",
+    state_assignment_mode: str = "weighted",
+    ax: Optional[plt.Axes] = None,
+    **plot_kwargs,
+) -> plt.Figure:
+    """Single-panel state-overlay psychometric."""
+    return plot_categorical_performance_all_by_state(
+        df=df,
+        views=views,
+        model_name=model_name,
+        ild_col=ild_col,
+        choice_col=choice_col,
+        pred_col=pred_col,
+        subj_col=subj_col,
+        X_cols=X_cols,
+        ild_max=ild_max,
+        background_style=background_style,
+        show_weighted_points=show_weighted_points,
+        show_data_smooth=show_data_smooth,
+        show_model_smooth=show_model_smooth,
+        figure_dpi=figure_dpi,
+        overlay_only=True,
+        model_line_mode=model_line_mode,
+        state_assignment_mode=state_assignment_mode,
+        ax=ax,
+        **plot_kwargs,
+    )
+
+
 plot_categorical_performance_by_state = plot_categorical_performance_all_by_state
 
 
@@ -882,6 +1099,11 @@ def plot_regressor_psychometric_by_state(
     marginalises over the empirical distribution of the remaining features.
     """
     style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
+    ax_arg = style.pop("ax", None)
+    if ax_arg is not None:
+        axes_arg = [ax_arg]
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas().reset_index(drop=True)
     else:
@@ -895,8 +1117,8 @@ def plot_regressor_psychometric_by_state(
     df_pd = df_pd.dropna(subset=[feature_col])
     if df_pd.empty:
         fig, ax = resolve_single_axis(
-            ax=style.get("ax"),
-            figsize=style.get("figsize", (3.0, 3.0)),
+            ax=np.asarray(axes_arg, dtype=object).ravel()[0] if axes_arg is not None else None,
+            figsize=figsize_arg or (3.0, 3.0),
         )
         ax.text(0.5, 0.5, f"No valid {feature_col} data", ha="center", va="center")
         ax.axis("off")
@@ -979,17 +1201,15 @@ def plot_regressor_psychometric_by_state(
         else {}
     )
 
-    _include_overlay = K > 1
-    if overlay_only:
-        _include_overlay = True
+    _include_overlay = bool(overlay_only)
     _n_panels = K + int(_include_overlay)
     if overlay_only:
         _n_panels = 1
     _figsize = (3, 3) if overlay_only else (4 * _n_panels, 4)
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=_n_panels,
-        figsize=style.get("figsize", _figsize),
+        figsize=figsize_arg or _figsize,
         sharey=True,
         dpi=figure_dpi,
     )
@@ -1075,6 +1295,7 @@ def plot_regressor_psychometric_by_state(
 
 
 from src.process.common import (
+    attach_response_right_column,
     attach_repeat_choice_evidence,
     attach_signed_delay_columns,
     attach_total_fitted_evidence,
@@ -1197,19 +1418,102 @@ _binned_feature_summary = lambda df, feature_col, choice_col, pred_col, subj_col
 _attach_rank_posterior_cols = attach_rank_posterior_cols
 _attach_rank_state_model_cols = attach_rank_state_model_cols
 
-SIGNED_DELAY_ORDER = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
-SIGNED_DELAY_LABELS = ["0", "-1", "-3", "-10", "10", "3", "1", "0"]
+
+def _attach_rank_state_correct_model_cols(
+    df: pd.DataFrame,
+    views: dict,
+    *,
+    subj_col: str = "subject",
+) -> pd.DataFrame:
+    """Attach rank-aligned state-conditional P(correct) columns.
+
+    2ADC stores class probabilities as pR/pL and pR_state_<raw>/pL_state_<raw>.
+    Per-state accuracy plots must use the plotted state's conditional correct
+    probability, not the full marginal p_model_correct.
+    """
+    if df.empty or subj_col not in df.columns or not views:
+        return df
+    if "stimulus" not in df.columns:
+        return df
+
+    K = next(iter(views.values())).K
+    target_cols = [f"_p_correct_state_rank_{rank}" for rank in range(K)]
+    if all(col in df.columns for col in target_cols):
+        return df
+
+    out = df.copy()
+    stim = pd.to_numeric(out["stimulus"], errors="coerce").to_numpy(dtype=float)
+    right_correct = stim > 0
+    left_correct = stim < 0
+
+    raw_by_rank_by_subj = {
+        str(subject): {int(rank): int(raw_idx) for raw_idx, rank in view.state_rank_by_idx.items()}
+        for subject, view in views.items()
+    }
+    for rank, target_col in enumerate(target_cols):
+        if target_col in out.columns:
+            continue
+        values = np.full(len(out), np.nan, dtype=float)
+        for subject, idx in out.groupby(subj_col, observed=True).groups.items():
+            raw_by_rank = raw_by_rank_by_subj.get(str(subject))
+            if raw_by_rank is None:
+                continue
+            raw_idx = raw_by_rank.get(rank)
+            if raw_idx is None:
+                continue
+            p_right_col = f"pR_state_{raw_idx}"
+            p_left_col = f"pL_state_{raw_idx}"
+            if p_right_col not in out.columns or p_left_col not in out.columns:
+                continue
+            row_idx = np.asarray(idx, dtype=int)
+            p_right = pd.to_numeric(out.iloc[row_idx][p_right_col], errors="coerce").to_numpy(dtype=float)
+            p_left = pd.to_numeric(out.iloc[row_idx][p_left_col], errors="coerce").to_numpy(dtype=float)
+            values[row_idx] = np.where(
+                right_correct[row_idx],
+                p_right,
+                np.where(left_correct[row_idx], p_left, np.nan),
+            )
+        out[target_col] = values
+    return out
+
+
+SIGNED_DELAY_ORDER = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
+SIGNED_DELAY_LABELS = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
 
 
 def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
-    df_pd = to_pandas_df(plot_df)
-    
+    df_pd = to_pandas_df(plot_df).copy()
+    choice_col = next(
+        (
+            col
+            for col in ("response", "choices", "Choice")
+            if col in df_pd.columns
+        ),
+        None,
+    )
+    if choice_col is None:
+        raise KeyError("plot_accuracy requires a response/choices/Choice column.")
+    if choice_col != "response":
+        df_pd["response"] = df_pd[choice_col]
+
+    df_pd = attach_response_right_column(df_pd, response_mode=process.RESPONSE_MODE)
+    df_pd = attach_signed_delay_columns(df_pd)
+    if "_signed_delay_cat" not in df_pd.columns or not df_pd["_signed_delay_cat"].notna().any():
+        raise KeyError("plot_accuracy requires stimulus and delay columns to compute signed delay.")
+
+    signed_delay_order, signed_delay_tick_labels = process.signed_delay_order_and_labels(df_pd)
+    df_pd["_signed_delay_plot"] = df_pd["_signed_delay_cat"].astype(str)
+    df_pd = df_pd[df_pd["_signed_delay_plot"].isin(signed_delay_order)].copy()
+
     return plot_mean_over_data(
         df_pd,
-        x_col="delays",
+        x_col="_signed_delay_plot",
+        x_order=signed_delay_order,
+        x_tick_labels=signed_delay_tick_labels,
         invert_x=False,
-        y_col="hit",
-        xlabel="Delay (s)",
+        y_col="_response_right",
+        xlabel="Signed delay",
+        ylabel=r"$p(\mathrm{right})$",
         title=title,
         baseline=0.5,
         color="tab:blue",
@@ -1218,7 +1522,14 @@ def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
     )
 
 
-def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay", color = None):
+def plot_rb(
+    plot_df,
+    ax=None,
+    figsize=(3.0, 3.0),
+    title="2AFC delay",
+    color=None,
+    show_baseline_ttest=False,
+):
     df_pd = to_pandas_df(plot_df).copy()
     delay_col = (
         "delays"
@@ -1257,6 +1568,7 @@ def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay", color = No
         baseline=0.5,
         baseline_area=True,
         color=color if color is not None else "tab:blue",
+        show_baseline_ttest=show_baseline_ttest,
         ax=ax,
         figsize=figsize,
     )
@@ -1298,11 +1610,16 @@ def plot_binned_accuracy_figure(
     lapse_max: float = 0.4,
     share_lapse_logistic_core: bool = False,
     fit_lapse_by_subject: bool = True,
+    n_bins: int = 4,
+    ax: plt.Axes | None = None,
+    legend_ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     style = dict(plot_kwargs)
     axes_arg = style.pop("axes", None)
     figsize_arg = style.pop("figsize", None)
+    if ax is not None:
+        axes_arg = [ax]
     x_axis_key = str(x_axis).lower() if x_axis is not None else None
     if x_axis_key in {"total_evidence", "total evidence", "fitted_total_evidence", "evidence"}:
         panels, legend_title = prepare_binned_accuracy_total_evidence_panels(
@@ -1312,6 +1629,7 @@ def plot_binned_accuracy_figure(
             views=views,
             is_mcdr=False,
             baseline=process.BASELINE,
+            n_bins=int(n_bins),
         )
     elif x_axis_key in {
         "weighted_stimulus",
@@ -1330,11 +1648,13 @@ def plot_binned_accuracy_figure(
                 regressor_col=regressor_col,
                 x_col="_weighted_stimulus_evidence",
                 xlabel="Weighted stimulus evidence",
+                n_bins=int(n_bins),
             )
     else:
         panels, legend_title = process.prepare_binned_accuracy_figure(
             plot_df,
             regressor_col=regressor_col,
+            n_bins=int(n_bins),
         )
     if not panels:
         return None
@@ -1357,6 +1677,8 @@ def plot_binned_accuracy_figure(
             resolved_figsize[1],
         )
     n_axes = len(panels) + extra_fit_axes
+    if ax is not None and n_axes != 1:
+        raise ValueError("ax can only be used when plot_binned_accuracy_figure resolves to one axis.")
     if extra_fit_axes:
         fig, axes_grid, _ = resolve_axes_grid(
             axes=axes_arg,
@@ -1448,8 +1770,14 @@ def plot_binned_accuracy_figure(
             meta=diagnostic_meta or {},
             regressor_label=display_regressor_name(regressor_col),
         )
-    add_shared_figure_legend(fig, source_ax=panel_axes[-1], title=legend_title, legend=legend)
-    fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
+    add_shared_figure_legend(
+        fig,
+        source_ax=panel_axes[-1],
+        title=legend_title,
+        legend_ax=legend_ax,
+        legend=legend,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0 if legend_ax is not None else 0.92, 1.0))
     for ax in panel_axes:
         apply_axis_style(ax, **style)
     return fig, axes[: len(panels) + extra_fit_axes]
@@ -1492,6 +1820,7 @@ def plot_right_by_regressor(
     group_labels: dict | None = None,
     palette: dict | None = None,
     legend: bool = True,
+    legend_ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     summary, meta = process.prepare_right_by_regressor(
@@ -1539,8 +1868,17 @@ def plot_right_by_regressor(
         meta=meta,
         label_map=label_map,
         palette=palette,
-        legend=legend,
+        legend=False if legend_ax is not None else legend,
     )
+    if legend_ax is not None:
+        legend_ax.axis("off")
+        add_shared_figure_legend(
+            fig,
+            source_ax=ax,
+            title=meta.get("legend_title"),
+            legend_ax=legend_ax,
+            legend=legend,
+        )
     apply_axis_style(ax, **({"xlabel": xlabel} if xlabel is not None else {}))
     return ax
 
@@ -1557,7 +1895,8 @@ def plot_right_integration_map(
     n_bins: int = 64,
     sigma: float | None = None,
     smooth: bool = True,
-    ax : plt.Axes | None = None,
+    panel: str | None = None,
+    ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     _n_bins = n_bins
@@ -1599,11 +1938,20 @@ def plot_right_integration_map(
     )
     if _x_edges is not None:
         meta["xlabel"] = "Signed delay"
+    if panel is not None:
+        panel_label = str(panel).casefold()
+        panels = [
+            panel_data
+            for panel_data in panels
+            if str(panel_data.get("label", "")).casefold() == panel_label
+        ]
+        if not panels:
+            return None
     axes = [ax] if ax is not None else None
     return plot_integration_map_panels(
         panels,
         meta=meta,
-        axes = axes,
+        axes=axes,
         interpolation=None,
         **plot_kwargs,
     )

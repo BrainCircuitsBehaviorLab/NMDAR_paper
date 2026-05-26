@@ -3,11 +3,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
+from matplotlib.cm import ScalarMappable
 from matplotlib.ticker import FuncFormatter
 from matplotlib.lines import Line2D
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy.stats import ttest_1samp
 from src.process.common import (
     PreparedWeightFamilyPlot,
     attach_repeat_choice_evidence,
@@ -21,7 +24,21 @@ from src.process.common import (
     summarize_simple_curve,
     to_pandas_df,
 )
-from glmhmmt.plots.common import custom_boxplot
+from glmhmmt.plots.common import (
+    custom_boxplot,
+    resolve_single_axis as resolve_glmhmmt_single_axis,
+)
+
+
+def _significance_stars(pvalue: float) -> str:
+    if not np.isfinite(pvalue) or pvalue >= 0.05:
+        return ""
+    if pvalue < 0.001:
+        return "***"
+    if pvalue < 0.01:
+        return "**"
+    return "*"
+
 
 def apply_axis_style(
     ax,
@@ -101,6 +118,10 @@ def fig_size(n_cols=1, ratio=None):
 
 def plot_prepared_weight_family(
     prepared: PreparedWeightFamilyPlot | None,
+    figsize=(4.0, 4.0),
+    title: str | None = None,
+    ax: plt.Axes | None = None,
+    connect_subjects: bool = True,
 ):
     if prepared is None:
         return None
@@ -141,7 +162,7 @@ def plot_prepared_weight_family(
             return None
 
         positions = np.arange(len(summary))
-        fig, ax = plt.subplots(figsize=(max(5.0, 0.8 * len(summary)), 4.0))
+        fig, ax, created_fig = resolve_glmhmmt_single_axis(ax=ax, figsize=figsize)
         ax.plot(
             positions,
             summary["weight"],
@@ -151,12 +172,14 @@ def plot_prepared_weight_family(
             markersize=6,
         )
         ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-        ax.set_title(prepared.title)
+        if title is not None:
+            ax.set_title(title)
         ax.set_xlabel(prepared.xlabel)
         ax.set_ylabel(prepared.ylabel)
         ax.set_xticks(positions)
         ax.set_xticklabels(summary["x_label"].astype(str).tolist())
-        fig.tight_layout()
+        if created_fig:
+            fig.tight_layout()
         return fig
 
     subject_order = pd.unique(df["subject"]).tolist()
@@ -179,7 +202,7 @@ def plot_prepared_weight_family(
     if not any(values.size for values in per_feature_values):
         return None
 
-    fig, ax = plt.subplots(figsize=(max(5.0, 0.8 * len(x_order)), 4.0))
+    fig, ax, created_fig = resolve_glmhmmt_single_axis(ax=ax, figsize=figsize)
     positions = np.arange(1, len(x_order) + 1)
     custom_boxplot(
         ax,
@@ -187,15 +210,20 @@ def plot_prepared_weight_family(
         positions=positions,
         widths=0.55,
         median_colors="tab:blue",
-        # line_values=subject_lines,
+        line_values=subject_lines if connect_subjects else None,
+        line_color="#7A7A7A",
+        line_alpha=0.15,
+        line_linewidth=1.0,
     )
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-    ax.set_title(prepared.title)
+    if title is not None:
+        ax.set_title(title)
     ax.set_xlabel(prepared.xlabel)
     ax.set_ylabel(prepared.ylabel)
     ax.set_xticks(positions)
     ax.set_xticklabels(list(x_order))
-    fig.tight_layout()
+    if created_fig:
+        fig.tight_layout()
     return fig
 
 
@@ -268,6 +296,7 @@ def plot_mean_over_data(
     baseline_area: bool = True,
     color: str = "#2b7bba",
     invert_x: bool = False,
+    show_baseline_ttest: bool = False,
     ax: plt.Axes | None = None,
     figsize=(3.0, 3.0),
     **style,
@@ -391,6 +420,34 @@ def plot_mean_over_data(
     )
     ax.set_xticks(x, labels=tick_labels)
 
+    if show_baseline_ttest:
+        for xi, (_, row) in zip(x, summary.iterrows(), strict=False):
+            if x_order is not None:
+                values = subject_summary.loc[
+                    subject_summary[x_col] == row[x_col], "subject_mean"
+                ].dropna()
+            else:
+                values = subject_summary.loc[
+                    pd.to_numeric(subject_summary[x_col], errors="coerce").eq(row["_x_numeric"]),
+                    "subject_mean",
+                ].dropna()
+            if len(values) < 2:
+                continue
+            pvalue = float(ttest_1samp(values.to_numpy(dtype=float), popmean=baseline).pvalue)
+            label = _significance_stars(pvalue)
+            if not label:
+                continue
+            y = min(0.97, float(row["mean"]) + float(row["sem"]) + 0.05)
+            ax.text(
+                xi,
+                y,
+                label,
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="black",
+            )
+
     if invert_x:
         ax.invert_xaxis()
 
@@ -398,7 +455,7 @@ def plot_mean_over_data(
 
 
 COUNTERFACTUAL_PALETTE = {
-    "Empirical": "#1f77b4",
+    "Data": "#1f77b4",
     "Full fitted": "#111111",
     "Fixed bias": "#d55e00",
     "Fixed lapses": "#009e73",
@@ -431,7 +488,7 @@ def _plot_counterfactual_summary(
         lo = sub[lo_col].to_numpy(dtype=float)
         hi = sub[hi_col].to_numpy(dtype=float)
         color = COUNTERFACTUAL_PALETTE[scenario]
-        if scenario == "Empirical":
+        if scenario == "Data":
             ax.errorbar(
                 x,
                 y,
@@ -459,7 +516,7 @@ def plot_action_trace_counterfactual_rb(summary, meta, *, ax: plt.Axes | None = 
         mean_col="rb_mean",
         lo_col="rb_lo",
         hi_col="rb_hi",
-        order=("Empirical", "Full fitted", "Fixed bias", "Fixed lapses"),
+        order=("Data", "Full fitted", "Fixed bias", "Fixed lapses"),
     )
     ax.axhline(float(meta.get("baseline", 0.5)), color="0.5", lw=0.9, ls="--", zorder=0)
     ax.set_xlabel(meta.get("xlabel", "Task variable"))
@@ -493,7 +550,7 @@ def plot_action_trace_counterfactual_lag_match(
         mean_col="lag_match_mean",
         lo_col="lag_match_lo",
         hi_col="lag_match_hi",
-        order=("Empirical", "Full fitted", "Fixed bias", "Fixed lapses"),
+        order=("Data", "Full fitted", "Fixed bias", "Fixed lapses"),
     )
     ax.axhline(float(meta.get("baseline", 0.5)), color="0.5", lw=0.9, ls="--", zorder=0)
     ax.set_xlabel("History lag")
@@ -577,6 +634,7 @@ def add_shared_figure_legend(
     *,
     source_ax,
     title: str | None = None,
+    legend_ax: plt.Axes | None = None,
     bbox_x: float = 0.94,
     legend: bool = True,
 ) -> None:
@@ -584,6 +642,20 @@ def add_shared_figure_legend(
         return
     handles, labels = source_ax.get_legend_handles_labels()
     if not handles:
+        return
+    if legend_ax is not None:
+        legend_ax.axis("off")
+        legend_ax.legend(
+            handles,
+            labels,
+            title=title,
+            loc="center left",
+            frameon=False,
+            fontsize=8,
+            title_fontsize=9,
+            labelspacing=0.35,
+            handlelength=2.0,
+        )
         return
     fig.legend(
         handles,
@@ -1417,6 +1489,9 @@ def plot_integration_map_panels(
     colours=None,
     cmap: str | None = None,
     interpolation: str | None = None,
+    cbar_ax: plt.Axes | None = None,
+    show_colorbar: bool = True,
+    colorbar_label: str | None = None,
     data_points_cutoff: float = 20.0,
     **style,
 ):
@@ -1435,15 +1510,21 @@ def plot_integration_map_panels(
 
     n_panels = len(panels)
     if axes is None:
+        ncols = n_panels + int(show_colorbar and cbar_ax is None)
+        width_ratios = [1.0] * n_panels + ([0.08] if show_colorbar and cbar_ax is None else [])
         fig, axes = plt.subplots(
             1,
-            n_panels,
-            figsize=figsize or (4 * n_panels, 4.0),
+            ncols,
+            figsize=figsize or (4 * n_panels + (0.35 if show_colorbar else 0.0), 4.0),
             constrained_layout=True,
             sharex=True,
             sharey=True,
+            gridspec_kw={"width_ratios": width_ratios},
         )
         axes = np.asarray(axes, dtype=object).ravel()
+        if show_colorbar and cbar_ax is None:
+            cbar_ax = axes[-1]
+            axes = axes[:n_panels]
     else:
         axes = np.asarray(axes, dtype=object).ravel()
         fig = axes[0].figure
@@ -1520,6 +1601,16 @@ def plot_integration_map_panels(
         apply_axis_style(ax, **style)
 
     axes[0].set_ylabel(meta["ylabel"])
+    if show_colorbar:
+        color_map = LinearSegmentedColormap.from_list("integration_map", colours)
+        scalar_mappable = ScalarMappable(norm=Normalize(vmin=0.0, vmax=1.0), cmap=color_map)
+        scalar_mappable.set_array([])
+        colorbar = fig.colorbar(
+            scalar_mappable,
+            cax=cbar_ax,
+            ax=None if cbar_ax is not None else axes,
+        )
+        colorbar.set_label(colorbar_label or meta.get("colorbar_label", r"$\mathit{p}(\mathrm{right})$"))
     return fig, axes
 
 def plot_session_running_accuracy_repetition(
@@ -1657,18 +1748,27 @@ def plot_corrected_behavior_autocorrelograms(
     figsize=(7.0, 3.0),
     model_autocorr=None,
     glm_autocorr=None,
+    autocorr_col: str = "autocorr",
+    sem_col: str | None = "autocorr_sem",
+    model_autocorr_col: str | None = None,
     data_color: str = "#1f77b4",
     model_color: str = "black",
+    data_label: str = "Data",
     model_label: str = "Fitted GLM",
+    ylabel: str = "Corrected autocorrelation",
+    signals: Sequence[str] = ("Outcome", "Repetition"),
+    titles: dict[str, str] | None = None,
     **style,
 ):
-    """Plot Tiffany-style corrected autocorrelograms for outcomes and repetitions.
+    """Plot Tiffany-style autocorrelograms for outcomes and repetitions.
 
     Pass ``model_autocorr`` or ``glm_autocorr`` to overlay a fitted GLM simulation.
+    ``autocorr_col``/``sem_col`` can be changed to plot raw autocorrelation or
+    cross-session correction terms with the same style.
     """
     fig, axes = resolve_axes(
         axes=axes,
-        n_axes=2,
+        n_axes=len(signals),
         figsize=figsize,
         squeeze=False,
         constrained_layout=True,
@@ -1680,27 +1780,30 @@ def plot_corrected_behavior_autocorrelograms(
         model = prepared.get("model_autocorr")
     model = to_pandas_df(model) if model is not None else pd.DataFrame()
 
-    for ax, signal, title in zip(
-        axes,
-        ("Outcome", "Repetition"),
-        ("Choice outcomes", "Repeated responses"),
-        strict=False,
-    ):
+    default_titles = {
+        "Outcome": "Choice outcomes",
+        "Repetition": "Repeated responses",
+    }
+    if titles is not None:
+        default_titles.update(titles)
+
+    for ax, signal in zip(axes, signals, strict=False):
+        title = default_titles.get(signal, str(signal))
         sub = (
             data[data["signal"] == signal].copy()
             if "signal" in data.columns
             else pd.DataFrame()
         )
-        if sub.empty or not {"lag", "autocorr"}.issubset(sub.columns):
+        if sub.empty or not {"lag", autocorr_col}.issubset(sub.columns):
             ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
             ax.axis("off")
             continue
 
         sub = sub.sort_values("lag")
-        yerr = sub["autocorr_sem"].to_numpy(dtype=float) if "autocorr_sem" in sub.columns else None
+        yerr = sub[sem_col].to_numpy(dtype=float) if sem_col is not None and sem_col in sub.columns else None
         ax.errorbar(
             sub["lag"].to_numpy(dtype=float),
-            sub["autocorr"].to_numpy(dtype=float),
+            sub[autocorr_col].to_numpy(dtype=float),
             yerr=yerr,
             fmt="o",
             ms=4,
@@ -1708,7 +1811,7 @@ def plot_corrected_behavior_autocorrelograms(
             ecolor=data_color,
             elinewidth=1.0,
             capsize=2,
-            label="Data",
+            label=data_label,
             zorder=4,
         )
 
@@ -1717,11 +1820,14 @@ def plot_corrected_behavior_autocorrelograms(
             if "signal" in model.columns
             else pd.DataFrame()
         )
-        if not model_sub.empty and {"lag", "autocorr"}.issubset(model_sub.columns):
+        _model_col = model_autocorr_col or autocorr_col
+        if _model_col not in model_sub.columns and "autocorr" in model_sub.columns:
+            _model_col = "autocorr"
+        if not model_sub.empty and {"lag", _model_col}.issubset(model_sub.columns):
             model_sub = model_sub.sort_values("lag")
             ax.plot(
                 model_sub["lag"].to_numpy(dtype=float),
-                model_sub["autocorr"].to_numpy(dtype=float),
+                model_sub[_model_col].to_numpy(dtype=float),
                 color=model_color,
                 lw=1.8,
                 label=model_label,
@@ -1731,9 +1837,9 @@ def plot_corrected_behavior_autocorrelograms(
         ax.axhline(0.0, color="gray", lw=0.8, ls="--", alpha=0.6)
         ax.set_title(title)
         ax.set_xlabel("Lag")
-        ax.set_ylabel("Corrected autocorrelation")
+        ax.set_ylabel(ylabel)
         ax.legend(frameon=False, fontsize=8)
-        ax.set_xlim(0, 25.5)
+        # ax.set_xlim(0, 25.5)
         apply_axis_style(ax, **style)
 
     return fig, axes

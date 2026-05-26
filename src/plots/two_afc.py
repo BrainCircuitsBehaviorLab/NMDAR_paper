@@ -41,6 +41,130 @@ def _state_colors(K: int) -> List[str]:
     return get_state_palette(K)[:K]
 
 
+_FOUR_STATE_LABELS = {"Engaged L", "Engaged R", "Disengaged L", "Disengaged R"}
+
+
+def _two_afc_state_color(label: str, rank: int, K: int) -> str:
+    if K == 4 and label in _FOUR_STATE_LABELS:
+        palette = get_state_palette(K)
+        return palette[int(rank) % len(palette)]
+    return get_state_color(label, rank, K=K)
+
+
+def _local_state_order(view) -> list[int]:
+    order = [int(k) for k in (getattr(view, "state_idx_order", []) or [])]
+    K = int(getattr(view, "K", len(order)))
+    if len(order) == K and len(set(order)) == K:
+        return order
+    return list(range(K))
+
+
+def _two_afc_ranked_state_labels(views: dict) -> dict[int, str]:
+    labels: dict[int, str] = {}
+    for view in views.values():
+        for rank, raw_idx in enumerate(_local_state_order(view)):
+            labels.setdefault(rank, getattr(view, "state_name_by_idx", {}).get(raw_idx, f"State {rank}"))
+    return labels
+
+
+def _two_afc_rank_ordered_arrays_store(views: dict) -> dict:
+    out = {}
+    for subject, view in views.items():
+        order = _local_state_order(view)
+        payload = {
+            "emission_weights": np.asarray(view.emission_weights)[order],
+            "X_cols": view.feat_names,
+            "X": view.X,
+            "smoothed_probs": np.asarray(view.smoothed_probs)[:, order],
+        }
+        payload["lapse_rates"] = getattr(view, "lapse_rates", None)
+        out[subject] = payload
+    return out
+
+
+def _two_afc_raw_by_rank_maps(views: dict) -> tuple[int, dict, dict]:
+    if not views:
+        return 0, {}, {}
+    K = int(next(iter(views.values())).K)
+    raw_by_rank_by_subj = {}
+    rank_by_raw_by_subj = {}
+    for subject, view in views.items():
+        raw_by_rank = {rank: raw_idx for rank, raw_idx in enumerate(_local_state_order(view))}
+        rank_by_raw = {raw_idx: rank for rank, raw_idx in raw_by_rank.items()}
+        raw_by_rank_by_subj[subject] = raw_by_rank
+        raw_by_rank_by_subj[str(subject)] = raw_by_rank
+        rank_by_raw_by_subj[subject] = rank_by_raw
+        rank_by_raw_by_subj[str(subject)] = rank_by_raw
+    return K, raw_by_rank_by_subj, rank_by_raw_by_subj
+
+
+def _attach_two_afc_ranked_cols(
+    df: pd.DataFrame,
+    views: dict,
+    *,
+    subj_col: str,
+    base_col: str = "pR_state",
+) -> pd.DataFrame:
+    """Attach rank-local posterior/model columns without using package label ranks."""
+    if df.empty or subj_col not in df.columns or not views:
+        return df
+
+    K, raw_by_rank_by_subj, rank_by_raw_by_subj = _two_afc_raw_by_rank_maps(views)
+    out = df.copy()
+
+    if "state_idx" in out.columns:
+        local_state = np.full(len(out), np.nan, dtype=float)
+        for subject, idx in out.groupby(subj_col, observed=True).groups.items():
+            rank_by_raw = rank_by_raw_by_subj.get(subject) or rank_by_raw_by_subj.get(str(subject))
+            if rank_by_raw is None:
+                continue
+            row_idx = np.asarray(idx, dtype=int)
+            raw_values = pd.to_numeric(out.iloc[row_idx]["state_idx"], errors="coerce")
+            local_state[row_idx] = raw_values.map(rank_by_raw).to_numpy(dtype=float)
+        if np.isfinite(local_state).any():
+            out["_state_k"] = local_state
+    elif "state_rank" in out.columns:
+        out["_state_k"] = pd.to_numeric(out["state_rank"], errors="coerce")
+
+    for rank in range(K):
+        posterior_dst = f"_p_state_rank_{rank}"
+        model_dst = f"_{base_col}_rank_{rank}"
+        posterior_vals = np.full(len(out), np.nan, dtype=float)
+        model_vals = np.full(len(out), np.nan, dtype=float)
+        wrote_posterior = False
+        wrote_model = False
+
+        for subject, idx in out.groupby(subj_col, observed=True).groups.items():
+            raw_by_rank = raw_by_rank_by_subj.get(subject) or raw_by_rank_by_subj.get(str(subject))
+            if raw_by_rank is None or rank not in raw_by_rank:
+                continue
+            raw_idx = raw_by_rank[rank]
+            row_idx = np.asarray(idx, dtype=int)
+
+            posterior_src = f"p_state_pred_{raw_idx}"
+            if posterior_src in out.columns:
+                posterior_vals[row_idx] = pd.to_numeric(
+                    out.iloc[row_idx][posterior_src],
+                    errors="coerce",
+                ).to_numpy(dtype=float)
+                wrote_posterior = True
+
+            model_src = f"{base_col}_{raw_idx}"
+            if model_src in out.columns:
+                model_vals[row_idx] = pd.to_numeric(
+                    out.iloc[row_idx][model_src],
+                    errors="coerce",
+                ).to_numpy(dtype=float)
+                wrote_model = True
+
+        if wrote_posterior:
+            out[posterior_dst] = posterior_vals
+        if wrote_model:
+            out[model_dst] = model_vals
+
+    return out
+
+
 def _default_labels(K: int, C: int = 2) -> List[str]:
     """Auto-generate state labels like ['Disengaged','Engaged'] for K=2."""
     if K == 1:
@@ -134,9 +258,10 @@ def plot_weights(
     width = 0.8 / K
 
     style = dict(plot_kwargs)
-    ax = style.get("ax")
+    ax = style.pop("ax", None)
+    figsize_arg = style.pop("figsize", None)
     if ax is None:
-        _, ax = plt.subplots(figsize=style.get("figsize", (max(5, 0.7 * M), 3.5)))
+        _, ax = plt.subplots(figsize=figsize_arg or (max(5, 0.7 * M), 3.5))
     fig = ax.figure
 
     for k in range(K):
@@ -173,11 +298,13 @@ def plot_weights_per_contrast(
     bar_w = 0.8 / K
 
     style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=C_m1,
-        figsize=style.get("figsize", (max(5, 0.7 * M) * C_m1, 3.5)),
-        sharey=extra_fit_axes == 0,
+        figsize=figsize_arg or (max(5, 0.7 * M) * C_m1, 3.5),
+        sharey=True,
     )
     for c, ax in enumerate(axes):
         for k in range(K):
@@ -653,6 +780,8 @@ def plot_categorical_performance_all(
     fig
     """
     style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas()
     else:
@@ -676,9 +805,9 @@ def plot_categorical_performance_all(
     )
 
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=n_panels,
-        figsize=style.get("figsize", (4 * n_panels, 4)),
+        figsize=figsize_arg or (4 * n_panels, 4),
         sharey=True,
     )
     ax_idx = 0
@@ -782,6 +911,7 @@ def plot_categorical_performance_all_by_state(
     overlay_only: bool = False,
     model_line_mode: str = "smooth",
     state_assignment_mode: str = "weighted",
+    ax: Optional[plt.Axes] = None,
     **plot_kwargs,
 ) -> plt.Figure:
     """Per-state psychometric grid (K panels, one per state).
@@ -793,9 +923,11 @@ def plot_categorical_performance_all_by_state(
 
     Parameters
     ----------
-    df     : Trial-level DataFrame (polars or pandas). Must contain a
-             ``state_rank`` column (rank 0 = Engaged) produced by
-             :func:`~glmhmmt.postprocess.build_trial_df`.
+    df     : Trial-level DataFrame (polars or pandas). Should contain
+             ``state_idx`` from :func:`~glmhmmt.postprocess.build_trial_df`;
+             if present, ranks are derived locally from the adapter's
+             ``state_idx_order`` so task labels cannot collide with package
+             label ranks.
     views  : {subj: SubjectFitView} as produced by build_views.
     model_name : string used as figure suptitle.
     ild_max : Optional explicit normalisation scale. When omitted, the
@@ -806,6 +938,12 @@ def plot_categorical_performance_all_by_state(
     (fig, None)
     """
     style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
+    if ax is not None:
+        if not overlay_only:
+            raise ValueError("ax can only be used when overlay_only=True.")
+        axes_arg = [ax]
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas().reset_index(drop=True)
     else:
@@ -817,23 +955,30 @@ def plot_categorical_performance_all_by_state(
 
     K = next(iter(views.values())).K if views else 2
 
-    # State assignment from trial_df (state_rank: 0=Engaged, 1=Disengaged, …)
-    if "state_rank" in df_pd.columns:
-        _arr = df_pd["state_rank"].to_numpy().astype(int)
-    elif "_state_k" in df_pd.columns:
-        _arr = df_pd["_state_k"].to_numpy().astype(int)
-    else:
-        raise ValueError("df must contain a 'state_rank' column (output of build_trial_df)")
-
     df_pd = df_pd.copy()
-    df_pd["_state_k"] = _arr
+    if "state_idx" not in df_pd.columns and "state_rank" not in df_pd.columns and "_state_k" not in df_pd.columns:
+        raise ValueError("df must contain a 'state_idx' or 'state_rank' column (output of build_trial_df)")
+    df_pd = _attach_two_afc_ranked_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
+    if "_state_k" not in df_pd.columns:
+        if "state_rank" in df_pd.columns:
+            df_pd["_state_k"] = pd.to_numeric(df_pd["state_rank"], errors="coerce")
+        else:
+            raise ValueError("Could not derive local state ranks from trial_df and views.")
+    df_pd["_state_k"] = pd.to_numeric(df_pd["_state_k"], errors="coerce")
     if state_assignment_mode == "weighted":
-        df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
-        df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
+        missing_cols = [
+            col
+            for k in range(K)
+            for col in (f"_p_state_rank_{k}", f"_pR_state_rank_{k}")
+            if col not in df_pd.columns
+        ]
+        if missing_cols:
+            df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
+            df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
 
     # Resolve labels: {rank: label} merged across all subjects
-    slbls = ranked_state_labels(views)
-    _as = rank_ordered_arrays_store(views)
+    slbls = _two_afc_ranked_state_labels(views)
+    _as = _two_afc_rank_ordered_arrays_store(views)
 
     panel_w = 4
 
@@ -856,17 +1001,15 @@ def plot_categorical_performance_all_by_state(
         else {}
     )
 
-    _include_overlay = K > 1
-    if overlay_only:
-        _include_overlay = True
+    _include_overlay = bool(overlay_only)
     _n_panels = K + int(_include_overlay)
     if overlay_only:
         _n_panels = 1
     _figsize = (3, 3) if overlay_only else (panel_w * _n_panels, 4)
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=_n_panels,
-        figsize=style.get("figsize", _figsize),
+        figsize=figsize_arg or _figsize,
         sharey=True,
         dpi=figure_dpi,
     )
@@ -875,7 +1018,7 @@ def plot_categorical_performance_all_by_state(
         _ax_overlay = axes[0]
         for k in range(K):
             lbl = slbls.get(k, f"State {k}")
-            color = get_state_color(lbl, k, K=K)
+            color = _two_afc_state_color(lbl, k, K)
             _weight_col = (
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
@@ -910,7 +1053,7 @@ def plot_categorical_performance_all_by_state(
     if not overlay_only:
         for k, ax in enumerate(axes[int(_include_overlay) :]):
             lbl = slbls.get(k, f"State {k}")
-            color = get_state_color(lbl, k, K=K)
+            color = _two_afc_state_color(lbl, k, K)
             _weight_col = (
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
@@ -951,6 +1094,50 @@ def plot_categorical_performance_all_by_state(
 
 
 # Alias used by the analysis notebooks
+def plot_categorical_performance_state_overlay(
+    df,
+    views: dict,
+    model_name: str,
+    ild_col: str = "ILD",
+    choice_col: str = "response",
+    pred_col: str = "p_pred",
+    subj_col: str = "subject",
+    X_cols: Optional[Sequence[str]] = None,
+    ild_max: Optional[float] = None,
+    background_style: str = "data",
+    show_weighted_points: bool = True,
+    show_data_smooth: bool = True,
+    show_model_smooth: bool = True,
+    figure_dpi: float = 80.0,
+    model_line_mode: str = "smooth",
+    state_assignment_mode: str = "weighted",
+    ax: Optional[plt.Axes] = None,
+    **plot_kwargs,
+) -> plt.Figure:
+    """Single-panel state-overlay psychometric."""
+    return plot_categorical_performance_all_by_state(
+        df=df,
+        views=views,
+        model_name=model_name,
+        ild_col=ild_col,
+        choice_col=choice_col,
+        pred_col=pred_col,
+        subj_col=subj_col,
+        X_cols=X_cols,
+        ild_max=ild_max,
+        background_style=background_style,
+        show_weighted_points=show_weighted_points,
+        show_data_smooth=show_data_smooth,
+        show_model_smooth=show_model_smooth,
+        figure_dpi=figure_dpi,
+        overlay_only=True,
+        model_line_mode=model_line_mode,
+        state_assignment_mode=state_assignment_mode,
+        ax=ax,
+        **plot_kwargs,
+    )
+
+
 plot_categorical_performance_by_state = plot_categorical_performance_all_by_state
 
 
@@ -984,6 +1171,11 @@ def plot_regressor_psychometric_by_state(
     marginalises over the empirical distribution of the remaining features.
     """
     style = dict(plot_kwargs)
+    axes_arg = style.pop("axes", None)
+    figsize_arg = style.pop("figsize", None)
+    ax_arg = style.pop("ax", None)
+    if ax_arg is not None:
+        axes_arg = [ax_arg]
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas().reset_index(drop=True)
     else:
@@ -997,24 +1189,34 @@ def plot_regressor_psychometric_by_state(
     df_pd = df_pd.dropna(subset=[feature_col])
     if df_pd.empty:
         fig, ax = resolve_single_axis(
-            ax=style.get("ax"),
-            figsize=style.get("figsize", (3.0, 3.0)),
+            ax=np.asarray(axes_arg, dtype=object).ravel()[0] if axes_arg is not None else None,
+            figsize=figsize_arg or (3.0, 3.0),
         )
         ax.text(0.5, 0.5, f"No valid {feature_col} data", ha="center", va="center")
         ax.axis("off")
         apply_axis_style(ax, **style)
         return ax
 
-    if "state_rank" in df_pd.columns:
-        _arr = df_pd["state_rank"].to_numpy().astype(int)
-    elif "_state_k" in df_pd.columns:
-        _arr = df_pd["_state_k"].to_numpy().astype(int)
-    else:
-        raise ValueError("df must contain a 'state_rank' column (output of build_trial_df)")
-    df_pd["_state_k"] = _arr
+    if "state_idx" not in df_pd.columns and "state_rank" not in df_pd.columns and "_state_k" not in df_pd.columns:
+        raise ValueError("df must contain a 'state_idx' or 'state_rank' column (output of build_trial_df)")
+    df_pd = _attach_two_afc_ranked_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
+    if "_state_k" not in df_pd.columns:
+        if "state_rank" in df_pd.columns:
+            df_pd["_state_k"] = pd.to_numeric(df_pd["state_rank"], errors="coerce")
+        else:
+            raise ValueError("Could not derive local state ranks from trial_df and views.")
+    df_pd["_state_k"] = pd.to_numeric(df_pd["_state_k"], errors="coerce")
     if state_assignment_mode == "weighted":
-        df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
-        df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
+        K = next(iter(views.values())).K if views else int(df_pd["_state_k"].max()) + 1
+        missing_cols = [
+            col
+            for k in range(K)
+            for col in (f"_p_state_rank_{k}", f"_pR_state_rank_{k}")
+            if col not in df_pd.columns
+        ]
+        if missing_cols:
+            df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
+            df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
     _global_bin_edges, _global_bin_centers = _quantile_bin_spec(
         df_pd[feature_col].to_numpy(dtype=float),
         n_bins=n_bins,
@@ -1032,8 +1234,8 @@ def plot_regressor_psychometric_by_state(
 
     K = next(iter(views.values())).K if views else int(df_pd["_state_k"].max()) + 1
 
-    slbls = ranked_state_labels(views)
-    _as = rank_ordered_arrays_store(views)
+    slbls = _two_afc_ranked_state_labels(views)
+    _as = _two_afc_rank_ordered_arrays_store(views)
     _all_subjects = list(df_pd[subj_col].unique()) if subj_col in df_pd.columns else list(_as.keys())
 
     _smooth_by_k: dict[int, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
@@ -1081,17 +1283,15 @@ def plot_regressor_psychometric_by_state(
         else {}
     )
 
-    _include_overlay = K > 1
-    if overlay_only:
-        _include_overlay = True
+    _include_overlay = bool(overlay_only)
     _n_panels = K + int(_include_overlay)
     if overlay_only:
         _n_panels = 1
     _figsize = (3, 3) if overlay_only else (4 * _n_panels, 4)
     fig, axes = resolve_axes(
-        style.get("axes"),
+        axes_arg,
         n_axes=_n_panels,
-        figsize=style.get("figsize", _figsize),
+        figsize=figsize_arg or _figsize,
         sharey=True,
         dpi=figure_dpi,
     )
@@ -1102,7 +1302,7 @@ def plot_regressor_psychometric_by_state(
         _ax_overlay = axes[0]
         for k in range(K):
             lbl = slbls.get(k, f"State {k}")
-            color = get_state_color(lbl, k, K=K)
+            color = _two_afc_state_color(lbl, k, K)
             _weight_col = (
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
@@ -1136,7 +1336,7 @@ def plot_regressor_psychometric_by_state(
     if not overlay_only:
         for k, ax in enumerate(axes[int(_include_overlay) :]):
             lbl = slbls.get(k, f"State {k}")
-            color = get_state_color(lbl, k, K=K)
+            color = _two_afc_state_color(lbl, k, K)
             _weight_col = (
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
@@ -1321,7 +1521,14 @@ def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
         figsize=figsize,
     )
 
-def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC", color=None):
+def plot_rb(
+    plot_df,
+    ax=None,
+    figsize=(3.0, 3.0),
+    title="2AFC",
+    color=None,
+    show_baseline_ttest=False,
+):
     df_pd = to_pandas_df(plot_df).copy()
     df_pd["abs_ILD"] = pd.to_numeric(df_pd["ILD"], errors="coerce").abs()
 
@@ -1339,6 +1546,7 @@ def plot_rb(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC", color=None):
         baseline=0.5,
         baseline_area=True,
         color=color if color is not None else "tab:blue",
+        show_baseline_ttest=show_baseline_ttest,
         ax=ax,
         figsize=figsize,
     )
@@ -1380,11 +1588,16 @@ def plot_binned_accuracy_figure(
     lapse_max: float = 0.4,
     share_lapse_logistic_core: bool = False,
     fit_lapse_by_subject: bool = True,
+    n_bins: int = 4,
+    ax: plt.Axes | None = None,
+    legend_ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     style = dict(plot_kwargs)
     axes_arg = style.pop("axes", None)
     figsize_arg = style.pop("figsize", None)
+    if ax is not None:
+        axes_arg = [ax]
     x_axis_key = str(x_axis).lower() if x_axis is not None else None
     if x_axis_key in {"total_evidence", "total evidence", "fitted_total_evidence", "evidence"}:
         panels, legend_title = prepare_binned_accuracy_total_evidence_panels(
@@ -1394,6 +1607,7 @@ def plot_binned_accuracy_figure(
             views=views,
             is_mcdr=False,
             baseline=process.BASELINE,
+            n_bins=int(n_bins),
         )
     elif x_axis_key in {
         "weighted_stimulus",
@@ -1412,11 +1626,13 @@ def plot_binned_accuracy_figure(
                 regressor_col=regressor_col,
                 x_col="_weighted_stimulus_evidence",
                 xlabel="Weighted stimulus evidence",
+                n_bins=int(n_bins),
             )
     else:
         panels, legend_title = process.prepare_binned_accuracy_figure(
             plot_df,
             regressor_col=regressor_col,
+            n_bins=int(n_bins),
         )
         if panels and x_axis_key in {"ild", "native"}:
             panels = panels[:1]
@@ -1437,6 +1653,8 @@ def plot_binned_accuracy_figure(
             resolved_figsize[1],
         )
     n_axes = len(panels) + extra_fit_axes
+    if ax is not None and n_axes != 1:
+        raise ValueError("ax can only be used when plot_binned_accuracy_figure resolves to one axis.")
     if extra_fit_axes:
         fig, axes_grid, _ = resolve_axes_grid(
             axes=axes_arg,
@@ -1529,8 +1747,14 @@ def plot_binned_accuracy_figure(
             meta=diagnostic_meta or {},
             regressor_label=display_regressor_name(regressor_col),
         )
-    add_shared_figure_legend(fig, source_ax=panel_axes[-1], title=legend_title, legend=legend)
-    fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
+    add_shared_figure_legend(
+        fig,
+        source_ax=panel_axes[-1],
+        title=legend_title,
+        legend_ax=legend_ax,
+        legend=legend,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0 if legend_ax is not None else 0.92, 1.0))
     for ax in panel_axes:
         apply_axis_style(ax, **style)
     return fig, axes[: len(panels) + extra_fit_axes]
@@ -1573,6 +1797,7 @@ def plot_right_by_regressor(
     group_labels: dict | None = None,
     palette: dict | None = None,
     legend: bool = True,
+    legend_ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     summary, meta = process.prepare_right_by_regressor(
@@ -1605,8 +1830,17 @@ def plot_right_by_regressor(
         meta=meta,
         label_map=group_labels,
         palette=resolved_palette,
-        legend=legend,
+        legend=False if legend_ax is not None else legend,
     )
+    if legend_ax is not None:
+        legend_ax.axis("off")
+        add_shared_figure_legend(
+            fig,
+            source_ax=ax,
+            title=meta.get("legend_title"),
+            legend_ax=legend_ax,
+            legend=legend,
+        )
     apply_axis_style(ax, **({"xlabel": xlabel} if xlabel is not None else {}))
     return ax
 
@@ -1623,6 +1857,8 @@ def plot_right_integration_map(
     n_bins: int = 64,
     sigma: float | None = None,
     smooth: bool = True,
+    panel: str | None = None,
+    ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     _n_bins = n_bins
@@ -1641,9 +1877,20 @@ def plot_right_integration_map(
         fill_empty=smooth,
         default_sigma_dx=5.0,
     )
+    if panel is not None:
+        panel_label = str(panel).casefold()
+        panels = [
+            panel_data
+            for panel_data in panels
+            if str(panel_data.get("label", "")).casefold() == panel_label
+        ]
+        if not panels:
+            return None
+    axes = [ax] if ax is not None else None
     return plot_integration_map_panels(
         panels,
         meta=meta,
+        axes=axes,
         interpolation=None,
         **plot_kwargs,
     )

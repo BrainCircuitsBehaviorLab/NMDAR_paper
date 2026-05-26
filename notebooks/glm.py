@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.8"
 app = marimo.App(width="full")
 
 
@@ -24,9 +24,9 @@ def _():
     import seaborn as sns
     import pandas as pd
 
-    _local_glmhmmt_src = Path(__file__).resolve().parents[2] / "glmhmmt" / "src"
-    if _local_glmhmmt_src.exists() and str(_local_glmhmmt_src) not in sys.path:
-        sys.path.insert(0, str(_local_glmhmmt_src))
+    # _local_glmhmmt_src = Path(__file__).resolve().parents[2] / "glmhmmt" / "src"
+    # if _local_glmhmmt_src.exists() and str(_local_glmhmmt_src) not in sys.path:
+    #     sys.path.insert(0, str(_local_glmhmmt_src))
 
     from plot_saver import make_plot_saver
     from glmhmmt.notebook_support import (
@@ -74,11 +74,13 @@ def _():
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
-    sns.set_context("notebook")
+    sns.set_context("paper")
 
     plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
 
     paths = get_runtime_paths()
+    from src.utils import fig_size
+
     return (
         CoefficientEditorWidget,
         ModelCfg,
@@ -90,6 +92,7 @@ def _():
         build_trial_and_weights_df,
         build_trial_df,
         display_regressor_name,
+        fig_size,
         fit_glm,
         fit_main,
         generate_model_id,
@@ -456,24 +459,143 @@ def _(mo):
 
 
 @app.cell
-def _(adapter, fit_glm, np, pd, plot_prepared_weight_family, plt, sns):
-    def plot_stim_hot_weights(weights_df, *, mcdr_mode: str = "folded") -> plt.Figure | None:
-        return plot_prepared_weight_family(
-            adapter.prepare_weight_family_plot(
-                weights_df,
-                "stim_hot",
-                variant=mcdr_mode,
-            )
-        )
+def _(
+    adapter,
+    fig_size,
+    fit_glm,
+    np,
+    pd,
+    plot_prepared_weight_family,
+    plt,
+    sns,
+    task_name,
+):
+    from scipy.stats import ttest_1samp
 
-    def plot_choice_lag_weights(weights_df, *, mcdr_mode: str = "folded") -> plt.Figure | None:
-        return plot_prepared_weight_family(
-            adapter.prepare_weight_family_plot(
-                weights_df,
-                "choice_lag",
-                variant=mcdr_mode,
-            )
+    def _significance_stars(pvalue: float) -> str:
+        if not np.isfinite(pvalue) or pvalue >= 0.05:
+            return ""
+        if pvalue < 0.001:
+            return "***"
+        if pvalue < 0.01:
+            return "**"
+        return "*"
+
+    def _annotate_weight_family_against_zero(prepared, ax: plt.Axes | None) -> None:
+        if prepared is None or ax is None or prepared.plot_kind != "box":
+            return
+
+        df = pd.DataFrame(prepared.data).copy()
+        required = {"subject", "x_label", "weight"}
+        if df.empty or not required.issubset(df.columns):
+            return
+
+        df["subject"] = df["subject"].astype(str)
+        df["x_label"] = df["x_label"].astype(str)
+        df["weight"] = pd.to_numeric(df["weight"], errors="coerce")
+        df = df.dropna(subset=["weight"])
+        if df.empty:
+            return
+
+        x_order = (
+            list(prepared.x_order)
+            if prepared.x_order is not None
+            else pd.unique(df["x_label"]).tolist()
         )
+        present_labels = set(df["x_label"])
+        x_order = [str(label) for label in x_order if str(label) in present_labels]
+        if not x_order:
+            return
+
+        _, y_top = ax.get_ylim()
+        data_low = float(np.nanmin(df["weight"].to_numpy(dtype=float)))
+        data_high = float(np.nanmax(df["weight"].to_numpy(dtype=float)))
+        y_bottom = min(float(ax.get_ylim()[0]), data_low, 0.0)
+        y_top = max(float(y_top), data_high, 0.0)
+        y_span = y_top - y_bottom
+        if not np.isfinite(y_span) or y_span <= 0:
+            y_span = 1.0
+        y_text = y_top + 0.04 * y_span
+
+        annotated = False
+        for xpos, x_label in enumerate(x_order, start=1):
+            values = (
+                df.loc[df["x_label"] == x_label]
+                .groupby("subject", observed=False)["weight"]
+                .mean()
+                .dropna()
+                .to_numpy(dtype=float)
+            )
+            if values.size < 2:
+                continue
+            pvalue = float(ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue)
+            label = _significance_stars(pvalue)
+            if not label:
+                continue
+            ax.text(
+                xpos,
+                y_text,
+                label,
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="black",
+                clip_on=False,
+            )
+            annotated = True
+
+        if annotated:
+            ax.set_ylim(y_bottom, y_text + 0.05 * y_span)
+
+    def plot_stim_hot_weights(
+        weights_df,
+        *,
+        mcdr_mode: str = "folded",
+        ax: plt.Axes | None = None,
+        connect_subjects: bool = False,
+    ) -> plt.Figure | None:
+        prepared = adapter.prepare_weight_family_plot(weights_df, "stim_hot", variant=mcdr_mode)
+        fig = plot_prepared_weight_family(
+            prepared,
+            figsize=fig_size(2, 1),
+            ax=ax,
+            connect_subjects=connect_subjects,
+        )
+        if fig is not None:
+            target_ax = ax if ax is not None else (fig.axes[0] if fig.axes else None)
+            if target_ax is not None:
+                _annotate_weight_family_against_zero(prepared, target_ax)
+                if task_name == "2AFC":
+                    target_ax.set_xlabel("Stimulus level")
+                elif task_name in {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}:
+                    target_ax.set_xlabel("Delay level")
+        return fig
+
+    def plot_choice_lag_weights(
+        weights_df,
+        *,
+        mcdr_mode: str = "folded",
+        ax: plt.Axes | None = None,
+        connect_subjects: bool = False,
+    ) -> plt.Figure | None:
+        prepared = adapter.prepare_weight_family_plot(
+            weights_df,
+            "choice_lag",
+            variant=mcdr_mode,
+        )
+        fig = plot_prepared_weight_family(
+            prepared,
+            figsize=fig_size(2, 1),
+            ax=ax,
+            connect_subjects=connect_subjects,
+        )
+        target_ax = (
+            ax
+            if ax is not None
+            else (fig.axes[0] if fig is not None and fig.axes else None)
+        )
+        _annotate_weight_family_against_zero(prepared, target_ax)
+        return fig
 
     def plot_bias_hot_weights(weights_df) -> plt.Figure | None:
         return plot_prepared_weight_family(
@@ -715,23 +837,38 @@ def _(pl, weights_df):
 
 
 @app.cell
+def _(fig_size):
+    fig_size(2, 1)
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
 def _(
     K,
+    fig_size,
     mo,
     model_plots,
+    np,
     pl,
     plot_bias_hot_weights,
     plot_choice_lag_weights,
     plot_sequence_feature_weights,
     plot_stim_hot_weights,
+    plt,
     save_plot,
     selected,
+    sns,
     task_name,
     ui_mcdr_one_hot_mode,
     views_sel,
     weights_df,
 ):
-
+    sns.set_context("paper")
     _weights_df_sel = weights_df.filter(pl.col("subject").is_in(selected))
     _mcdr_mode = ui_mcdr_one_hot_mode.value if task_name == "MCDR" else "folded"
 
@@ -740,7 +877,7 @@ def _(
     #     K=K,
     # )
 
-    _fig_summary = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("session").not_(), pl.col("feature").str.contains("choice").not_(),))
+    _fig_summary = model_plots.emission_weights_summary_boxplot(weights_df)
     # _lr_df = build_regressor_lr_df(
     #     {s: arrays_store[s] for s in selected},
     #     lapse_max=model_cfg.lapse_max,
@@ -755,12 +892,43 @@ def _(
     #     )
     # )
     # _fig_lr = None if _ax_lr is None else _ax_lr.figure
-    _fig_stim_hot = plot_stim_hot_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
-    _fig_choice_lag = plot_choice_lag_weights(_weights_df_sel, mcdr_mode=_mcdr_mode)
-    _fig_choice_lag = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("choice")))
+    def _plot_one_hot_family(plotter, *, mcdr_mode):
+        _fig, _ax = plt.subplots(
+            figsize=fig_size(2, 1),
+            constrained_layout=True,
+        )
+        _plotted_fig = plotter(_weights_df_sel, mcdr_mode=mcdr_mode, ax=_ax)
+        if _plotted_fig is None:
+            plt.close(_fig)
+            return None, None
+        return _plotted_fig, _ax
+
+    _fig_stim_hot, _ax_stim_hot = _plot_one_hot_family(
+        plot_stim_hot_weights,
+        mcdr_mode=_mcdr_mode,
+    )
+    _fig_choice_lag, _ax_choice_lag = _plot_one_hot_family(
+        plot_choice_lag_weights,
+        mcdr_mode=_mcdr_mode,
+    )
+    if _ax_stim_hot is not None and _ax_choice_lag is not None:
+        _ylims = np.asarray(
+            [_ax_stim_hot.get_ylim(), _ax_choice_lag.get_ylim()],
+            dtype=float,
+        )
+        _lower = float(np.nanmin(_ylims[:, 0]))
+        _upper = float(np.nanmax(_ylims[:, 1]))
+        if np.isfinite(_lower) and np.isfinite(_upper):
+            if _lower == _upper:
+                _pad = 1.0 if _lower == 0 else abs(_lower) * 0.05
+                _lower -= _pad
+                _upper += _pad
+            _ax_stim_hot.set_ylim(_lower, _upper)
+            _ax_choice_lag.set_ylim(_lower, _upper)
+    # _fig_choice_lag = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("choice")))
     _fig_bias_hot = plot_bias_hot_weights(_weights_df_sel)
-    _fig_bias_hot = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("choice").not_(), pl.col("feature").str.contains("stim").not_()))
-    _fig_lapses = model_plots.lapse_rates_boxplot(views=views_sel, K=K)
+    # _fig_bias_hot = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("choice").not_(), pl.col("feature").str.contains("stim").not_()))
+    _fig_lapses = model_plots.lapse_rates_boxplot(views=views_sel, K=K, collapse_history_choices=True)
     _fig_seq = plot_sequence_feature_weights(_weights_df_sel)
     # _items = [mo.md("#### By subject"), _fig_by_subject]
     _items = []
@@ -838,6 +1006,7 @@ def _(
                 ),
             ]
         )
+
     mo.vstack(_items, align="center")
     # _fig_summary
     # _fig_choice_lag
@@ -849,6 +1018,11 @@ def _(mo):
     mo.md(r"""
     ## Accuracy plots
     """)
+    return
+
+
+@app.cell
+def _():
     return
 
 
@@ -938,6 +1112,7 @@ def _(adapter, mo, task_name, trial_df, views):
 
     if not regressor_options:
         ui_accuracy_binning = None
+        ui_accuracy_n_quantiles = None
         ui_accuracy_x_axis = None
         ui_accuracy_regressor = None
         ui_fit_lapse_by_subject = None
@@ -961,6 +1136,13 @@ def _(adapter, mo, task_name, trial_df, views):
             options=regressor_options,
             value=regressor_options[0],
             label="Regressor",
+        )
+        ui_accuracy_n_quantiles = mo.ui.slider(
+            start=2,
+            stop=8,
+            step=2,
+            value=4,
+            label="Quantile bins",
         )
         ui_fit_lapse_logistic = mo.ui.checkbox(value=False, label="Fit lapse logistic")
         ui_fit_lapse_by_subject = mo.ui.checkbox(value=True, label="Fit by animal")
@@ -988,6 +1170,7 @@ def _(adapter, mo, task_name, trial_df, views):
         )
     return (
         regressor_options,
+        ui_accuracy_n_quantiles,
         ui_accuracy_regressor,
         ui_accuracy_x_axis,
         ui_fit_lapse_by_subject,
@@ -1012,6 +1195,8 @@ def _(mo, pl, selected, trial_df):
 def _(
     adapter,
     add_choice_lag_summary_regressor,
+    np,
+    pl,
     prepare_predictions_df,
     task_name,
     trial_df_sel,
@@ -1032,13 +1217,50 @@ def _(
         plot_df_all,
         choice_lag_cols=_choice_lag_cols,
     )
-    plot_df_all
+    _weighted_col = "choice_lag_glm_weighted_sum"
+    if _choice_lag_cols:
+        _weighted_chunks = []
+        for _subject in plot_df_all["subject"].unique().to_list():
+            _subject_df = plot_df_all.filter(pl.col("subject") == _subject)
+            _view = views_sel.get(str(_subject), views_sel.get(_subject))
+            if _view is None:
+                _weighted_chunks.append(_subject_df.with_columns(pl.lit(None).cast(pl.Float64).alias(_weighted_col)))
+                continue
+
+            _feat_names = [str(_feat) for _feat in list(getattr(_view, "feat_names", []) or [])]
+            _weights = np.asarray(getattr(_view, "emission_weights", []), dtype=float)
+            if _weights.ndim == 3:
+                _weights = _weights[0, 0]
+            elif _weights.ndim == 2:
+                _weights = _weights[0]
+            if _weights.ndim != 1 or len(_feat_names) != _weights.shape[0]:
+                _weighted_chunks.append(_subject_df.with_columns(pl.lit(None).cast(pl.Float64).alias(_weighted_col)))
+                continue
+
+            _terms = []
+            for _col in _choice_lag_cols:
+                if _col not in _subject_df.columns or _col not in _feat_names:
+                    continue
+                _terms.append(
+                    pl.col(_col).cast(pl.Float64, strict=False).fill_null(0.0)
+                    * float(_weights[_feat_names.index(_col)])
+                )
+            if not _terms:
+                _weighted_chunks.append(_subject_df.with_columns(pl.lit(None).cast(pl.Float64).alias(_weighted_col)))
+                continue
+            _weighted_expr = _terms[0]
+            for _term in _terms[1:]:
+                _weighted_expr = _weighted_expr + _term
+            _weighted_chunks.append(_subject_df.with_columns(_weighted_expr.alias(_weighted_col)))
+        if _weighted_chunks:
+            plot_df_all = pl.concat(_weighted_chunks, how="vertical")
     return (plot_df_all,)
 
 
 @app.cell
 def _(
     mo,
+    ui_accuracy_n_quantiles,
     ui_accuracy_regressor,
     ui_accuracy_x_axis,
     ui_fit_lapse_by_subject,
@@ -1050,6 +1272,7 @@ def _(
         [
             ui_accuracy_regressor,
             ui_accuracy_x_axis,
+            ui_accuracy_n_quantiles,
             ui_fit_lapse_logistic,
             ui_fit_lapse_by_subject,
             ui_share_lapse_logistic_core,
@@ -1061,6 +1284,7 @@ def _(
 
 @app.cell
 def _(
+    fig_size,
     is_2afc,
     mo,
     plot_df_all,
@@ -1077,7 +1301,12 @@ def _(
         "glm",
         background_style="model",
         **_perf_kwargs,
-        # figsize=(4,4)
+        figsize=fig_size(3, 1) if not is_2afc else fig_size(2, 1),
+    )
+    _fig_all_list = (
+        list(_fig_all)
+        if isinstance(_fig_all, (list, tuple))
+        else [_fig_all]
     )
 
     _choice_history_regressor = plots.pick_choice_history_regressor(regressor_options)
@@ -1089,6 +1318,7 @@ def _(
         regressor_col=_regressor_for_right,
         views=views_sel,
         title=None,
+        figsize = fig_size(2,1)
     )
 
     # mo.stop(_fig_regressor is None, mo.md(f"No p(repeat) plot available for {_regressor_label}."))
@@ -1097,8 +1327,24 @@ def _(
         [
             mo.vstack(
                 [
-                    _fig_all,
-                    save_plot(_fig_all, "overall psychometric", stem="accuracy_overall"),
+                    _item
+                    for _fig_idx, _fig in enumerate(_fig_all_list, start=1)
+                    for _item in (
+                        _fig,
+                        save_plot(
+                            _fig,
+                            (
+                                f"overall psychometric {_fig_idx}"
+                                if len(_fig_all_list) > 1
+                                else "overall psychometric"
+                            ),
+                            stem=(
+                                f"accuracy_overall_{_fig_idx}"
+                                if len(_fig_all_list) > 1
+                                else "accuracy_overall"
+                            ),
+                        ),
+                    )
                 ],
                 align="center",
             ),
@@ -1115,21 +1361,40 @@ def _(
             ),
         ]
     )
-    _fig_all
     return
 
 
 @app.cell
-def _(mo, plot_df_all, plots, save_plot, views_sel):
-    # _fig_total_evidence = plots.plot_accuracy_by_total_evidence(
-    #     plot_df_all,
-    #     adapter=adapter,
-    #     views=views_sel,
-    # )
-    _fig_repeat_evidence = plots.plot_repeat_by_repeat_evidence(
+def _(adapter, fig_size, mo, plot_df_all, plots, plt, save_plot, views_sel):
+    _evidence_figsize = fig_size(3, 1)
+    _fig_total_evidence, _ax_total_evidence = plt.subplots(
+        1,
+        1,
+        figsize=_evidence_figsize,
+        layout="constrained",
+    )
+    plots.plot_accuracy_by_total_evidence(
+        plot_df_all,
+        adapter=adapter,
+        views=views_sel,
+        ax=_ax_total_evidence,
+        figsize=_evidence_figsize,
+    )
+    _ax_total_evidence.set_xlabel("Fitted Evidence")
+
+    _fig_repeat_evidence, _ax_repeat_evidence = plt.subplots(
+        1,
+        1,
+        figsize=_evidence_figsize,
+        layout="constrained",
+    )
+    plots.plot_repeat_by_repeat_evidence(
         plot_df_all,
         views=views_sel,
+        ax=_ax_repeat_evidence,
+        figsize=_evidence_figsize,
     )
+    _ax_repeat_evidence.set_xlabel("Rep. Evidence")
 
     # mo.stop(_fig_total_evidence is None, mo.md("Accuracy by fitted total evidence not available."))
 
@@ -1137,12 +1402,12 @@ def _(mo, plot_df_all, plots, save_plot, views_sel):
         [
             mo.vstack(
                 [
-                    # _fig_total_evidence,
-                    # save_plot(
-                    #     _fig_total_evidence,
-                    #     "accuracy by fitted total evidence",
-                    #     stem="accuracy_total_evidence",
-                    # ),
+                    _fig_total_evidence,
+                    save_plot(
+                        _fig_total_evidence,
+                        "accuracy by fitted total evidence",
+                        stem="accuracy_total_evidence",
+                    ),
                 ],
                 align="center",
             ),
@@ -1172,12 +1437,13 @@ def _(plot_df_all, ui_accuracy_regressor):
 @app.cell
 def _(
     adapter,
+    fig_size,
     mo,
     plot_df_all,
     plots,
     plt,
-    regressor_options,
     save_plot,
+    ui_accuracy_n_quantiles,
     ui_accuracy_regressor,
     ui_accuracy_x_axis,
     ui_fit_lapse_by_subject,
@@ -1187,8 +1453,7 @@ def _(
     views_sel,
 ):
     _selected_regressor_label = plots.display_regressor_name(ui_accuracy_regressor.value)
-
-    _fig, _ax = plt.subplots(1,1,figsize=(4,3))
+    _panel_size = fig_size(2, 1)
 
     _fig_binned = plots.plot_binned_accuracy_figure(
         plot_df_all,
@@ -1196,25 +1461,39 @@ def _(
         x_axis=ui_accuracy_x_axis.value,
         adapter=adapter,
         views=views_sel,
+        n_bins=int(ui_accuracy_n_quantiles.value),
         fit_lapse_logistic=bool(ui_fit_lapse_logistic.value),
         fit_lapse_by_subject=bool(ui_fit_lapse_by_subject.value),
         share_lapse_logistic_core=bool(ui_share_lapse_logistic_core.value),
         show_lapses_in_legend=bool(ui_show_lapses_in_legend.value),
         print_lapse_fits=not bool(ui_show_lapses_in_legend.value),
-        # figsize = (3,3)
+        figsize=_panel_size,
     )
-    _secondary_regressor = plots.pick_choice_history_regressor(regressor_options)
-    mo.stop(_secondary_regressor is None, mo.md("No choice-history regressor available."))
+    mo.stop(_fig_binned is None, mo.md(f"No binned accuracy plot available for {_selected_regressor_label}."))
+    _fig_binned_base = _fig_binned[0] if isinstance(_fig_binned, tuple) else _fig_binned
+    _right_figsize = tuple(float(_size) for _size in _fig_binned_base.get_size_inches())
+
+    _plot_df_cols = set(getattr(plot_df_all, "columns", []))
+    _secondary_regressor = "choice_lag_glm_weighted_sum" if "choice_lag_glm_weighted_sum" in _plot_df_cols else None
+    mo.stop(_secondary_regressor is None, mo.md("No GLM-weighted choice-history regressor available."))
 
     _secondary_regressor_label = plots.display_regressor_name(_secondary_regressor)
+    _fig_secondary_right_base, (_ax_secondary_right, _ax_secondary_right_legend) = plt.subplots(
+        1,
+        2,
+        figsize=_right_figsize,
+        gridspec_kw={"width_ratios": [1.0, 0.1], "wspace": 0.02},
+    )
     _fig_secondary_right = plots.plot_right_by_regressor(
         plot_df_all,
         regressor_col=_secondary_regressor,
         title=None,
-        figsize=(4,3)
+        n_bins=9,
+        ax=_ax_secondary_right,
+        legend_ax=_ax_secondary_right_legend,
     )
 
-    mo.stop(_fig_binned is None, mo.md(f"No binned accuracy plot available for {_selected_regressor_label}."))
+    mo.stop(_fig_secondary_right is None, mo.md(f"No p(right) plot available for {_secondary_regressor_label}."))
 
     mo.vstack(
         [
@@ -1222,6 +1501,7 @@ def _(
                 [
                     ui_accuracy_regressor,
                     ui_accuracy_x_axis,
+                    ui_accuracy_n_quantiles,
                     ui_fit_lapse_logistic,
                     ui_fit_lapse_by_subject,
                     ui_share_lapse_logistic_core,
@@ -1243,9 +1523,9 @@ def _(
                     ),
                     mo.vstack(
                         [
-                            _fig_secondary_right,
+                            _fig_secondary_right_base,
                             save_plot(
-                                _fig_secondary_right.figure,
+                                _fig_secondary_right_base,
                                 f"p(right) by {_secondary_regressor_label}",
                                 stem=f"psychometric_binned_{_secondary_regressor}",
                             ),
@@ -1283,19 +1563,36 @@ def _(session_df):
 
 @app.cell
 def _(mo):
-    ui_show_glm_autocorr = mo.ui.checkbox(
-        value=False,
-        label="Overlay fitted GLM autocorrelogram",
+    ui_autocorr_apply_correction = mo.ui.checkbox(
+        value=True,
+        label="Apply cross-session correction",
+    )
+    ui_show_glm_autocorr = mo.ui.run_button(
+        label="Run fitted GLM autocorrelogram simulations",
     )
     ui_glm_autocorr_n_simulations = mo.ui.slider(
         start=1,
-        stop=100,
+        stop=50,
         step=1,
-        value=20,
+        value=5,
         label="GLM simulations",
     )
-    mo.hstack([ui_show_glm_autocorr, ui_glm_autocorr_n_simulations])
-    return ui_glm_autocorr_n_simulations, ui_show_glm_autocorr
+    ui_glm_autocorr_recursive = mo.ui.checkbox(
+        value=False,
+        label="Recursive GLM simulation",
+    )
+    mo.hstack([
+        ui_autocorr_apply_correction,
+        ui_show_glm_autocorr,
+        ui_glm_autocorr_n_simulations,
+        ui_glm_autocorr_recursive,
+    ])
+    return (
+        ui_autocorr_apply_correction,
+        ui_glm_autocorr_n_simulations,
+        ui_glm_autocorr_recursive,
+        ui_show_glm_autocorr,
+    )
 
 
 @app.cell
@@ -1304,12 +1601,17 @@ def _(
     arrays_store,
     df_all,
     df_filter_subject,
+    fig_size,
     mo,
     model_cfg,
     pl,
     plot_df_all,
+    plt,
+    save_plot,
+    ui_autocorr_apply_correction,
     ui_filter_session,
     ui_glm_autocorr_n_simulations,
+    ui_glm_autocorr_recursive,
     ui_show_glm_autocorr,
 ):
     from src.process.common import (
@@ -1322,21 +1624,29 @@ def _(
         plot_session_accuracy_repetition_timescale,
     )
     session_df = df_filter_subject.filter(pl.col("session") == ui_filter_session.value)
+    _trial_col = "trial_idx" if "trial_idx" in plot_df_all.columns else ("trial" if "trial" in plot_df_all.columns else None)
+    _autocorr_sort_cols = ["subject", "session"] + ([_trial_col] if _trial_col is not None else [])
+    _autocorr_df = plot_df_all.sort(_autocorr_sort_cols)
+    _session_trial_col = (
+        _trial_col
+        if _trial_col is not None and _trial_col in session_df.columns
+        else ("trial_idx" if "trial_idx" in session_df.columns else ("trial" if "trial" in session_df.columns else None))
+    )
     prepared_session_timescale = prepare_session_accuracy_repetition_timescale(
         session_df,
         choice_col="response",
         outcome_col="performance",
-        trial_index_col="trial",
+        trial_index_col=_session_trial_col,
         running_window=20,
         max_lag=50,
     )
     prepared_corrected_autocorr = prepare_corrected_behavior_autocorrelograms(
-        plot_df_all,
+        _autocorr_df,
         subject_col="subject",
         session_col="session",
         choice_col="response",
         outcome_col="performance",
-        trial_index_col="trial",
+        trial_index_col=_trial_col,
         max_lag=50,
         min_cross_pairs=20,
         max_cross_pairs=80,
@@ -1350,31 +1660,264 @@ def _(
             subject_col="subject",
             session_col=adapter.session_col,
             trial_index_col=adapter.behavioral_cols["trial"],
+            correct_label_col=adapter.behavioral_cols["stimulus"],
             tau=model_cfg.tau,
             emission_cols=list(model_cfg.emission_cols),
-            recursive=True,
+            recursive=bool(ui_glm_autocorr_recursive.value),
             n_simulations=int(ui_glm_autocorr_n_simulations.value),
             max_lag=50,
             min_cross_pairs=20,
             max_cross_pairs=80,
             seed=1,
+            summary_only=True,
         )
     else:
         prepared_glm_autocorr = None
 
     fig_session_timescale, _ = plot_session_accuracy_repetition_timescale(prepared_session_timescale)
-    fig_corrected_autocorr, _ = plot_corrected_behavior_autocorrelograms(
-        prepared_corrected_autocorr,
-        glm_autocorr=(
-            prepared_glm_autocorr["autocorr"]
-            if prepared_glm_autocorr is not None
-            else None
-        ),
+    _glm_autocorr = (
+        prepared_glm_autocorr["autocorr"]
+        if prepared_glm_autocorr is not None
+        else None
     )
+    def _style_autocorr_axis(_ax):
+        _ax.set_ylim(-0.05, 0.2)
+        _ax.set_title("")
+
+    if ui_autocorr_apply_correction.value:
+        _fig_choice_autocorr, _ax_choice_autocorr = plt.subplots(figsize=fig_size(2, 1))
+        _fig_choice_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+            prepared_corrected_autocorr,
+            axes=[_ax_choice_autocorr],
+            glm_autocorr=_glm_autocorr,
+            signals=("Outcome",),
+            figsize=fig_size(2, 1),
+        )
+        _style_autocorr_axis(_ax_choice_autocorr)
+        _fig_repeat_autocorr, _ax_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1))
+        _fig_repeat_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+            prepared_corrected_autocorr,
+            axes=[_ax_repeat_autocorr],
+            glm_autocorr=_glm_autocorr,
+            signals=("Repetition",),
+            figsize=fig_size(2, 1),
+        )
+        _style_autocorr_axis(_ax_repeat_autocorr)
+        _autocorr_display = mo.hstack(
+            [
+                mo.vstack(
+                    [
+                        _fig_choice_autocorr,
+                        save_plot(_fig_choice_autocorr, "corrected choice autocorrelogram", stem="corrected_choice_autocorrelogram"),
+                    ],
+                    align="center",
+                ),
+                mo.vstack(
+                    [
+                        _fig_repeat_autocorr,
+                        save_plot(_fig_repeat_autocorr, "corrected repeat autocorrelogram", stem="corrected_repeat_autocorrelogram"),
+                    ],
+                    align="center",
+                ),
+            ],
+            align="center",
+        )
+    else:
+        _fig_raw_choice_autocorr, _ax_raw_choice_autocorr = plt.subplots(figsize=fig_size(2, 1))
+        _fig_raw_choice_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+            prepared_corrected_autocorr,
+            axes=[_ax_raw_choice_autocorr],
+            glm_autocorr=_glm_autocorr,
+            autocorr_col="raw_autocorr",
+            sem_col="raw_autocorr_sem",
+            data_label="Data (raw)",
+            model_label="Fitted GLM (raw)",
+            ylabel="Raw autocorrelation",
+            signals=("Outcome",),
+            figsize=fig_size(2, 1),
+        )
+        _style_autocorr_axis(_ax_raw_choice_autocorr)
+        _fig_raw_repeat_autocorr, _ax_raw_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1))
+        _fig_raw_repeat_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+            prepared_corrected_autocorr,
+            axes=[_ax_raw_repeat_autocorr],
+            glm_autocorr=_glm_autocorr,
+            autocorr_col="raw_autocorr",
+            sem_col="raw_autocorr_sem",
+            data_label="Data (raw)",
+            model_label="Fitted GLM (raw)",
+            ylabel="Raw autocorrelation",
+            signals=("Repetition",),
+            figsize=fig_size(2, 1),
+        )
+        _style_autocorr_axis(_ax_raw_repeat_autocorr)
+        _fig_correction_choice_autocorr, _ax_correction_choice_autocorr = plt.subplots(figsize=fig_size(2, 1))
+        _fig_correction_choice_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+            prepared_corrected_autocorr,
+            axes=[_ax_correction_choice_autocorr],
+            glm_autocorr=_glm_autocorr,
+            autocorr_col="crosscorr",
+            sem_col="crosscorr_sem",
+            data_label="Correction",
+            model_label="Fitted GLM correction",
+            ylabel="Cross-session correction",
+            signals=("Outcome",),
+            figsize=fig_size(2, 1),
+        )
+        _style_autocorr_axis(_ax_correction_choice_autocorr)
+        _fig_correction_repeat_autocorr, _ax_correction_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1))
+        _fig_correction_repeat_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+            prepared_corrected_autocorr,
+            axes=[_ax_correction_repeat_autocorr],
+            glm_autocorr=_glm_autocorr,
+            autocorr_col="crosscorr",
+            sem_col="crosscorr_sem",
+            data_label="Correction",
+            model_label="Fitted GLM correction",
+            ylabel="Cross-session correction",
+            signals=("Repetition",),
+            figsize=fig_size(2, 1),
+        )
+        _style_autocorr_axis(_ax_correction_repeat_autocorr)
+        _autocorr_display = mo.vstack(
+            [
+                mo.hstack(
+                    [
+                        mo.vstack([_fig_raw_choice_autocorr, save_plot(_fig_raw_choice_autocorr, "raw choice autocorrelogram", stem="raw_choice_autocorrelogram")], align="center"),
+                        mo.vstack([_fig_raw_repeat_autocorr, save_plot(_fig_raw_repeat_autocorr, "raw repeat autocorrelogram", stem="raw_repeat_autocorrelogram")], align="center"),
+                    ],
+                    align="center",
+                ),
+                mo.hstack(
+                    [
+                        mo.vstack([_fig_correction_choice_autocorr, save_plot(_fig_correction_choice_autocorr, "choice correction autocorrelogram", stem="choice_correction_autocorrelogram")], align="center"),
+                        mo.vstack([_fig_correction_repeat_autocorr, save_plot(_fig_correction_repeat_autocorr, "repeat correction autocorrelogram", stem="repeat_correction_autocorrelogram")], align="center"),
+                    ],
+                    align="center",
+                ),
+            ],
+            align="center",
+        )
     mo.vstack([
-        fig_session_timescale, 
-               "2ADC", fig_corrected_autocorr])
+        fig_session_timescale,
+        _autocorr_display,
+    ])
     return (session_df,)
+
+
+@app.cell
+def _(mo, np, pd, pl, plot_df_all, plt, save_plot, sns):
+    from src.process.common import binary_autocorrelation
+
+    _df = plot_df_all.to_pandas() if isinstance(plot_df_all, pl.DataFrame) else pd.DataFrame(plot_df_all).copy()
+    _stimulus_col = next(
+        (_col for _col in ("stimulus", "stim", "Side", "ILD", "weighted_stimulus") if _col in _df.columns),
+        None,
+    )
+    print(plot_df_all["subject"].unique())
+    mo.stop(_stimulus_col is None, mo.md("No stimulus column available for autocorrelogram."))
+
+    _sort_cols = [_col for _col in ("subject", "session", "trial") if _col in _df.columns]
+    if _sort_cols:
+        _df = _df.sort_values(_sort_cols, kind="mergesort")
+
+    _group_cols = [_col for _col in ("subject", "session") if _col in _df.columns]
+    _groups = _df.groupby(_group_cols, observed=True) if _group_cols else [(None, _df)]
+
+    _session_autocorr_rows = []
+    for _group_key, _session_df in _groups:
+        _ac = binary_autocorrelation(_session_df[_stimulus_col], max_lag=50)
+        if _ac.empty:
+            continue
+        if _group_cols:
+            _group_key = _group_key if isinstance(_group_key, tuple) else (_group_key,)
+            for _col, _value in zip(_group_cols, _group_key, strict=False):
+                _ac[_col] = _value
+        _session_autocorr_rows.append(_ac)
+
+    _session_autocorr = (
+        pd.concat(_session_autocorr_rows, ignore_index=True)
+        if _session_autocorr_rows
+        else pd.DataFrame(columns=["lag", "autocorr", "n"])
+    )
+    if "subject" in _session_autocorr.columns:
+        _subject_autocorr = (
+            _session_autocorr.groupby(["subject", "lag"], observed=True)["autocorr"]
+            .mean()
+            .reset_index()
+        )
+        _stimulus_autocorr = (
+            _subject_autocorr.groupby("lag", observed=True)
+            .agg(
+                autocorr=("autocorr", "mean"),
+                autocorr_std=("autocorr", "std"),
+                n_subjects=("subject", "count"),
+            )
+            .reset_index()
+        )
+        _stimulus_autocorr["autocorr_sem"] = (
+            _stimulus_autocorr["autocorr_std"].fillna(0.0)
+            / np.sqrt(_stimulus_autocorr["n_subjects"].clip(lower=1))
+        )
+    else:
+        _stimulus_autocorr = _session_autocorr[["lag", "autocorr"]].copy()
+        _stimulus_autocorr["autocorr_sem"] = 0.0
+
+    _fig_stimulus_autocorr, _ax = plt.subplots(figsize=(3.5, 3.0), layout="constrained")
+    _fig_stimulus_autocorr_sns, _ax_sns = plt.subplots(figsize=(3.5, 3.0), layout="constrained")
+    if _stimulus_autocorr.empty or not {"lag", "autocorr"}.issubset(_stimulus_autocorr.columns):
+        for _empty_ax in (_ax, _ax_sns):
+            _empty_ax.text(0.5, 0.5, "No valid stimulus autocorrelation data", ha="center", va="center", transform=_empty_ax.transAxes)
+            _empty_ax.axis("off")
+    else:
+        _stimulus_autocorr = _stimulus_autocorr.sort_values("lag")
+        _ax.errorbar(
+            _stimulus_autocorr["lag"].to_numpy(dtype=float),
+            _stimulus_autocorr["autocorr"].to_numpy(dtype=float),
+            yerr=_stimulus_autocorr["autocorr_sem"].to_numpy(dtype=float),
+            fmt="o",
+            ms=4,
+            color="#4c78a8",
+            ecolor="#4c78a8",
+            elinewidth=1.0,
+            capsize=2,
+        )
+        _ax.axhline(0.0, color="gray", lw=0.8, ls="--", alpha=0.6)
+        _ax.set_xlabel("Lag")
+        _ax.set_ylabel("Stimulus autocorrelation")
+        _ax.set_title("Stimulus sequence")
+
+        _lineplot_df = _subject_autocorr if "subject" in _session_autocorr.columns else _stimulus_autocorr
+        sns.lineplot(
+            data=_lineplot_df,
+            x="lag",
+            y="autocorr",
+            errorbar="se" if "subject" in _lineplot_df.columns else None,
+            marker="o",
+            markersize=4,
+            linewidth=1.8,
+            color="#4c78a8",
+            ax=_ax_sns,
+        )
+        _ax_sns.axhline(0.0, color="gray", lw=0.8, ls="--", alpha=0.6)
+        _ax_sns.set_xlabel("Lag")
+        _ax_sns.set_ylabel("Stimulus autocorrelation")
+        _ax_sns.set_title("Stimulus sequence")
+    mo.hstack([
+        mo.vstack([
+            _fig_stimulus_autocorr,
+            save_plot(_fig_stimulus_autocorr, "stimulus autocorrelogram", stem="stimulus_autocorrelogram"),
+        ], align="center"),
+        mo.vstack([
+            _fig_stimulus_autocorr_sns,
+            save_plot(
+                _fig_stimulus_autocorr_sns,
+                "stimulus autocorrelogram seaborn",
+                stem="stimulus_autocorrelogram_seaborn",
+            ),
+        ], align="center"),
+    ])
+    return
 
 
 @app.cell
@@ -1396,6 +1939,24 @@ def _():
         plot_action_trace_parameter_fixed_rb,
         plot_action_trace_parameter_fixed_subject_scatter,
     )
+
+
+@app.cell
+def _(mo, task_name):
+    ui_glm_model_rb_max_lag = mo.ui.slider(
+        start=1,
+        stop=15,
+        step=1,
+        value=10,
+        label="Full-model RB max history lag",
+    )
+    _supported = task_name in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}
+    (
+        mo.hstack([ui_glm_model_rb_max_lag], justify="center")
+        if _supported
+        else mo.md("Trial-level full-model repetition bias is implemented only for 2AFC and 2ADC.")
+    )
+    return (ui_glm_model_rb_max_lag,)
 
 
 @app.cell
@@ -1448,11 +2009,10 @@ def _(
     mo,
     plot_action_trace_parameter_fixed_lag_match,
     plot_action_trace_parameter_fixed_rb,
-    plot_action_trace_parameter_fixed_subject_scatter,
     plot_df_all,
     save_plot,
     task_name,
-    ui_counterfactual_max_lag,
+    ui_glm_model_rb_max_lag,
 ):
     mo.stop(
         task_name not in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"},
@@ -1461,12 +2021,15 @@ def _(
     _summary, _lag_summary, _subject_scatter, _meta = build_action_trace_model_prediction_rb(
         plot_df_all,
         task_name=task_name,
-        max_history_lag=int(ui_counterfactual_max_lag.value),
+        max_history_lag=int(ui_glm_model_rb_max_lag.value),
     )
     mo.stop(
         _summary.empty,
         mo.md("No trial-level model repetition-bias result; check pR/p_pred and previous choices."),
     )
+    _model_scenarios = ["Data", "Full fitted"]
+    _summary = _summary[_summary["scenario"].isin(_model_scenarios)].copy()
+    _lag_summary = _lag_summary[_lag_summary["scenario"].isin(_model_scenarios)].copy()
 
     _fig_model_rb, _ax_model_rb = plot_action_trace_parameter_fixed_rb(
         _summary,
@@ -1476,14 +2039,11 @@ def _(
         _lag_summary,
         _meta,
     )
-    _fig_model_scatter, _ax_model_scatter = plot_action_trace_parameter_fixed_subject_scatter(
-        _subject_scatter,
-        _meta,
-    )
+    _ax_model_lag.set_title("")
 
     mo.vstack(
         [
-            mo.md("#### Trial-level full-model repetition bias"),
+            mo.md("#### Trial-level full-model repetition bias: Data vs Full fitted"),
             _fig_model_rb,
             save_plot(
                 _fig_model_rb,
@@ -1496,29 +2056,25 @@ def _(
                 "glm trial-level full-model lag match",
                 stem="glm_trial_model_lag_match",
             ),
-            _fig_model_scatter,
-            save_plot(
-                _fig_model_scatter,
-                "glm trial-level full-model repetition bias by animal",
-                stem="glm_trial_model_rb_by_animal",
-            ),
             mo.md(
                 "Full fitted uses each trial's model P(right), compares it with the same animal's empirical previous choice, "
-                "and aggregates RB conditional on previous choice side within animal. No refit or choice simulation is run."
+                "and shows Data vs Full fitted by stimulus/evidence and by history lag. No refit or choice simulation is run."
             ),
         ],
         align="center",
     )
+    # _fig_model_rb
+    # glm_model_summary = _summary
     return
 
 
 @app.cell
-def _(mo):
+def _(mo, ui_accuracy_n_quantiles):
     run_simulations = mo.ui.run_button(
         kind="neutral",
         label="Run parameter-fixed simulations from A_t-binned psychometrics",
     )
-    run_simulations
+    mo.hstack([ui_accuracy_n_quantiles, run_simulations], justify="center")
     return (run_simulations,)
 
 
@@ -1533,6 +2089,7 @@ def _(
     run_simulations,
     save_plot,
     task_name,
+    ui_accuracy_n_quantiles,
     ui_accuracy_regressor,
     ui_counterfactual_max_lag,
     ui_counterfactual_n_simulations,
@@ -1542,32 +2099,33 @@ def _(
         ((task_name not in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}) or (not run_simulations.value)),
     )
 
-    _summary, _lag_summary, _subject_scatter, _fit_table, _meta = build_action_trace_parameter_fixed_simulations(
+    parameter_fixed_summary, parameter_fixed_lag_summary, parameter_fixed_subject_scatter, parameter_fixed_fit_table, parameter_fixed_meta = build_action_trace_parameter_fixed_simulations(
         plot_df_all,
         task_name=task_name,
         regressor_col=ui_accuracy_regressor.value,
+        n_bins=int(ui_accuracy_n_quantiles.value),
         n_simulations=int(ui_counterfactual_n_simulations.value),
         max_history_lag=int(ui_counterfactual_max_lag.value),
         seed=int(ui_counterfactual_seed.value),
     )
     mo.stop(
-        _summary.empty,
+        parameter_fixed_summary.empty,
         mo.md("No parameter-fixed repetition-bias result; check that each Action-trace bin has enough psychometric x levels."),
     )
 
     _fig_simulations, _ax_simulations = plot_action_trace_parameter_fixed_rb(
-        _summary,
-        _meta,
+        parameter_fixed_summary,
+        parameter_fixed_meta,
     )
     _fig_lag_match, _ax_lag_match = plot_action_trace_parameter_fixed_lag_match(
-        _lag_summary,
-        _meta,
+        parameter_fixed_lag_summary,
+        parameter_fixed_meta,
     )
     _fig_subject_scatter, _ax_subject_scatter = plot_action_trace_parameter_fixed_subject_scatter(
-        _subject_scatter,
-        _meta,
+        parameter_fixed_subject_scatter,
+        parameter_fixed_meta,
     )
-    _fit_display = _fit_table.copy()
+    _fit_display = parameter_fixed_fit_table.copy()
     for _col in ["slope", "bias", "lapse_left", "lapse_right"]:
         if _col in _fit_display.columns:
             _fit_display[_col] = _fit_display[_col].round(3)
@@ -1605,6 +2163,102 @@ def _(
         align="center",
     )
     _parameter_fixed_panel
+    return parameter_fixed_meta, parameter_fixed_summary
+
+
+@app.cell
+def _(
+    glm_model_summary,
+    mo,
+    np,
+    parameter_fixed_meta,
+    parameter_fixed_summary,
+    pd,
+    plt,
+    save_plot,
+    ui_accuracy_regressor,
+):
+    _parameter_summary = parameter_fixed_summary.copy()
+    _glm_summary = glm_model_summary.copy()
+
+    def _append_whole_rb(_rows, _source, *, source_scenario, label):
+        if "scenario" not in _source.columns:
+            return
+        _sub = _source[_source["scenario"].astype(str) == source_scenario]
+        if _sub.empty:
+            return
+        _mean = float(np.nanmean(_sub["rb_mean"].to_numpy(dtype=float)))
+        _lo = float(np.nanmean(_sub["rb_lo"].to_numpy(dtype=float)))
+        _hi = float(np.nanmean(_sub["rb_hi"].to_numpy(dtype=float)))
+        _rows.append(
+            {
+                "scenario": label,
+                "rb_mean": _mean,
+                "rb_lo": _lo,
+                "rb_hi": _hi,
+            }
+        )
+
+    _rows = []
+    _data_source_label = "Data" if "Data" in set(_parameter_summary["scenario"].astype(str)) else "Empirical"
+    _append_whole_rb(_rows, _parameter_summary, source_scenario=_data_source_label, label="Data")
+    _append_whole_rb(_rows, _glm_summary, source_scenario="Full fitted", label="GLM")
+    _append_whole_rb(_rows, _parameter_summary, source_scenario="Full fitted", label="Free Psychometrics")
+    _append_whole_rb(_rows, _parameter_summary, source_scenario="Fixed bias", label="Fixed bias")
+    _append_whole_rb(_rows, _parameter_summary, source_scenario="Fixed lapses", label="Fixed lapses")
+    _whole_rb = pd.DataFrame(_rows)
+    mo.stop(_whole_rb.empty, mo.md("No whole-RB summary available."))
+
+    _palette = {
+        "Data": "#1f77b4",
+        "GLM": "#7b3294",
+        "Free Psychometrics": "#111111",
+        "Fixed bias": "#d55e00",
+        "Fixed lapses": "#009e73",
+    }
+    _fig_whole_rb, _ax_whole_rb = plt.subplots(1, 1, figsize=(4.2, 3.0), layout="constrained")
+    _x = np.arange(len(_whole_rb))
+    _y = _whole_rb["rb_mean"].to_numpy(dtype=float)
+    _yerr = np.vstack(
+        [
+            np.clip(_y - _whole_rb["rb_lo"].to_numpy(dtype=float), 0.0, None),
+            np.clip(_whole_rb["rb_hi"].to_numpy(dtype=float) - _y, 0.0, None),
+        ]
+    )
+    _colors = [_palette.get(_scenario, "0.2") for _scenario in _whole_rb["scenario"]]
+    _ax_whole_rb.bar(_x, _y, color=_colors, alpha=0.85, width=0.72)
+    _ax_whole_rb.errorbar(
+        _x,
+        _y,
+        yerr=_yerr,
+        fmt="none",
+        ecolor="0.2",
+        elinewidth=1.0,
+        capsize=3,
+        zorder=3,
+    )
+    _ax_whole_rb.axhline(float(parameter_fixed_meta.get("baseline", 0.5)), color="0.5", lw=0.9, ls="--", zorder=0)
+    _ax_whole_rb.set_xticks(_x, _whole_rb["scenario"].tolist(), rotation=25, ha="right")
+    _ax_whole_rb.set_ylim(0.4, 0.7)
+    _ax_whole_rb.set_ylabel("Rep. bias")
+
+    _whole_rb_display = _whole_rb.copy()
+    for _col in ["rb_mean", "rb_lo", "rb_hi"]:
+        _whole_rb_display[_col] = _whole_rb_display[_col].round(3)
+
+    mo.vstack(
+        [
+            mo.md("#### Whole parameter-fixed repetition bias"),
+            _fig_whole_rb,
+            save_plot(
+                _fig_whole_rb,
+                "action trace psychometric parameter-fixed whole repetition bias",
+                stem=f"action_trace_parameter_fixed_whole_rb_{ui_accuracy_regressor.value}",
+            ),
+        ],
+        align="center",
+    )
+    _fig_whole_rb
     return
 
 
@@ -1913,6 +2567,11 @@ def _(
         _title,
         # background_style=ui_psychometric_background.value,
     )
+    _fig_all_tweaked_list = (
+        list(_fig_all_tweaked)
+        if isinstance(_fig_all_tweaked, (list, tuple))
+        else [_fig_all_tweaked]
+    )
     _regressor_col = "choice_lag_one_hot_sum" if "choice_lag_one_hot_sum" in _plot_df_tweaked.columns else (
         "choice_lag_param" if "choice_lag_param" in _plot_df_tweaked.columns else (
             "at_choice_param" if "at_choice_param" in _plot_df_tweaked.columns else None
@@ -1957,12 +2616,24 @@ def _(
         [
             mo.vstack(
                 [
-                    _fig_all_tweaked,
-                    save_plot(
-                        _fig_all_tweaked,
-                        "tweaked overall psychometric",
-                        stem="tweaked_categorical_overall",
-                    ),
+                    _item
+                    for _fig_idx, _fig in enumerate(_fig_all_tweaked_list, start=1)
+                    for _item in (
+                        _fig,
+                        save_plot(
+                            _fig,
+                            (
+                                f"tweaked overall psychometric {_fig_idx}"
+                                if len(_fig_all_tweaked_list) > 1
+                                else "tweaked overall psychometric"
+                            ),
+                            stem=(
+                                f"tweaked_categorical_overall_{_fig_idx}"
+                                if len(_fig_all_tweaked_list) > 1
+                                else "tweaked_categorical_overall"
+                            ),
+                        ),
+                    )
                 ],
                 align="center",
             ),

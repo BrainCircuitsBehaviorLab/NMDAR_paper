@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.8"
 app = marimo.App(width="full")
 
 
@@ -8,6 +8,20 @@ app = marimo.App(width="full")
 def _():
     import marimo as mo
     from pathlib import Path
+    import sys
+
+    _PROJECT_ROOT = next(
+        (
+            p
+            for base in (Path.cwd(), Path(__file__).resolve())
+            for p in (base, *base.parents)
+            if (p / "config.toml").exists() and (p / "src").exists()
+        ),
+        Path.cwd(),
+    )
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
     from plot_saver import make_plot_saver
     from glmhmmt.notebook_support import (
         CoefficientEditorWidget,
@@ -55,8 +69,12 @@ def _():
     import glmhmmt.plots as model_plots
     from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
     from src.process import MCDR as process_mcdr
+    from src.process import mcdr_accuracy as _process_mcdr_accuracy
+    from src.process import nuo_auditory as _process_nuo_auditory
     from src.process import two_afc as process_two_afc
+    from src.process import two_afc_drug as _process_two_afc_drug
     from src.process import two_adc as process_two_adc
+    from src.process import two_adc_drug as _process_two_adc_drug
 
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
@@ -65,15 +83,17 @@ def _():
             return process_two_adc.prepare_predictions_df(df)
         return process_two_afc.prepare_predictions_df(df)
 
-    configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
+    project_root = _PROJECT_ROOT
+    configure_paths(config_path=project_root / "config.toml")
 
     sns.set_style("ticks")
     paths = get_runtime_paths()
+    from src.utils import fig_size
+
     return (
         CoefficientEditorWidget,
         ModelCfg,
         ModelManagerWidget,
-        Path,
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
         build_change_triggered_posteriors_payload,
@@ -90,6 +110,7 @@ def _():
         build_trial_and_weights_df,
         build_trial_df,
         build_views,
+        fig_size,
         fit_main,
         get_adapter,
         load_fit_arrays,
@@ -102,6 +123,7 @@ def _():
         pl,
         plt,
         prepare_predictions_df,
+        project_root,
         resolve_selected_model_id,
         select_subject_behavior_df,
         sns,
@@ -110,8 +132,8 @@ def _():
 
 
 @app.cell
-def _(Path, plt):
-    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+def _(plt, project_root):
+    plt.style.use(project_root / "styles" / "paper.mplstyle")
     return
 
 
@@ -162,6 +184,7 @@ def _(mo):
 @app.cell
 def _(get_adapter, model_cfg, task_name):
     from glmhmmt.cli.fit_glmhmm import generate_model_id as _gen_id
+
     baseline_class_idx = int(get_adapter(task_name).baseline_class_idx)
 
     current_hash = _gen_id(
@@ -243,17 +266,17 @@ def _(
     _selected_id = model_cfg.existing or (model_cfg.alias if model_cfg.alias else current_hash)
     _OUT = paths.RESULTS / "fits" / task_name / "glmhmm" / _selected_id
 
+
     def _progress_title(info: dict) -> str:
-        return (
-            f"Fitting GLM-HMM K={info['K']} "
-            f"subject {info['subject_index']}/{info['subject_total']}: {info['subject']}"
-        )
+        return f"Fitting GLM-HMM K={info['K']} subject {info['subject_index']}/{info['subject_total']}: {info['subject']}"
+
 
     def _progress_subtitle(info: dict) -> str:
         _base = f"Restart {info['restart_index']}/{info['restart_total']}"
         if info.get("event") == "restart_complete":
             return f"{_base} complete"
         return _base
+
 
     _total_progress = max(
         1,
@@ -272,6 +295,7 @@ def _(
             completion_title="Fit complete",
             completion_subtitle=f"Saved under {_selected_id}",
         ) as _bar:
+
             def _on_progress(info: dict) -> None:
                 if info.get("event") == "cv_repeat_start":
                     _bar.update(
@@ -424,7 +448,6 @@ def _(
     np,
     paths,
     pd,
-    pl,
     save_plot,
     selected,
     views,
@@ -448,14 +471,16 @@ def _(
 
     feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
 
-    _summary_figs = model_plots.emission_weights_summary_boxplot(_weights_df.filter(pl.col("feature").str.contains("bias").not_()), connect_subjects=True, show_ttests=True, feature_labeler = feature_labeler)
+    _summary_figs = model_plots.emission_weights_summary_boxplot(
+        _weights_df,
+        connect_subjects=True,
+        show_ttests=True,
+        feature_labeler=feature_labeler,
+    )
     _emission_subject_lines = [
         _line
         for _line in _summary_figs.lines
-        if _line.get_alpha() == 0.15
-        and _line.get_linestyle() == "-"
-        and len(_line.get_xdata()) >= 2
-        and len(_line.get_ydata()) >= 2
+        if _line.get_alpha() == 0.15 and _line.get_linestyle() == "-" and len(_line.get_xdata()) >= 2 and len(_line.get_ydata()) >= 2
     ]
     _weights_pdf = _weights_df.to_pandas() if hasattr(_weights_df, "to_pandas") else pd.DataFrame(_weights_df)
     _weights_pdf = _weights_pdf.copy()
@@ -487,16 +512,22 @@ def _(
                     }
                 )
     ui_emission_summary = mo.ui.matplotlib(_summary_figs, debounce=True)
-    mo.vstack([
-               # _fig_by_subject,
-               #  save_plot(_fig_by_subject, f"Emission Weights",
-               #                      stem=f"emissions_summary", location = (0,1)),
-               ui_emission_summary,
-               mo.hstack([save_plot(_summary_figs, f"Emission Weights lineplot",
-                                    stem=f"emissions_lineplot", location=(0,0)), 
-                          save_plot(_summary_figs, f"Emission Weights boxplot",
-                                    stem=f"emissions_boxplot",location=(0,1)),
-             ], gap = "15"), ], align="center")
+    mo.vstack(
+        [
+            # _fig_by_subject,
+            #  save_plot(_fig_by_subject, f"Emission Weights",
+            #                      stem=f"emissions_summary", location = (0,1)),
+            ui_emission_summary,
+            mo.hstack(
+                [
+                    save_plot(_summary_figs, f"Emission Weights lineplot", stem=f"emissions_lineplot", location=(0, 0)),
+                    save_plot(_summary_figs, f"Emission Weights boxplot", stem=f"emissions_boxplot", location=(0, 1)),
+                ],
+                gap="15",
+            ),
+        ],
+        align="center",
+    )
     return emission_summary_selection_points, ui_emission_summary
 
 
@@ -511,10 +542,7 @@ def _(emission_summary_selection_points, mo, pd, ui_emission_summary):
             _points["y"].to_numpy(),
         )
         selected_emission_subjects = sorted(_points.loc[_mask, "subject"].unique().tolist())
-    mo.md(
-        "Selected subjects: "
-        + (", ".join(selected_emission_subjects) if selected_emission_subjects else "_none_")
-    )
+    mo.md("Selected subjects: " + (", ".join(selected_emission_subjects) if selected_emission_subjects else "_none_"))
     return
 
 
@@ -571,10 +599,7 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
     _fig_plotly = _go.Figure()
 
     for _feat_idx, _feature in enumerate(_features):
-        _positions = [
-            _feat_idx + (_state_idx - (_n_states - 1) / 2.0) * _hue_width
-            for _state_idx in range(_n_states)
-        ]
+        _positions = [_feat_idx + (_state_idx - (_n_states - 1) / 2.0) * _hue_width for _state_idx in range(_n_states)]
 
         for _subject, _ys in zip(_subjects, _subject_lines[_feat_idx], strict=False):
             _ys = np.asarray(_ys, dtype=float)
@@ -594,15 +619,8 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
                         mode="lines+markers",
                         line=dict(color="rgba(122, 122, 122, 0.15)", width=1.0),
                         marker=dict(color="rgba(122, 122, 122, 0.01)", size=10),
-                        customdata=[
-                            [_subject, _feature, _feature_labeler(_feature)]
-                            for _ in _segment
-                        ],
-                        hovertemplate=(
-                            "Subject: %{customdata[0]}<br>"
-                            "Feature: %{customdata[2]}<br>"
-                            "Weight: %{y:.4f}<extra></extra>"
-                        ),
+                        customdata=[[_subject, _feature, _feature_labeler(_feature)] for _ in _segment],
+                        hovertemplate=("Subject: %{customdata[0]}<br>Feature: %{customdata[2]}<br>Weight: %{y:.4f}<extra></extra>"),
                         showlegend=False,
                         selected=dict(marker=dict(color="rgba(0, 0, 0, 0.45)", size=10)),
                         unselected=dict(marker=dict(opacity=0.01)),
@@ -627,11 +645,7 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
                     quartilemethod="linear",
                     whiskerwidth=0,
                     showlegend=_feat_idx == 0,
-                    hovertemplate=(
-                        f"State: {_state}<br>"
-                        f"Feature: {_feature_labeler(_feature)}<br>"
-                        "Weight: %{y:.4f}<extra></extra>"
-                    ),
+                    hovertemplate=(f"State: {_state}<br>Feature: {_feature_labeler(_feature)}<br>Weight: %{{y:.4f}}<extra></extra>"),
                 )
             )
             _box_half_width = (_hue_width * 0.78) / 2.0
@@ -647,10 +661,7 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
     for _feat_idx, _per_subject_values in enumerate(_subject_lines):
         _finite_groups = [
             _values[np.isfinite(_values)]
-            for _values in (
-                _grouped_values[_state_idx][_feat_idx]
-                for _state_idx in range(_n_states)
-            )
+            for _values in (_grouped_values[_state_idx][_feat_idx] for _state_idx in range(_n_states))
             if np.isfinite(_values).any()
         ]
         if not _finite_groups or _n_states < 2:
@@ -665,10 +676,7 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
         _bracket_height = _y_range * 0.02
 
         for _pair_idx, (_state_a, _state_b) in enumerate(combinations(range(_n_states), 2)):
-            _paired = _per_subject_values[
-                np.isfinite(_per_subject_values[:, _state_a])
-                & np.isfinite(_per_subject_values[:, _state_b])
-            ]
+            _paired = _per_subject_values[np.isfinite(_per_subject_values[:, _state_a]) & np.isfinite(_per_subject_values[:, _state_b])]
             if _paired.shape[0] < 2:
                 continue
 
@@ -678,12 +686,7 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
             _y = _y_base + _step * (_pair_idx + 1)
             _fig_plotly.add_shape(
                 type="path",
-                path=(
-                    f"M {_x1},{_y} "
-                    f"L {_x1},{_y + _bracket_height} "
-                    f"L {_x2},{_y + _bracket_height} "
-                    f"L {_x2},{_y}"
-                ),
+                path=(f"M {_x1},{_y} L {_x1},{_y + _bracket_height} L {_x2},{_y + _bracket_height} L {_x2},{_y}"),
                 line=dict(color="black", width=1.0),
             )
             _fig_plotly.add_annotation(
@@ -716,23 +719,12 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
 
     ui_emission_summary_plotly = mo.ui.plotly(_fig_plotly)
     selected_emission_subjects_plotly = sorted(
-        {
-            str(_point.get("customdata", [None])[0])
-            for _point in ui_emission_summary_plotly.points
-            if _point.get("customdata")
-        }
+        {str(_point.get("customdata", [None])[0]) for _point in ui_emission_summary_plotly.points if _point.get("customdata")}
     )
     mo.vstack(
         [
             ui_emission_summary_plotly,
-            mo.md(
-                "Selected subjects: "
-                + (
-                    ", ".join(selected_emission_subjects_plotly)
-                    if selected_emission_subjects_plotly
-                    else "_none_"
-                )
-            ),
+            mo.md("Selected subjects: " + (", ".join(selected_emission_subjects_plotly) if selected_emission_subjects_plotly else "_none_")),
         ],
         align="center",
     )
@@ -775,7 +767,17 @@ def _(
         subjects=selected,
     )
     _fig_summary = model_plots.transition_matrix(**_summary_payload)
-    mo.vstack([_fig_summary, save_plot(_fig_summary, f"Mean Transition Matrix", stem=f"mean_transition_matrix",),], align="center")
+    mo.vstack(
+        [
+            _fig_summary,
+            save_plot(
+                _fig_summary,
+                f"Mean Transition Matrix",
+                stem=f"mean_transition_matrix",
+            ),
+        ],
+        align="center",
+    )
     return
 
 
@@ -790,12 +792,12 @@ def _(mo):
 @app.cell
 def _(
     build_state_dwell_times_payload,
+    fig_size,
     mo,
     model_plots,
     pl,
     save_plot,
     selected,
-    task_name,
     trial_df,
     views,
 ):
@@ -807,18 +809,35 @@ def _(
         session_col="session",
         sort_col="trial_idx",
         views=_views_sel,
-        max_dwell=90 if str(task_name).lower().startswith("2afc") else None,
+        max_dwell=90,
     )
-    _fig_dwell_summary = model_plots.state_dwell_times_summary(
+    _dwell_ax_size = fig_size(2, 1)
+    _n_dwell_states = max(1, len(_dwell_payload.get("state_order") or []))
+    _n_dwell_subjects = max(1, len(_dwell_payload.get("subject_order") or []))
+    _fig_dwell_summary, _axes_dwell_summary = model_plots.state_dwell_times_summary(
         _dwell_payload,
+        figsize=(_dwell_ax_size[0] * _n_dwell_states, _dwell_ax_size[1]),
     )
-    _fig_dwell_by_subject = model_plots.state_dwell_times_by_subject(
+    _fig_dwell_cumulative, _ax_dwell_cumulative = model_plots.state_dwell_times_cumulative(
         _dwell_payload,
+        figsize=_dwell_ax_size,
+    )
+    _fig_dwell_median, _ax_dwell_median = model_plots.state_dwell_median_boxplot(
+        _dwell_payload,
+        figsize=_dwell_ax_size,
+    )
+    _fig_dwell_by_subject, _axes_dwell_by_subject = model_plots.state_dwell_times_by_subject(
+        _dwell_payload,
+        figsize=(_dwell_ax_size[0] * _n_dwell_states, _dwell_ax_size[1] * _n_dwell_subjects),
     )
     mo.vstack(
         [
             _fig_dwell_summary,
             save_plot(_fig_dwell_summary, "state dwell times summary", stem="state_dwell_times_summary"),
+            _fig_dwell_cumulative,
+            save_plot(_fig_dwell_cumulative, "state dwell times cumulative", stem="state_dwell_times_cumulative"),
+            _fig_dwell_median,
+            save_plot(_fig_dwell_median, "state dwell median boxplot", stem="state_dwell_median_boxplot"),
             _fig_dwell_by_subject,
             # save_plot(_fig_dwell_by_subject, "state dwell times by subject", stem="state_dwell_times_by_subject"),
         ],
@@ -900,170 +919,416 @@ def _(mo):
 @app.cell
 def _(
     K,
-    is_2afc,
+    fig_size,
     mo,
     pl,
     plots,
+    plt,
     prepare_predictions_df,
     save_plot,
     selected,
     task_name,
     trial_df,
-    ui_psychometric_background,
     ui_psychometric_regressor,
-    ui_state_assignment_mode,
-    ui_state_model_line_mode,
-    ui_state_show_data_smooth,
-    ui_state_show_weighted_points,
     views,
 ):
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-
     _views_sel = {s: views[s] for s in selected}
     _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-
     mo.stop(_trial_df_sel.height == 0, mo.md("No subjects with matching data lengths."))
 
     plot_df_all = prepare_predictions_df(task_name, _trial_df_sel)
-    _perf_kwargs = {"views": _views_sel} if is_2afc else {}
+    _state_plot_kwargs = dict(
+        background_style="model",
+        show_weighted_points=True,
+        show_data_smooth=True,
+        show_model_smooth=True,
+        model_line_mode="smooth",
+        state_assignment_mode="map",
+        figure_dpi=300,
+    )
+
     _fig_all, _ = plots.plot_categorical_performance_all(
         plot_df_all,
         f"glmhmm K={K}",
-        background_style=ui_psychometric_background.value,
-        **_perf_kwargs,
+        background_style="model",
+        views=_views_sel,
     )
-    for _ax_idx, _ax in enumerate(_fig_all.axes):
-        _ax.set_title("")
-        _ax.set_ylabel(r"$\mathit{p}(\mathrm{right})$" if _ax_idx == 0 else "")
-    if _fig_all._suptitle is not None:
-        _fig_all._suptitle.set_text("")
-    _fig_all.tight_layout()
+    _fig_all_list = list(_fig_all) if isinstance(_fig_all, (list, tuple)) else [_fig_all]
+    for _fig in _fig_all_list:
+        for _ax_idx, _ax in enumerate(_fig.axes):
+            _ax.set_title("")
+            _ax.set_ylabel(r"$\mathit{p}(\mathrm{right})$" if _ax_idx == 0 else "")
+        if _fig._suptitle is not None:
+            _fig._suptitle.set_text("")
+        _fig.tight_layout()
 
-    _plot_df_state = plot_df_all
+    _fig_state_overlay, _ax_state_overlay = plt.subplots(figsize=fig_size(2, 1))
+    _fig_state_overlay, _ = plots.plot_categorical_performance_state_overlay(
+        df=plot_df_all,
+        views=_views_sel,
+        model_name=f"glmhmm K={K} — all states",
+        ax=_ax_state_overlay,
+        **_state_plot_kwargs,
+    )
+
     _fig_state, _ = plots.plot_categorical_performance_by_state(
-        df=_plot_df_state,
+        df=plot_df_all,
         views=_views_sel,
         model_name=f"glmhmm K={K} — per state",
-        background_style=ui_psychometric_background.value,
-        show_weighted_points=ui_state_show_weighted_points.value,
-        show_data_smooth=ui_state_show_data_smooth.value,
-        show_model_smooth=ui_state_model_line_mode.value != "none",
-        model_line_mode=ui_state_model_line_mode.value,
-        state_assignment_mode=ui_state_assignment_mode.value,
-        figure_dpi=80,
+        **_state_plot_kwargs,
     )
-    # _fig_state_overlay, _ = plots.plot_categorical_performance_by_state(
-    #     df=_plot_df_state,
-    #     views=_views_sel,
-    #     model_name=f"glmhmm K={K} — all states",
-    #     background_style=ui_psychometric_background.value,
-    #     show_weighted_points=ui_state_show_weighted_points.value,
-    #     show_data_smooth=ui_state_show_data_smooth.value,
-    #     show_model_smooth=ui_state_model_line_mode.value != "none",
-    #     model_line_mode=ui_state_model_line_mode.value,
-    #     state_assignment_mode=ui_state_assignment_mode.value,
-    #     figure_dpi=80,
-    #     overlay_only=True,
-    # )
-    _reg_plot_fn = getattr(plots, "plot_regressor_psychometric_by_state", None)
-    if is_2afc and _reg_plot_fn is not None:
-        _fig_reg_state, _ = _reg_plot_fn(
-            df=_plot_df_state,
-            views=_views_sel,
-            model_name=f"glmhmm K={K}",
-            feature_col=ui_psychometric_regressor.value,
-            background_style=ui_psychometric_background.value,
-            show_weighted_points=ui_state_show_weighted_points.value,
-            show_data_smooth=ui_state_show_data_smooth.value,
-            show_model_smooth=ui_state_model_line_mode.value != "none",
-            model_line_mode=ui_state_model_line_mode.value,
-            state_assignment_mode=ui_state_assignment_mode.value,
-            figure_dpi=80,
-        )
-        # _fig_reg_overlay, _ = _reg_plot_fn(
-        #     df=_plot_df_state,
-        #     views=_views_sel,
-        #     model_name=f"glmhmm K={K}",
-        #     feature_col=ui_psychometric_regressor.value,
-        #     background_style=ui_psychometric_background.value,
-        #     show_weighted_points=ui_state_show_weighted_points.value,
-        #     show_data_smooth=ui_state_show_data_smooth.value,
-        #     show_model_smooth=ui_state_model_line_mode.value != "none",
-        #     model_line_mode=ui_state_model_line_mode.value,
-        #     state_assignment_mode=ui_state_assignment_mode.value,
-        #     figure_dpi=80,
-        #     overlay_only=True,
-        # )
-        _reg_section = mo.vstack(
-            [
-                mo.hstack(
-                    [
-                        mo.md("#### Per-state psychometric by regressor"),
-                        ui_psychometric_regressor,
-                    ],
-                    justify="space-between",
-                ),
-                mo.vstack(
-                    [
-                        mo.vstack([_fig_reg_state], align="center"),
-                        save_plot(
-                            _fig_reg_state,
-                            f"{ui_psychometric_regressor.value} by state",
-                            stem=f"regressor_by_state_{ui_psychometric_regressor.value}",
-                        ),
 
-                    ],
-                    justify="space-between",
-                    align="center",
-                ),
-            ],
-            align="center",
-        )
-    else:
-        _reg_section = mo.md("This task does not expose a regressor psychometric plot.")
+    _fig_reg_overlay, _ax_reg_overlay = plt.subplots(figsize=fig_size(2, 1))
+    _fig_reg_overlay, _ = plots.plot_regressor_psychometric_by_state(
+        df=plot_df_all,
+        views=_views_sel,
+        model_name=f"glmhmm K={K}",
+        feature_col=ui_psychometric_regressor.value,
+        overlay_only=True,
+        ax=_ax_reg_overlay,
+        **_state_plot_kwargs,
+    )
+
+    _fig_reg_state, _axes_reg_state = plt.subplots(1, K, figsize=(4 * K, 4), sharey=True)
+    _fig_reg_state, _ = plots.plot_regressor_psychometric_by_state(
+        df=plot_df_all,
+        views=_views_sel,
+        model_name=f"glmhmm K={K}",
+        feature_col=ui_psychometric_regressor.value,
+        axes=_axes_reg_state,
+        **_state_plot_kwargs,
+    )
 
     mo.vstack(
         [
-
-            mo.hstack(
-                [
-                    mo.vstack(
-                        [
-                            _fig_all,
-                            save_plot(_fig_all, "overall psychometric",
-                                      stem="categorical_overall"),
-                        ],
-                        align="center",
-                    ),
-                    mo.vstack(
-                        [
-                            mo.hstack([ui_psychometric_background,
-                                       ui_state_model_line_mode,], align="end"),
-                            ui_state_show_weighted_points,
-                            ui_state_show_data_smooth,
-                            ui_state_assignment_mode,
-                        ],
-                        align="start",
-                    ),
-                ],
-                justify="space-between",
-                align="center",
-                widths=[4, 1],
-            ),
-            mo.md("#### Per-state categorical performance"),
             mo.vstack(
                 [
-                    mo.vstack([_fig_state], align="center"),
-                    save_plot(_fig_state, "per-state psychometric", stem="categorical_by_state"),
+                    _item
+                    for _fig_idx, _fig in enumerate(_fig_all_list, start=1)
+                    for _item in (
+                        _fig,
+                        save_plot(
+                            _fig,
+                            f"overall psychometric {_fig_idx}" if len(_fig_all_list) > 1 else "overall psychometric",
+                            stem=f"categorical_overall_{_fig_idx}" if len(_fig_all_list) > 1 else "categorical_overall",
+                        ),
+                    )
+                ],
+                align="center",
+            ),
+            mo.md("#### State categorical performance — all states"),
+            mo.vstack(
+                [
+                    _fig_state_overlay,
+                    save_plot(_fig_state_overlay, "state-overlay psychometric", stem="categorical_state_overlay"),
                 ],
                 justify="space-between",
                 align="center",
             ),
-            _reg_section,
+            mo.md("#### Per-state categorical performance"),
+            _fig_state,
+            save_plot(_fig_state, "per-state psychometric", stem="categorical_by_state"),
+            mo.hstack([mo.md("#### Per-state psychometric by regressor"), ui_psychometric_regressor]),
+            _fig_reg_overlay,
+            save_plot(
+                _fig_reg_overlay,
+                f"{ui_psychometric_regressor.value} all states",
+                stem=f"regressor_state_overlay_{ui_psychometric_regressor.value}",
+            ),
+            _fig_reg_state,
+            save_plot(
+                _fig_reg_state,
+                f"{ui_psychometric_regressor.value} by state",
+                stem=f"regressor_by_state_{ui_psychometric_regressor.value}",
+            ),
         ],
         align="center",
     )
     return (plot_df_all,)
+
+
+@app.cell
+def _(mo, plot_df_all, plots, save_plot, selected, views):
+    _views_sel = {s: views[s] for s in selected}
+    _fig_repeat_evidence = plots.plot_repeat_by_repeat_evidence(
+        plot_df_all,
+        views=_views_sel,
+    )
+    mo.stop(
+        _fig_repeat_evidence is None,
+        mo.md("No repeat evidence plot available for the selected task/features."),
+    )
+
+    mo.vstack(
+        [
+            _fig_repeat_evidence,
+            save_plot(
+                _fig_repeat_evidence,
+                "repeat probability by fitted repeat evidence",
+                stem="repeat_probability_repeat_evidence",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(fig_size, mo, plot_df_all, plots, plt, save_plot):
+    mo.stop(
+        "choice_lag_param" not in plot_df_all.columns,
+        mo.md("No choice-history regressor available for p(right) by regressor."),
+    )
+
+    fig_right, ax_right = plt.subplots(figsize=fig_size(2,1))
+    _ax_right_regressor = plots.plot_right_by_regressor(
+        plot_df_all,
+        regressor_col="choice_lag_param",
+        title=None,
+        ax=ax_right,
+    )
+
+    mo.stop(
+        _ax_right_regressor is None,
+        mo.md("No p(right) by choice-history regressor plot available."),
+    )
+
+    mo.vstack(
+        [
+            fig_right,
+            save_plot(
+                fig_right,
+                "p(right) by choice history",
+                stem="right_by_choice_lag_param",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(fig_size, mo, plot_df_all, plots, plt, save_plot):
+    mo.stop(
+        not hasattr(plots, "plot_right_integration_map"),
+        mo.md("No p(right) integration map helper is available for this task."),
+    )
+    _map_w, _map_h = fig_size(2, 1)
+    _fig_integration_data_base, (_ax_integration_data, _cax_integration_data) = plt.subplots(
+        1,
+        2,
+        figsize=(_map_w * 1.12, _map_h),
+        gridspec_kw={"width_ratios": [1.0, 0.08], "wspace": 0.12},
+    )
+    _integration_data_result = plots.plot_right_integration_map(
+        plot_df_all,
+        panel="data",
+        ax=_ax_integration_data,
+        cbar_ax=_cax_integration_data,
+    )
+    _ax_integration_data.set_ylabel(r"$A_t^{\mathrm{choice,param}}$")
+    _fig_integration_data = None if _integration_data_result is None else _integration_data_result[0]
+
+    _fig_integration_model_base, (_ax_integration_model, _cax_integration_model) = plt.subplots(
+        1,
+        2,
+        figsize=(_map_w * 1.12, _map_h),
+        gridspec_kw={"width_ratios": [1.0, 0.08], "wspace": 0.12},
+    )
+    _integration_model_result = plots.plot_right_integration_map(
+        plot_df_all,
+        panel="model",
+        ax=_ax_integration_model,
+        cbar_ax=_cax_integration_model,
+    )
+    _fig_integration_model = None if _integration_model_result is None else _integration_model_result[0]
+
+    mo.stop(
+        _fig_integration_data is None and _fig_integration_model is None,
+        mo.md("No p(right) integration map available for the selected task/features."),
+    )
+
+    _integration_items = []
+    if _fig_integration_data is not None:
+        _integration_items.extend(
+            [
+                _fig_integration_data,
+                save_plot(
+                    _fig_integration_data,
+                    "p(right) integration map data",
+                    stem="right_integration_map_data",
+                ),
+            ]
+        )
+    if _fig_integration_model is not None:
+        _integration_items.extend(
+            [
+                _fig_integration_model,
+                save_plot(
+                    _fig_integration_model,
+                    "p(right) integration map model",
+                    stem="right_integration_map_model",
+                ),
+            ]
+        )
+
+    mo.vstack(
+        _integration_items,
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(
+    adapter,
+    fig_size,
+    mo,
+    plot_df_all,
+    plots,
+    plt,
+    save_plot,
+    selected,
+    views,
+):
+    mo.stop(
+        "choice_lag_param" not in plot_df_all.columns,
+        mo.md("No choice-history regressor available for binned accuracy."),
+    )
+    _views_sel = {s: views[s] for s in selected}
+    _bin_w, _bin_h = fig_size(2, 1)
+    _fig_binned_base, (_ax_binned, _ax_binned_legend) = plt.subplots(
+        1,
+        2,
+        figsize=(_bin_w * 1.45, _bin_h),
+        gridspec_kw={"width_ratios": [1.0, 0.45], "wspace": 0.02},
+    )
+    _binned_result = plots.plot_binned_accuracy_figure(
+        plot_df_all,
+        regressor_col="choice_lag_param",
+        adapter=adapter,
+        views=_views_sel,
+        max_panels=1,
+        ax=_ax_binned,
+        legend_ax=_ax_binned_legend,
+    )
+    _fig_binned = None if _binned_result is None else _binned_result[0]
+    mo.stop(
+        _fig_binned is None,
+        mo.md("No binned accuracy plot available for the choice-history regressor."),
+    )
+
+    mo.vstack(
+        [
+            _fig_binned,
+            save_plot(
+                _fig_binned,
+                "binned accuracy by choice history",
+                stem="accuracy_binned_choice_lag_param",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    ui_run_glmhmm_autocorr_simulations = mo.ui.run_button(
+        label="Run fitted GLM-HMM autocorrelogram simulations",
+    )
+    ui_glmhmm_autocorr_n_simulations = mo.ui.slider(
+        start=1,
+        stop=50,
+        step=1,
+        value=5,
+        label="GLM-HMM simulations",
+    )
+    mo.hstack([ui_run_glmhmm_autocorr_simulations, ui_glmhmm_autocorr_n_simulations], align="center")
+    return ui_glmhmm_autocorr_n_simulations, ui_run_glmhmm_autocorr_simulations
+
+
+@app.cell
+def _(
+    fig_size,
+    mo,
+    plot_df_all,
+    plt,
+    save_plot,
+    ui_glmhmm_autocorr_n_simulations,
+    ui_run_glmhmm_autocorr_simulations,
+):
+    from src.process.common import (
+        prepare_corrected_behavior_autocorrelograms,
+        prepare_model_simulated_corrected_behavior_autocorrelograms,
+    )
+    from src.plots.common import plot_corrected_behavior_autocorrelograms
+
+    _trial_col = "trial_idx" if "trial_idx" in plot_df_all.columns else ("trial" if "trial" in plot_df_all.columns else None)
+    _autocorr_sort_cols = ["subject", "session"] + ([_trial_col] if _trial_col is not None else [])
+    _autocorr_df = plot_df_all.sort(_autocorr_sort_cols)
+    _data_autocorr = prepare_corrected_behavior_autocorrelograms(
+        _autocorr_df,
+        subject_col="subject",
+        session_col="session",
+        choice_col="response",
+        outcome_col="performance",
+        trial_index_col=_trial_col,
+        max_lag=50,
+        min_cross_pairs=20,
+        max_cross_pairs=80,
+        seed=0,
+    )
+    if ui_run_glmhmm_autocorr_simulations.value:
+        _model_autocorr = prepare_model_simulated_corrected_behavior_autocorrelograms(
+            _autocorr_df,
+            subject_col="subject",
+            session_col="session",
+            trial_index_col=_trial_col,
+            response_col="response",
+            performance_col="performance",
+            n_simulations=int(ui_glmhmm_autocorr_n_simulations.value),
+            max_lag=50,
+            min_cross_pairs=20,
+            max_cross_pairs=80,
+            seed=1,
+        )
+        _model_autocorr_df = _model_autocorr["autocorr"]
+    else:
+        _model_autocorr_df = None
+    def _style_autocorr_axis(_ax):
+        _ax.set_ylim(-0.075, 0.2)
+        _ax.set_title("")
+
+    _fig_choice_autocorr, _ax_choice_autocorr = plt.subplots(figsize=fig_size(2, 1))
+    _fig_choice_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+        _data_autocorr,
+        axes=[_ax_choice_autocorr],
+        model_autocorr=_model_autocorr_df,
+        model_label="Fitted GLM-HMM",
+        signals=("Outcome",),
+        figsize=fig_size(2, 1),
+    )
+    _style_autocorr_axis(_ax_choice_autocorr)
+    _fig_repeat_autocorr, _ax_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1))
+    _fig_repeat_autocorr, _ = plot_corrected_behavior_autocorrelograms(
+        _data_autocorr,
+        axes=[_ax_repeat_autocorr],
+        model_autocorr=_model_autocorr_df,
+        model_label="Fitted GLM-HMM",
+        signals=("Repetition",),
+        figsize=fig_size(2, 1),
+    )
+    _style_autocorr_axis(_ax_repeat_autocorr)
+    mo.hstack(
+        [
+            mo.vstack([_fig_choice_autocorr, save_plot(_fig_choice_autocorr, "GLM-HMM choice autocorrelogram", stem="glmhmm_choice_autocorrelogram")], align="center"),
+            mo.vstack([_fig_repeat_autocorr, save_plot(_fig_repeat_autocorr, "GLM-HMM repeat autocorrelogram", stem="glmhmm_repeat_autocorrelogram")], align="center"),
+        ],
+        align="center",
+    )
+    return
 
 
 @app.cell
@@ -1187,10 +1452,7 @@ def _(editor_views, mo):
 @app.cell
 def _(editor_views, mo, ui_editor_subject):
     _view = editor_views[ui_editor_subject.value]
-    _state_options = [
-        f"{_k} — {_view.state_name_by_idx.get(_k, f'State {_k}')}"
-        for _k in _view.state_idx_order
-    ]
+    _state_options = [f"{_k} — {_view.state_name_by_idx.get(_k, f'State {_k}')}" for _k in _view.state_idx_order]
     ui_editor_state = mo.ui.dropdown(
         options=_state_options,
         value=_state_options[0],
@@ -1231,18 +1493,14 @@ def _(
     _subj = ui_editor_subject.value
     _view = editor_views[_subj]
     coef_state_idx = int(ui_editor_state.value.split(" — ", 1)[0])
-    coef_state_label = _view.state_name_by_idx.get(
-        coef_state_idx, f"State {coef_state_idx}"
-    )
+    coef_state_label = _view.state_name_by_idx.get(coef_state_idx, f"State {coef_state_idx}")
     _stored_weights = np.asarray(_view.emission_weights[coef_state_idx], dtype=float)
     _choice_labels = [str(label) for label in adapter.choice_labels]
     _stored_class_indices = list(range(_view.num_classes - 1))
     _reference_class_idx = _view.num_classes - 1
     if _view.num_classes == 2 and ui_editor_side is not None:
         _display_class_idx = _choice_labels.index(ui_editor_side.value)
-        _display_reference_class_idx = next(
-            idx for idx in range(_view.num_classes) if idx != _display_class_idx
-        )
+        _display_reference_class_idx = next(idx for idx in range(_view.num_classes) if idx != _display_class_idx)
     else:
         _display_reference_class_idx = 1 if _view.num_classes == 3 else _reference_class_idx
     _payload = build_editor_payload(
@@ -1349,6 +1607,7 @@ def _(
     mo,
     np,
     plots,
+    plt,
     prepare_predictions_df,
     save_plot,
     task_name,
@@ -1392,12 +1651,44 @@ def _(
         _title,
         background_style=ui_psychometric_background.value,
     )
-    for _ax_idx, _ax in enumerate(_fig_all_tweaked.axes):
-        _ax.set_title("")
-        _ax.set_ylabel(r"$\mathit{p}(\mathrm{right})$" if _ax_idx == 0 else "")
-    if _fig_all_tweaked._suptitle is not None:
-        _fig_all_tweaked._suptitle.set_text("")
-    _fig_all_tweaked.tight_layout()
+    _fig_all_tweaked_list = list(_fig_all_tweaked) if isinstance(_fig_all_tweaked, (list, tuple)) else [_fig_all_tweaked]
+    for _fig in _fig_all_tweaked_list:
+        for _ax_idx, _ax in enumerate(_fig.axes):
+            _ax.set_title("")
+            _ax.set_ylabel(r"$\mathit{p}(\mathrm{right})$" if _ax_idx == 0 else "")
+        if _fig._suptitle is not None:
+            _fig._suptitle.set_text("")
+        _fig.tight_layout()
+    _state_overlay_fn = getattr(plots, "plot_categorical_performance_state_overlay", None)
+    if _state_overlay_fn is None:
+        _fig_state_overlay_tweaked, _ = plots.plot_categorical_performance_by_state(
+            df=_plot_df_tweaked,
+            views={_subj: _view_tweaked},
+            model_name=f"{_title} — all states",
+            background_style=ui_psychometric_background.value,
+            show_weighted_points=ui_state_show_weighted_points.value,
+            show_data_smooth=ui_state_show_data_smooth.value,
+            show_model_smooth=ui_state_model_line_mode.value != "none",
+            model_line_mode=ui_state_model_line_mode.value,
+            state_assignment_mode=ui_state_assignment_mode.value,
+            figure_dpi=80,
+            overlay_only=True,
+        )
+    else:
+        _fig_state_overlay_tweaked_base, _ax_state_overlay_tweaked = plt.subplots(figsize=(3, 3))
+        _fig_state_overlay_tweaked, _ = _state_overlay_fn(
+            df=_plot_df_tweaked,
+            views={_subj: _view_tweaked},
+            model_name=f"{_title} — all states",
+            background_style=ui_psychometric_background.value,
+            show_weighted_points=ui_state_show_weighted_points.value,
+            show_data_smooth=ui_state_show_data_smooth.value,
+            show_model_smooth=ui_state_model_line_mode.value != "none",
+            model_line_mode=ui_state_model_line_mode.value,
+            state_assignment_mode=ui_state_assignment_mode.value,
+            figure_dpi=80,
+            ax=_ax_state_overlay_tweaked,
+        )
     _fig_state_tweaked, _ = plots.plot_categorical_performance_by_state(
         df=_plot_df_tweaked,
         views={_subj: _view_tweaked},
@@ -1471,12 +1762,18 @@ def _(
                 [
                     mo.vstack(
                         [
-                            _fig_all_tweaked,
-                            save_plot(
-                                _fig_all_tweaked,
-                                "tweaked overall psychometric",
-                                stem="tweaked_categorical_overall",
-                            ),
+                            *[
+                                _item
+                                for _fig_idx, _fig in enumerate(_fig_all_tweaked_list, start=1)
+                                for _item in (
+                                    _fig,
+                                    save_plot(
+                                        _fig,
+                                        f"tweaked overall psychometric {_fig_idx}" if len(_fig_all_tweaked_list) > 1 else "tweaked overall psychometric",
+                                        stem=f"tweaked_categorical_overall_{_fig_idx}" if len(_fig_all_tweaked_list) > 1 else "tweaked_categorical_overall",
+                                    ),
+                                )
+                            ],
                         ],
                         align="center",
                     ),
@@ -1493,6 +1790,12 @@ def _(
             ),
             mo.vstack(
                 [
+                    _fig_state_overlay_tweaked,
+                    save_plot(
+                        _fig_state_overlay_tweaked,
+                        "tweaked state-overlay psychometric",
+                        stem="tweaked_categorical_state_overlay",
+                    ),
                     _fig_state_tweaked,
                     save_plot(
                         _fig_state_tweaked,
@@ -1504,7 +1807,7 @@ def _(
             ),
             _reg_section,
             _side_section,
-            coef_editor
+            coef_editor,
         ],
         align="center",
     )
@@ -1558,35 +1861,44 @@ def _(
             chance_level=1.0 / adapter.num_classes,
         )
     )
-    fig, ax = plt.subplots(figsize=(4,4))
-    _fig_post = model_plots.state_posterior_count_kde(
-        build_state_posterior_count_payload(_trial_df_sel), ax = ax
-    )
+    fig, ax = plt.subplots(figsize=(4, 4))
+    _fig_post = model_plots.state_posterior_count_kde(build_state_posterior_count_payload(_trial_df_sel), ax=ax)
     ax.spines["right"].set_visible(True)
 
-    mo.vstack([
-        mo.hstack([
-            mo.vstack([
-                mo.md("#### Accuracy by state"),
-                _fig_acc,
-                save_plot(
-                    _fig_acc,
-                    "accuracy by state",
-                    stem="state_accuracy",
-                ),
-            ], align = "center"),
-            mo.vstack([
-                mo.md("#### Posterior / trial-count KDE"),
-                _fig_post,
-                save_plot(
-                    _fig_post,
-                    "posterior trial-count kde",
-                    stem="state_posterior_count_kde",
-                ),
-            ], align = "center"),
-        ], align="center"),
-        mo.md("**Trial counts & mean accuracy per label:**"),
-    ])
+    mo.vstack(
+        [
+            mo.hstack(
+                [
+                    mo.vstack(
+                        [
+                            mo.md("#### Accuracy by state"),
+                            _fig_acc.figure,
+                            save_plot(
+                                _fig_acc.figure,
+                                "accuracy by state",
+                                stem="state_accuracy",
+                            ),
+                        ],
+                        align="center",
+                    ),
+                    mo.vstack(
+                        [
+                            mo.md("#### Posterior / trial-count KDE"),
+                            _fig_post.figure,
+                            save_plot(
+                                _fig_post.figure,
+                                "posterior trial-count kde",
+                                stem="state_posterior_count_kde",
+                            ),
+                        ],
+                        align="center",
+                    ),
+                ],
+                align="center",
+            ),
+            mo.md("**Trial counts & mean accuracy per label:**"),
+        ]
+    )
     return
 
 
@@ -1594,9 +1906,7 @@ def _(
 def _(df_all, mo):
     # ── controls for session-trajectory & occupancy plots ─────────────────────
     ui_subjects_traj = mo.ui.multiselect(
-        options=sorted(df_all["subject"].unique().to_list(), key=str),
-        label="Subjects (session trajectories & occupancy)",
-        value = ""
+        options=sorted(df_all["subject"].unique().to_list(), key=str), label="Subjects (session trajectories & occupancy)", value=""
     )
     mo.vstack([mo.md("### Session trajectory & occupancy"), ui_subjects_traj])
     return
@@ -1620,11 +1930,14 @@ def _(
             sort_col="trial_idx",
         )
     )
-    mo.vstack([
-        # mo.md(f"### c. Average state-probability trajectories within a session  (K={K})"),
-        # _fig_traj,
-        # mo.md("> Mean ± 1 s.e.m. across sessions for the selected subjects."),
-    ], align="center")
+    mo.vstack(
+        [
+            # mo.md(f"### c. Average state-probability trajectories within a session  (K={K})"),
+            # _fig_traj,
+            # mo.md("> Mean ± 1 s.e.m. across sessions for the selected subjects."),
+        ],
+        align="center",
+    )
     return
 
 
@@ -1663,9 +1976,7 @@ def _(
     _fig_occ_switches_by_subject = model_plots.state_switches_by_subject(_occupancy_payload)
     state_switch_sessions_df = _occupancy_payload["switches_df"]
     state_switch_sessions_df = (
-        state_switch_sessions_df.to_pandas()
-        if hasattr(state_switch_sessions_df, "to_pandas")
-        else pd.DataFrame(state_switch_sessions_df)
+        state_switch_sessions_df.to_pandas() if hasattr(state_switch_sessions_df, "to_pandas") else pd.DataFrame(state_switch_sessions_df)
     )
     state_switch_sessions_df = state_switch_sessions_df.copy()
     state_switch_sessions_df["subject"] = state_switch_sessions_df["subject"].astype(str)
@@ -1695,68 +2006,89 @@ def _(
                     }
                 )
     ui_occ_switches_summary = mo.ui.matplotlib(_fig_occ_switches_summary, debounce=True)
-    mo.hstack([
-        mo.vstack([
-            mo.vstack([
-                _fig_occ_overall_summary,
-                save_plot(
-                    _fig_occ_overall_summary,
-                    "fractional occupancy overall summary",
-                    stem="state_occupancy_overall_summary",
-                    location=(0, 0),
-                ),
-            ], align="center"),
-        #     mo.vstack([
-        #         _fig_occ_overall_by_subject,
-        #         save_plot(
-        #             _fig_occ_overall_by_subject,
-        #             "fractional occupancy overall by subject",
-        #             stem="state_occupancy_overall_by_subject",
-        #             location=(0, 0),
-        #         ),
-        #     ], align="center"),
-        ], align="center"),
-        mo.vstack([
-            mo.vstack([
-                _fig_occ_sessions_summary,
-                save_plot(
-                    _fig_occ_sessions_summary,
-                    "fractional occupancy by session summary",
-                    stem="state_session_occupancy_summary",
-                    location=(0, 0),
-                ),
-            ], align="center"),
-            # mo.vstack([
-            #     _fig_occ_sessions_by_subject,
-            #     save_plot(
-            #         _fig_occ_sessions_by_subject,
-            #         "fractional occupancy by session and subject",
-            #         stem="state_session_occupancy_by_subject",
-            #         location=(0, 0),
-            #     ),
-            # ], align="center"),
-        ], align="center"),
-        mo.vstack([
-            mo.vstack([
-                ui_occ_switches_summary,
-                save_plot(
-                    _fig_occ_switches_summary,
-                    "state switches summary",
-                    stem="state_switches_summary",
-                    location=(0, 0),
-                ),
-            ], align="center"),
-            # mo.vstack([
-            #     _fig_occ_switches_by_subject,
-            #     save_plot(
-            #         _fig_occ_switches_by_subject,
-            #         "state switches by subject",
-            #         stem="state_switches_by_subject",
-            #         location=(0, 0),
-            #     ),
-            # ], align="center"),
-        ], align="center"),
-    ], align="center")
+    mo.hstack(
+        [
+            mo.vstack(
+                [
+                    mo.vstack(
+                        [
+                            _fig_occ_overall_summary.figure,
+                            save_plot(
+                                _fig_occ_overall_summary.figure,
+                                "fractional occupancy overall summary",
+                                stem="state_occupancy_overall_summary",
+                                location=(0, 0),
+                            ),
+                        ],
+                        align="center",
+                    ),
+                    #     mo.vstack([
+                    #         _fig_occ_overall_by_subject,
+                    #         save_plot(
+                    #             _fig_occ_overall_by_subject,
+                    #             "fractional occupancy overall by subject",
+                    #             stem="state_occupancy_overall_by_subject",
+                    #             location=(0, 0),
+                    #         ),
+                    #     ], align="center"),
+                ],
+                align="center",
+            ),
+            mo.vstack(
+                [
+                    mo.vstack(
+                        [
+                            _fig_occ_sessions_summary.figure,
+                            save_plot(
+                                _fig_occ_sessions_summary.figure,
+                                "fractional occupancy by session summary",
+                                stem="state_session_occupancy_summary",
+                                location=(0, 0),
+                            ),
+                        ],
+                        align="center",
+                    ),
+                    # mo.vstack([
+                    #     _fig_occ_sessions_by_subject,
+                    #     save_plot(
+                    #         _fig_occ_sessions_by_subject,
+                    #         "fractional occupancy by session and subject",
+                    #         stem="state_session_occupancy_by_subject",
+                    #         location=(0, 0),
+                    #     ),
+                    # ], align="center"),
+                ],
+                align="center",
+            ),
+            mo.vstack(
+                [
+                    mo.vstack(
+                        [
+                            ui_occ_switches_summary,
+                            save_plot(
+                                _fig_occ_switches_summary.figure,
+                                "state switches summary",
+                                stem="state_switches_summary",
+                                location=(0, 0),
+                            ),
+                        ],
+                        align="center",
+                    ),
+                    # mo.vstack([
+                    #     _fig_occ_switches_by_subject,
+                    #     save_plot(
+                    #         _fig_occ_switches_by_subject,
+                    #         "state switches by subject",
+                    #         stem="state_switches_by_subject",
+                    #         location=(0, 0),
+                    #     ),
+                    # ], align="center"),
+                ],
+                align="center",
+            ),
+        ],
+        align="center",
+    )
     return (
         state_switch_selection_points,
         state_switch_sessions_df,
@@ -1780,25 +2112,16 @@ def _(
             _points["x"].to_numpy(),
             _points["y"].to_numpy(),
         )
-        selected_state_switch_counts = sorted(
-            _points.loc[_mask, "n_switches"].unique().tolist()
-        )
+        selected_state_switch_counts = sorted(_points.loc[_mask, "n_switches"].unique().tolist())
     selected_state_switch_sessions = (
-        state_switch_sessions_df[
-            state_switch_sessions_df["n_switches"].isin(selected_state_switch_counts)
-        ]
+        state_switch_sessions_df[state_switch_sessions_df["n_switches"].isin(selected_state_switch_counts)]
         .sort_values(["n_switches", "subject", "session"])
         .reset_index(drop=True)
     )
     mo.vstack(
         [
             mo.md(
-                "Selected switch counts: "
-                + (
-                    ", ".join(map(str, selected_state_switch_counts))
-                    if selected_state_switch_counts
-                    else "_none_"
-                )
+                "Selected switch counts: " + (", ".join(map(str, selected_state_switch_counts)) if selected_state_switch_counts else "_none_")
             ),
             selected_state_switch_sessions
             if selected_state_switch_counts
@@ -1841,23 +2164,24 @@ def _(
     _fig_change_by_subject = model_plots.change_triggered_posteriors_by_subject(
         _change_payload,
     )
-    mo.vstack([
-        mo.md(
-            f"> Change events use the same confident MAP switch rule as the histogram above: posterior ≥ {THRESH_ui}. "
-        ),
-        _fig_change_summary,
-        save_plot(
-            _fig_change_summary,
-            "change-triggered posteriors summary",
-            stem="change_triggered_posteriors_summary",
-        ),
-        # _fig_change_by_subject,
-        # save_plot(
-        #     _fig_change_by_subject,
-        #     "change-triggered posteriors by subject",
-        #     stem="change_triggered_posteriors_by_subject",
-        # ),
-    ], align="center")
+    mo.vstack(
+        [
+            mo.md(f"> Change events use the same confident MAP switch rule as the histogram above: posterior ≥ {THRESH_ui}. "),
+            _fig_change_summary[0],
+            save_plot(
+                _fig_change_summary[0].figure,
+                "change-triggered posteriors summary",
+                stem="change_triggered_posteriors_summary",
+            ),
+            # _fig_change_by_subject,
+            # save_plot(
+            #     _fig_change_by_subject,
+            #     "change-triggered posteriors by subject",
+            #     stem="change_triggered_posteriors_by_subject",
+            # ),
+        ],
+        align="center",
+    )
     return
 
 
@@ -1876,11 +2200,7 @@ def _(mo, selected):
 @app.cell
 def _(mo, pl, trial_df, ui_session_subj, views):
     _sess_opts = (
-        sorted(
-            trial_df.filter(pl.col("subject") == ui_session_subj.value)["session"]
-            .unique()
-            .to_list()
-        )
+        sorted(trial_df.filter(pl.col("subject") == ui_session_subj.value)["session"].unique().to_list())
         if ui_session_subj.value in views
         else [0]
     )
@@ -1937,29 +2257,38 @@ def _(
     )
 
     _sess = int(ui_session_id.value) if str(ui_session_id.value).isdigit() else ui_session_id.value
-    _fig = model_plots.session_deepdive(
-        build_session_deepdive_payload(
-            trial_df,
-            subject=_subj,
-            session=_sess,
-            session_col="session",
-            sort_col="trial",
-            engaged_window=ui_engaged_window.value,
-            engaged_trace_mode=ui_engaged_trace_mode.value,
-            chance_level=1.0 / adapter.num_classes,
-            num_classes=adapter.num_classes,
-            views=views,
-        )
+    _deepdive_payload = build_session_deepdive_payload(
+        trial_df,
+        subject=_subj,
+        session=_sess,
+        session_col="session",
+        sort_col="trial",
+        engaged_window=ui_engaged_window.value,
+        engaged_trace_mode=ui_engaged_trace_mode.value,
+        chance_level=1.0 / adapter.num_classes,
+        num_classes=adapter.num_classes,
+        views=views,
     )
-    mo.vstack([
-        mo.hstack([ui_session_subj, ui_session_id, ui_engaged_window, ui_engaged_trace_mode]),
-        _fig,
-        save_plot(
+    _fig = model_plots.session_deepdive(_deepdive_payload)
+    _fig_traces = model_plots.session_deepdive_state_traces(_deepdive_payload)
+    mo.vstack(
+        [
+            mo.hstack([ui_session_subj, ui_session_id, ui_engaged_window, ui_engaged_trace_mode]),
             _fig,
-            "session statistics",
-            stem=f"session_stats_{_subj}_{_sess}",
-        ),
-    ], align="center")
+            _fig_traces,
+            save_plot(
+                _fig,
+                "session statistics",
+                stem=f"session_stats_{_subj}_{_sess}",
+            ),
+            save_plot(
+                _fig_traces,
+                "session state traces",
+                stem=f"session_state_traces_{_subj}_{_sess}",
+            ),
+        ],
+        align="center",
+    )
     return
 
 
@@ -1976,13 +2305,7 @@ def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
     #   uv run glmhmmt-fit-tau-sweep --model glmhmm --K <K>
     # Expects: RESULTS/fits/tau_sweep/glmhmm_K<K>/tau_sweep_summary.parquet
 
-    _sweep_path = (
-        paths.RESULTS
-        / "fits"
-        / "tau_sweep"
-        / f"glmhmm_K{K}"
-        / "tau_sweep_summary.parquet"
-    )
+    _sweep_path = paths.RESULTS / "fits" / "tau_sweep" / f"glmhmm_K{K}" / "tau_sweep_summary.parquet"
     mo.stop(
         not _sweep_path.exists(),
         mo.md(
@@ -1993,11 +2316,7 @@ def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
     )
 
     _df_sweep = pl.read_parquet(_sweep_path)
-    _subjects = [
-        s
-        for s in model_cfg.subjects
-        if s in _df_sweep["subject"].unique().to_list()
-    ]
+    _subjects = [s for s in model_cfg.subjects if s in _df_sweep["subject"].unique().to_list()]
     mo.stop(not _subjects, mo.md("No sweep data for selected subjects."))
 
     # ── BIC vs τ plot ────────────────────────────────────────────────────
@@ -2007,9 +2326,7 @@ def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
     n_trials = df_all.group_by("subject").agg(pl.len().alias("n_trials"))
 
     for _i, _subj in enumerate(_subjects):
-        _d = _df_sweep.filter(
-            (pl.col("subject") == _subj) & (pl.col("K") == K)
-        ).sort("tau")
+        _d = _df_sweep.filter((pl.col("subject") == _subj) & (pl.col("K") == K)).sort("tau")
         _tau = _d["tau"].to_numpy()
         _bic = _d["bic"].to_numpy()
         _ll = _d["ll_per_trial"].to_numpy()
@@ -2018,9 +2335,7 @@ def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
         _ax_ll.plot(_tau, _ll, "-o", ms=3, color=_c, label=_subj)
         # mark best τ
         _best_idx = int(np.argmin(_bic))
-        _ax_bic.axvline(
-            _tau[_best_idx], color=_c, lw=0.8, linestyle="--", alpha=0.6
-        )
+        _ax_bic.axvline(_tau[_best_idx], color=_c, lw=0.8, linestyle="--", alpha=0.6)
     4
     for _ax, _ylabel, _title in [
         (_ax_bic, "BIC", "BIC vs τ  (lower is better)"),
@@ -2051,9 +2366,7 @@ def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
         .agg(
             [
                 (pl.col("bic") * pl.col("n_trials")).sum().alias("bic_wsum"),
-                (pl.col("ll_per_trial") * pl.col("n_trials"))
-                .sum()
-                .alias("llpt_wsum"),
+                (pl.col("ll_per_trial") * pl.col("n_trials")).sum().alias("llpt_wsum"),
                 (pl.col("acc") * pl.col("n_trials")).sum().alias("acc_wsum"),
                 pl.col("n_trials").sum().alias("n_total"),
                 pl.n_unique("subject").alias("n_subjects"),
@@ -2062,9 +2375,7 @@ def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
         .with_columns(
             [
                 (pl.col("bic_wsum") / pl.col("n_total")).alias("bic_mean_w"),
-                (pl.col("llpt_wsum") / pl.col("n_total")).alias(
-                    "ll_per_trial_mean_w"
-                ),
+                (pl.col("llpt_wsum") / pl.col("n_total")).alias("ll_per_trial_mean_w"),
                 (pl.col("acc_wsum") / pl.col("n_total")).alias("acc_mean_w"),
             ]
         )
@@ -2101,21 +2412,22 @@ def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
 
 @app.cell
 def _(mo, task_name):
-
     # ── SSM GLM-HMM safety check (2AFC only) ──────────────────────────────────
     mo.stop(
         task_name != "2AFC_DRUG",
         mo.md("ℹ️ **SSM safety check is only available for the 2AFC task.** Switch task to 2AFC above."),
     )
     ssm_run_btn = mo.ui.run_button(label="▶ Run SSM safety check")
-    mo.vstack([
-        mo.md("### SSM GLM-HMM safety check (2AFC)"),
-        mo.md(
-            "Fits a K-state GLM-HMM using the **SSM library** (`input_driven_obs`, `standard` "
-            "transitions) with the exact same covariates as the custom model.  \n"
-        ),
-        ssm_run_btn,
-    ])
+    mo.vstack(
+        [
+            mo.md("### SSM GLM-HMM safety check (2AFC)"),
+            mo.md(
+                "Fits a K-state GLM-HMM using the **SSM library** (`input_driven_obs`, `standard` "
+                "transitions) with the exact same covariates as the custom model.  \n"
+            ),
+            ssm_run_btn,
+        ]
+    )
     return (ssm_run_btn,)
 
 
@@ -2315,11 +2627,7 @@ def _(
     behavioral_cols = adapter.behavioral_cols
     trial_frames_ssm = []
     for _subject, view in ssm_views_sel.items():
-        subject_df = (
-            df_all.filter(pl.col("subject") == _subject)
-            .sort(sort_col)
-            .filter(pl.col(session_col).count().over(session_col) >= 2)
-        )
+        subject_df = df_all.filter(pl.col("subject") == _subject).sort(sort_col).filter(pl.col(session_col).count().over(session_col) >= 2)
         if subject_df.height != view.T:
             continue
         trial_frames_ssm.append(build_trial_df(view, adapter, subject_df, behavioral_cols))
@@ -2673,10 +2981,7 @@ def _(
     if ssm_coef_df.height > 0:
         coef_pd = ssm_coef_df.to_pandas()
         panel_keys = (
-            coef_pd[["state_rank", "state_label", "contrast"]]
-            .drop_duplicates()
-            .sort_values(["state_rank", "contrast"])
-            .to_dict("records")
+            coef_pd[["state_rank", "state_label", "contrast"]].drop_duplicates().sort_values(["state_rank", "contrast"]).to_dict("records")
         )
         n_panels = len(panel_keys)
         n_cols = 1 if n_panels == 1 else min(2, n_panels)
@@ -2784,60 +3089,63 @@ def _(
     ssm_psych_fig_custom,
     ssm_psych_fig_ssm,
 ):
-    mo.vstack([
-        mo.md("### Log-likelihood comparison"),
-        ssm_ll_fig if ssm_ll_fig is not None else mo.md("LL comparison unavailable because subject-level metrics are missing."),
-        mo.md("### Categorical psychometrics — Dynamax vs SSM"),
-        (
-            mo.hstack(
-                [
-                    mo.vstack(
-                        [
-                            mo.md("#### Dynamax"),
-                            ssm_psych_fig_custom,
-                            save_plot(
+    mo.vstack(
+        [
+            mo.md("### Log-likelihood comparison"),
+            ssm_ll_fig if ssm_ll_fig is not None else mo.md("LL comparison unavailable because subject-level metrics are missing."),
+            mo.md("### Categorical psychometrics — Dynamax vs SSM"),
+            (
+                mo.hstack(
+                    [
+                        mo.vstack(
+                            [
+                                mo.md("#### Dynamax"),
                                 ssm_psych_fig_custom,
-                                "ssm comparison dynamax psychometric",
-                                stem=f"ssm_comparison_dynamax_psychometric_k{K}",
-                            ),
-                        ],
-                        align="center",
-                    ),
-                    mo.vstack(
-                        [
-                            mo.md("#### SSM"),
-                            ssm_psych_fig_ssm,
-                            save_plot(
+                                save_plot(
+                                    ssm_psych_fig_custom,
+                                    "ssm comparison dynamax psychometric",
+                                    stem=f"ssm_comparison_dynamax_psychometric_k{K}",
+                                ),
+                            ],
+                            align="center",
+                        ),
+                        mo.vstack(
+                            [
+                                mo.md("#### SSM"),
                                 ssm_psych_fig_ssm,
-                                "ssm comparison ssm psychometric",
-                                stem=f"ssm_comparison_ssm_psychometric_k{K}",
-                            ),
-                        ],
-                        align="center",
-                    ),
-                ],
-                justify="start",
-            )
-            if ssm_psych_fig_custom is not None and ssm_psych_fig_ssm is not None
-            else mo.md("Psychometric comparison unavailable because one of the trial-level prediction tables could not be built.")
-        ),
-        mo.md("### Coefficient differences"),
-        (
-            mo.vstack(
-                [
-                    ssm_coef_fig,
-                    save_plot(
+                                save_plot(
+                                    ssm_psych_fig_ssm,
+                                    "ssm comparison ssm psychometric",
+                                    stem=f"ssm_comparison_ssm_psychometric_k{K}",
+                                ),
+                            ],
+                            align="center",
+                        ),
+                    ],
+                    justify="start",
+                )
+                if ssm_psych_fig_custom is not None and ssm_psych_fig_ssm is not None
+                else mo.md("Psychometric comparison unavailable because one of the trial-level prediction tables could not be built.")
+            ),
+            mo.md("### Coefficient differences"),
+            (
+                mo.vstack(
+                    [
                         ssm_coef_fig,
-                        "ssm coefficient differences",
-                        stem=f"ssm_coefficient_differences_k{K}",
-                    ),
-                ],
-                align="center",
-            )
-            if ssm_coef_fig is not None
-            else mo.md("No coefficient comparison available.")
-        ),
-    ], align="center")
+                        save_plot(
+                            ssm_coef_fig,
+                            "ssm coefficient differences",
+                            stem=f"ssm_coefficient_differences_k{K}",
+                        ),
+                    ],
+                    align="center",
+                )
+                if ssm_coef_fig is not None
+                else mo.md("No coefficient comparison available.")
+            ),
+        ],
+        align="center",
+    )
     return
 
 

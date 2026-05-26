@@ -6,6 +6,14 @@ results_dir = "./results"
 adapter_paths = ["./src/process"]
 plot_paths = ["./src/plots"]
 
+[palettes]
+states_hex_k4 = [
+    "#3853A4",   # Engaged L
+    "#CC1F25",   # Engaged R
+    "#817FBC",   # Disengaged L
+    "#D68F9B",   # Disengaged R
+]
+
 [plot-saver]
 format = "png"
 default_label = "Save"

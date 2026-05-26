@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.8"
 app = marimo.App(width="full")
 
 
@@ -15,8 +15,8 @@ def _():
 
     paths = get_runtime_paths()
     from glmhmmt.notebook_support.analysis_common import (
-        # load_fit_bundle,
-        load_metrics_dir,
+        load_fit_bundle as load_fit_bundle_raw,
+        load_metrics_dir as load_metrics_dir_raw,
         model_aliases_for_kind,
     )
     from glmhmmt.tasks import get_adapter, get_task_options
@@ -34,7 +34,8 @@ def _():
         custom_boxplot,
         get_adapter,
         get_task_options,
-        load_metrics_dir,
+        load_fit_bundle_raw,
+        load_metrics_dir_raw,
         mo,
         model_aliases_for_kind,
         np,
@@ -57,11 +58,11 @@ def _(get_task_options, mo):
 
 
 @app.cell
-def _(load_metrics_dir, model_aliases_for_kind, paths):
+def _(load_metrics_dir_raw, model_aliases_for_kind, paths, pl):
     _MODEL_LABELS = {
         "glm": "GLM",
         "glmhmm": "GLMHMM",
-        "glmhmmt": "GLMHMM-T",
+        "glmhmmt": "GLMHMMT",
     }
 
     def model_aliases(task: str, kind: str) -> list[str]:
@@ -72,7 +73,7 @@ def _(load_metrics_dir, model_aliases_for_kind, paths):
         )
 
     def load_metrics_dir_for_notebook(task_name: str, folder_name: str | None, expected_model_kind: str):
-        df = load_metrics_dir(
+        df = load_metrics_dir_raw(
             task_name=task_name,
             model_kind=expected_model_kind,
             alias=folder_name,
@@ -81,6 +82,7 @@ def _(load_metrics_dir, model_aliases_for_kind, paths):
         )
         if df is None:
             return None
+        df = df.with_columns(pl.lit(expected_model_kind).alias("model_kind"))
         keep = [
             "subject",
             "K",
@@ -90,6 +92,7 @@ def _(load_metrics_dir, model_aliases_for_kind, paths):
             "ll_per_trial",
             "bic",
             "acc",
+            "n_trials",
         ]
         return df.select([c for c in keep if c in df.columns])
 
@@ -104,13 +107,14 @@ def _(load_metrics_dir, model_aliases_for_kind, paths):
             }
         )
 
-    return load_metrics_dir_for_notebook, model_aliases, model_k_options
+    load_metrics_dir = load_metrics_dir_for_notebook
+    return load_metrics_dir, model_aliases, model_k_options
 
 
 @app.cell
-def _(build_views, get_adapter, paths):
+def _(build_views, get_adapter, load_fit_bundle_raw, paths):
     def load_fit_bundle_for_notebook(task_name, model_kind, alias, K, subjects, scoring_key=None):
-        return load_fit_bundle(
+        return load_fit_bundle_raw(
             task_name=task_name,
             model_kind=model_kind,
             alias=alias,
@@ -184,7 +188,7 @@ def _(adapter, mo):
 
 @app.cell
 def _(
-    load_metrics_dir_for_notebook,
+    load_metrics_dir,
     mo,
     pl,
     ui_glm_dir,
@@ -199,9 +203,7 @@ def _(
         (ui_glmhmmt_dir.value, "glmhmmt"),
     ]:
         for _name in _names:
-            _p = load_metrics_dir_for_notebook(task_name=ui_task.value,folder_name=_name, expected_model_kind=_kind)
-            print(f"{ui_task.value},{_name}, {_kind}")
-            print(_p)
+            _p = load_metrics_dir(ui_task.value, _name, _kind)
             if _p is not None:
                 _parts.append(_p)
 
@@ -228,12 +230,98 @@ def _(
 
 
 @app.cell
-def _(pl, results_long, ui_K_range, ui_subjects):
-    _min, K_max = ui_K_range.value
-    results_filtered = results_long.filter(
-        pl.col("subject").is_in(ui_subjects.value)
-        # & pl.col("K").is_between(K_min, K_max)
+def _(mo, pl, results_long):
+    _MODEL_ORDER = [
+        ("glm", "GLM"),
+        ("glmhmmt", "GLMHMMT"),
+        ("glmhmm", "GLMHMM"),
+    ]
+    _elements = {}
+    _metadata = {}
+
+    for _kind, _kind_label in _MODEL_ORDER:
+        _kind_df = results_long.filter(pl.col("model_kind") == _kind)
+        for _K in _kind_df["K"].drop_nulls().unique().sort().to_list():
+            _aliases = (
+                _kind_df
+                .filter(pl.col("K") == _K)
+                .select("model_alias")
+                .unique()
+                .sort("model_alias")
+                .get_column("model_alias")
+                .to_list()
+            )
+            if not _aliases:
+                continue
+            _key = f"{_kind}:{int(_K)}"
+            _metadata[_key] = {
+                "model_kind": _kind,
+                "model_kind_label": _kind_label,
+                "K": int(_K),
+            }
+            _elements[_key] = mo.ui.dropdown(
+                options={"Skip": "__skip__", **{_alias: _alias for _alias in _aliases}},
+                value=_aliases[0],
+                label=f"{_kind_label} K={int(_K)}",
+            )
+
+    ui_model_picks = mo.ui.dictionary(_elements, label="Model picks")
+    _rows = [
+        mo.hstack([
+            mo.md(f"**{_metadata[_key]['model_kind_label']} K={_metadata[_key]['K']}**"),
+            ui_model_picks[_key],
+        ])
+        for _key in _elements
+    ]
+
+    mo.vstack([
+        mo.md("### One model per family and state count"),
+        mo.md("Pick at most one alias for each model family and `K`. Use `Skip` to omit a point."),
+        *(_rows if _rows else [mo.md("No model/K combinations available for the selected aliases.")]),
+    ])
+    return (ui_model_picks,)
+
+
+@app.cell
+def _(pl, ui_model_picks):
+    _selected = []
+    for _key, _alias in ui_model_picks.value.items():
+        if _alias == "__skip__":
+            continue
+        _kind, _K = _key.split(":", 1)
+        _selected.append(
+            {
+                "model_kind": _kind,
+                "K": int(_K),
+                "model_alias": _alias,
+            }
+        )
+
+    selected_model_specs = pl.DataFrame(
+        _selected,
+        schema={
+            "model_kind": pl.Utf8,
+            "K": pl.Int64,
+            "model_alias": pl.Utf8,
+        },
     )
+    return (selected_model_specs,)
+
+
+@app.cell
+def _(pl, results_long, selected_model_specs, ui_K_range, ui_subjects):
+    K_min, K_max = ui_K_range.value
+    if selected_model_specs.is_empty():
+        results_filtered = results_long.head(0)
+    else:
+        results_filtered = (
+            results_long
+            .join(selected_model_specs, on=["model_kind", "K", "model_alias"], how="inner")
+            .filter(
+                pl.col("subject").is_in(ui_subjects.value)
+                & pl.col("K").is_between(K_min, K_max)
+            )
+        )
     results_filtered
     return (results_filtered,)
 
@@ -330,6 +418,18 @@ def _(pl, results_filtered, ui_bic_baseline):
 
 
 @app.cell
+def _(mo, results_filtered):
+    _highlight_options = results_filtered["subject"].unique().sort().to_list()
+    ui_highlight_subject = mo.ui.dropdown(
+        options={"None": "__none__", **{_subject: _subject for _subject in _highlight_options}},
+        value="None",
+        label="Dashed subject",
+    )
+    mo.hstack([ui_highlight_subject])
+    return (ui_highlight_subject,)
+
+
+@app.cell
 def _(np):
     def observed_choice_index(adapter, trial_df):
         _resp = np.asarray(trial_df["response"]).astype(object)
@@ -394,6 +494,97 @@ def _(pl, results_filtered):
     )
     agg
     return (agg,)
+
+
+@app.cell
+def _(Line2D, mo, np, pl, plt, results_filtered, sns, ui_highlight_subject):
+    mo.stop(results_filtered.is_empty(), mo.md("No selected model metrics to plot."))
+    mo.stop(
+        results_filtered.filter(pl.col("model_kind") == "glm").is_empty(),
+        mo.md("Select a GLM model to use as the LL increment baseline."),
+    )
+
+    _MODEL_STYLES = {
+        "glm": {"label": "GLM", "marker": "s", "color": "#4C78A8"},
+        "glmhmmt": {"label": "GLMHMMT", "marker": "^", "color": "#54A24B"},
+        "glmhmm": {"label": "GLMHMM", "marker": "o", "color": "#F58518"},
+    }
+    _model_order = ["glm", "glmhmmt", "glmhmm"]
+    _highlight = ui_highlight_subject.value
+    _glm_baseline = (
+        results_filtered
+        .filter(pl.col("model_kind") == "glm")
+        .sort(["subject", "K", "model_alias"])
+        .group_by("subject")
+        .agg(pl.first("ll_per_trial").alias("glm_ll_per_trial"))
+    )
+
+    _plot_df = (
+        results_filtered
+        .join(_glm_baseline, on="subject", how="inner")
+        .with_columns(
+            ((pl.col("ll_per_trial") - pl.col("glm_ll_per_trial")) / np.log(2)).alias("test_ll_increment_bits")
+        )
+        .sort(["model_kind", "subject", "K"])
+        .to_pandas()
+    )
+
+    _fig_ll_bits, _ax_ll_bits = plt.subplots(figsize=(7.2, 4.6))
+
+    for _kind in _model_order:
+        _sub = _plot_df[_plot_df["model_kind"] == _kind]
+        if _sub.empty:
+            continue
+        _style = _MODEL_STYLES[_kind]
+        for _subject, _subject_df in _sub.groupby("subject"):
+            _subject_df = _subject_df.sort_values("K")
+            _is_highlight = _highlight != "__none__" and _subject == _highlight
+            _ax_ll_bits.plot(
+                _subject_df["K"],
+                _subject_df["test_ll_increment_bits"],
+                color=_style["color"],
+                linestyle="--" if _is_highlight else "-",
+                linewidth=2.0 if _is_highlight else 0.8,
+                alpha=0.9 if _is_highlight else 0.16,
+                marker=_style["marker"] if _is_highlight else None,
+                markersize=4,
+                zorder=3 if _is_highlight else 1,
+            )
+
+        _mean_df = (
+            _sub
+            .groupby("K", as_index=False)["test_ll_increment_bits"]
+            .mean()
+            .sort_values("K")
+        )
+        _ax_ll_bits.plot(
+            _mean_df["K"],
+            _mean_df["test_ll_increment_bits"],
+            color=_style["color"],
+            marker=_style["marker"],
+            linewidth=2.6,
+            markersize=5,
+            label=f"{_style['label']} mean",
+            zorder=4,
+        )
+
+    _ax_ll_bits.axhline(0, color="0.35", linewidth=0.9, linestyle="--", alpha=0.6)
+    _ax_ll_bits.set_xlabel("Number of states K")
+    _ax_ll_bits.set_ylabel("Test LL increment vs GLM (bits / trial)")
+    _ax_ll_bits.set_title("Per-animal and mean test LL increment vs GLM")
+    _K_values = sorted(_plot_df["K"].dropna().unique())
+    if _K_values:
+        _ax_ll_bits.set_xticks(_K_values)
+
+    _handles, _labels = _ax_ll_bits.get_legend_handles_labels()
+    if _highlight != "__none__":
+        _handles.append(Line2D([0], [0], color="0.2", linestyle="--", linewidth=2, label=f"{_highlight}"))
+        _labels.append(f"{_highlight} dashed")
+    _ax_ll_bits.legend(_handles, _labels, frameon=False, loc="best")
+    sns.despine(ax=_ax_ll_bits)
+    _fig_ll_bits.tight_layout()
+    _fig_ll_bits
+    return
 
 
 @app.cell
@@ -1442,9 +1633,10 @@ def _(
             alias_a=pairwise_alias_a,
             alias_b=pairwise_alias_b,
         )
-        mo.vstack([mo.md("#### Transition matrices"), _fig_transition_pair])
+        _transition_output = mo.vstack([mo.md("#### Transition matrices"), _fig_transition_pair])
     except Exception as _e:
-        mo.md(f"#### Transition matrices\n\nCould not render the pairwise transition comparison: `{_e}`")
+        _transition_output = mo.md(f"#### Transition matrices\n\nCould not render the pairwise transition comparison: `{_e}`")
+    _transition_output
     return
 
 
@@ -1484,7 +1676,7 @@ def _(
             pairwise_arrays_b,
             pairwise_names_b,
         )
-        mo.vstack(
+        _emission_output = mo.vstack(
             [
                 mo.md("#### Emission weights"),
                 mo.hstack(
@@ -1497,7 +1689,8 @@ def _(
             ]
         )
     except Exception as _e:
-        mo.md(f"#### Emission weights\n\nCould not render the pairwise emission summaries: `{_e}`")
+        _emission_output = mo.md(f"#### Emission weights\n\nCould not render the pairwise emission summaries: `{_e}`")
+    _emission_output
     return
 
 
@@ -1512,11 +1705,6 @@ def _(pl):
         return df_sub
 
     return (subject_behavior_df,)
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell

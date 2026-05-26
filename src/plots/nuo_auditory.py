@@ -1645,6 +1645,8 @@ def plot_right_by_regressor(
     group_order: Sequence | None = None,
     group_labels: dict | None = None,
     palette: dict | None = None,
+    legend: bool = True,
+    legend_ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     df_pd = _prepare_compat_plot_df(plot_df)
@@ -1776,7 +1778,17 @@ def plot_right_by_regressor(
         meta=meta,
         label_map=group_labels,
         palette=palette,
+        legend=False if legend_ax is not None else legend,
     )
+    if legend_ax is not None:
+        legend_ax.axis("off")
+        add_shared_figure_legend(
+            fig,
+            source_ax=ax,
+            title=meta.get("legend_title"),
+            legend_ax=legend_ax,
+            legend=legend,
+        )
     if title is not None:
         ax.set_title(title)
     apply_axis_style(ax, **({"xlabel": xlabel} if xlabel is not None else {}))
@@ -1799,12 +1811,17 @@ def plot_binned_accuracy_figure(
     lapse_max: float = 0.4,
     share_lapse_logistic_core: bool = False,
     fit_lapse_by_subject: bool = True,
+    n_bins: int = 4,
+    ax: plt.Axes | None = None,
+    legend_ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     _ = adapter, views
     style = dict(plot_kwargs)
     axes_arg = style.pop("axes", None)
     figsize_arg = style.pop("figsize", None)
+    if ax is not None:
+        axes_arg = [ax]
     df_pd = _prepare_compat_plot_df(plot_df)
 
     if regressor_col not in df_pd.columns or _EVIDENCE_COL not in df_pd.columns:
@@ -1855,7 +1872,7 @@ def plot_binned_accuracy_figure(
     df_pd, reg_centers = attach_quantile_bin_column(
         df_pd,
         value_col=regressor_col,
-        max_bins=4,
+        max_bins=int(n_bins),
         quantiles=None,
     )
     if df_pd is None or reg_centers.empty:
@@ -2006,6 +2023,8 @@ def plot_binned_accuracy_figure(
 
     extra_fit_axes = 2 if fit_lapse_logistic else 0
     n_axes = len(panels) + extra_fit_axes
+    if ax is not None and n_axes != 1:
+        raise ValueError("ax can only be used when plot_binned_accuracy_figure resolves to one axis.")
     resolved_figsize = (
         figsize_arg
         if figsize_arg is not None
@@ -2100,8 +2119,14 @@ def plot_binned_accuracy_figure(
             meta=diagnostic_meta or {},
             regressor_label=display_regressor_name(regressor_col),
         )
-    add_shared_figure_legend(fig, source_ax=panel_axes[-1], title=display_regressor_name(regressor_col), legend=legend)
-    fig.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
+    add_shared_figure_legend(
+        fig,
+        source_ax=panel_axes[-1],
+        title=display_regressor_name(regressor_col),
+        legend_ax=legend_ax,
+        legend=legend,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0 if legend_ax is not None else 0.92, 1.0))
     for ax in panel_axes:
         apply_axis_style(ax, **style)
 
@@ -2271,6 +2296,8 @@ def plot_right_integration_map(
     n_bins: int = 64,
     sigma: float | None = None,
     smooth: bool = True,
+    panel: str | None = None,
+    ax: plt.Axes | None = None,
     **plot_kwargs,
 ):
     df_pd = _prepare_compat_plot_df(plot_df)
@@ -2292,9 +2319,20 @@ def plot_right_integration_map(
     )
     if meta.get("x_col") in {_EVIDENCE_COL, "evidence_param"}:
         meta = {**meta, "xlabel": "Evidence strength"}
+    if panel is not None:
+        panel_label = str(panel).casefold()
+        panels = [
+            panel_data
+            for panel_data in panels
+            if str(panel_data.get("label", "")).casefold() == panel_label
+        ]
+        if not panels:
+            return None
+    axes = [ax] if ax is not None else None
     return plot_integration_map_panels(
         panels,
         meta=meta,
+        axes=axes,
         interpolation=None,
         **plot_kwargs,
     )
@@ -2439,6 +2477,7 @@ def plot_categorical_performance_all_by_state(
     model_line_mode: str = "smooth",
     state_assignment_mode: str = "weighted",
     n_bins: int = 9,
+    ax: Optional[plt.Axes] = None,
 ) -> plt.Figure:
     """Per-state psychometric grid (K panels, one per state).
 
@@ -2527,15 +2566,20 @@ def plot_categorical_performance_all_by_state(
         else {}
     )
 
-    _include_overlay = K > 1
-    if overlay_only:
-        _include_overlay = True
+    if ax is not None and not overlay_only:
+        raise ValueError("ax can only be used when overlay_only=True.")
+
+    _include_overlay = bool(overlay_only)
     _n_panels = K + int(_include_overlay)
     if overlay_only:
         _n_panels = 1
     _figsize = (3, 3) if overlay_only else (panel_w * _n_panels, 4)
-    fig, axes = plt.subplots(1, _n_panels, figsize=_figsize, sharey=True, dpi=figure_dpi)
-    axes = np.atleast_1d(axes)
+    if ax is None:
+        fig, axes = plt.subplots(1, _n_panels, figsize=_figsize, sharey=True, dpi=figure_dpi)
+        axes = np.atleast_1d(axes)
+    else:
+        fig = ax.figure
+        axes = np.asarray([ax], dtype=object)
 
     if _include_overlay:
         _ax_overlay = axes[0]
@@ -2618,10 +2662,54 @@ def plot_categorical_performance_all_by_state(
 
     fig.suptitle(model_name, y=1.02)
     fig.tight_layout()
-    return fig
+    return fig, axes[:_n_panels]
 
 
 # Alias used by the analysis notebooks
+def plot_categorical_performance_state_overlay(
+    df,
+    views: dict,
+    model_name: str,
+    ild_col: str = _EVIDENCE_COL,
+    choice_col: str = _RESPONSE_COL,
+    pred_col: str = "p_pred",
+    subj_col: str = "subject",
+    X_cols: Optional[Sequence[str]] = None,
+    ild_max: Optional[float] = None,
+    background_style: str = "data",
+    show_weighted_points: bool = True,
+    show_data_smooth: bool = True,
+    show_model_smooth: bool = True,
+    figure_dpi: float = 80.0,
+    model_line_mode: str = "smooth",
+    state_assignment_mode: str = "weighted",
+    n_bins: int = 9,
+    ax: Optional[plt.Axes] = None,
+) -> plt.Figure:
+    """Single-panel state-overlay psychometric."""
+    return plot_categorical_performance_all_by_state(
+        df=df,
+        views=views,
+        model_name=model_name,
+        ild_col=ild_col,
+        choice_col=choice_col,
+        pred_col=pred_col,
+        subj_col=subj_col,
+        X_cols=X_cols,
+        ild_max=ild_max,
+        background_style=background_style,
+        show_weighted_points=show_weighted_points,
+        show_data_smooth=show_data_smooth,
+        show_model_smooth=show_model_smooth,
+        figure_dpi=figure_dpi,
+        overlay_only=True,
+        model_line_mode=model_line_mode,
+        state_assignment_mode=state_assignment_mode,
+        n_bins=n_bins,
+        ax=ax,
+    )
+
+
 plot_categorical_performance_by_state = plot_categorical_performance_all_by_state
 
 
@@ -2757,9 +2845,7 @@ def plot_regressor_psychometric_by_state(
         else {}
     )
 
-    _include_overlay = K > 1
-    if overlay_only:
-        _include_overlay = True
+    _include_overlay = bool(overlay_only)
     _n_panels = K + int(_include_overlay)
     if overlay_only:
         _n_panels = 1

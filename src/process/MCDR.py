@@ -512,6 +512,7 @@ from src.process.common import (
     attach_quantile_bin_column,
     attach_response_right_column,
     display_regressor_name,
+    label_states_by_regressor,
     p_right_label,
     prepare_grouped_weight_family_plot,
     prepare_weight_family_base_df,
@@ -709,6 +710,7 @@ def prepare_binned_accuracy_figure(
     *,
     regressor_col: str,
     cfg,
+    n_bins: int = 4,
 ) -> tuple[list[dict] | None, str | None]:
     df_pd = to_pandas_df(trial_df)
     if regressor_col not in df_pd.columns:
@@ -717,7 +719,7 @@ def prepare_binned_accuracy_figure(
     df_pd, bin_centers = attach_quantile_bin_column(
         df_pd,
         value_col=regressor_col,
-        max_bins=4,
+        max_bins=int(n_bins),
         quantiles=None,
     )
     if df_pd is None:
@@ -1169,6 +1171,10 @@ class MCDRAdapter(TaskAdapter):
         "bias_coh":  [("biasL", 0), ("biasR", 1)],
     }
     scoring_key: str = "S_coh"
+    state_scoring_feature: str | None = None
+    state_scoring_rule: str = "+"
+    state_split_feature: str | None = None
+    state_split_rule: str = "+"
 
     # ── data preparation ────────────────────────────────────────────────────
 
@@ -1773,81 +1779,15 @@ class MCDRAdapter(TaskAdapter):
         K: int,
         subjects: list,
     ) -> tuple:
-        """MCDR engagement scoring driven by ``self.scoring_key``.
-
-        The state with the highest mean coherent weight (as defined by the
-        selected scoring regressor) is labelled "Engaged"; the rest are
-        "Disengaged" (or "Disengaged 1", "Disengaged 2", … for K>2).
-        """
-        import numpy as np
-
-        pairs = self._SCORING_OPTIONS.get(
-            getattr(self, "scoring_key", "S_coh"),
-            self._SCORING_OPTIONS["S_coh"],
+        return label_states_by_regressor(
+            arrays_store,
+            names,
+            K,
+            subjects,
+            primary_feature=getattr(self, "state_scoring_feature", None),
+            primary_rule=getattr(self, "state_scoring_rule", "+"),
+            split_feature=getattr(self, "state_split_feature", None),
+            split_rule=getattr(self, "state_split_rule", "+"),
+            preferred_features=("stim_param", "SL", "SR", "ttype_c"),
+            preferred_split_features=("bias", "bias_param", "SL", "SR"),
         )
-
-        def _scoh(W, feat_names):
-            name2fi = {n: i for i, n in enumerate(feat_names)}
-            scores = np.zeros(W.shape[0])
-            n = 0
-            for feat, cls in pairs:
-                if feat in name2fi:
-                    scores += W[:, cls, name2fi[feat]]
-                    n += 1
-            return scores / max(1, n)
-
-        base_feat = list(names.get("X_cols", []))
-        state_labels: dict = {}
-        state_order: dict  = {}
-        for subj in subjects:
-            W = arrays_store[subj].get("emission_weights") if subj in arrays_store else None
-            if W is None:
-                state_labels[subj] = {k: f"State {k+1}" for k in range(K)}
-                state_order[subj]  = list(range(K))
-                continue
-            W_np    = np.asarray(W)
-            feat    = list(arrays_store[subj].get("X_cols", base_feat))
-            scores  = _scoh(W_np, feat)
-            ranking = list(np.argsort(scores)[::-1])
-            engaged_k = int(ranking[0])
-            others    = [int(k) for k in ranking[1:]]
-            labels: dict = {engaged_k: "Engaged"}
-
-            if K == 2:
-                labels[others[0]] = "Disengaged"
-                order = [engaged_k] + others
-
-            elif K == 4:
-                name2fi = {n: i for i, n in enumerate(feat)}
-                sl_fi   = name2fi.get("SL")
-                sr_fi   = name2fi.get("SR")
-
-                # Disengaged L: state most driven by SL (left-choice weight)
-                if sl_fi is not None:
-                    dis_l = others[int(np.argmax(W_np[others, 0, sl_fi]))]
-                else:
-                    dis_l = others[0]
-                remaining = [k for k in others if k != dis_l]
-
-                # Disengaged R: state most driven by SR (right-choice weight)
-                if sr_fi is not None:
-                    dis_r = remaining[int(np.argmax(W_np[remaining, 1, sr_fi]))]
-                else:
-                    dis_r = remaining[0]
-                dis_c = [k for k in remaining if k != dis_r][0]
-
-                labels[dis_l] = "Disengaged L"
-                labels[dis_r] = "Disengaged R"
-                labels[dis_c] = "Disengaged C"
-                order = [engaged_k, dis_l, dis_r, dis_c]
-
-            else:
-                dis = 1
-                for k in others:
-                    labels[k] = f"Disengaged {dis}"
-                    dis += 1
-                order = [engaged_k] + others
-
-            state_labels[subj] = labels
-            state_order[subj]  = order
-        return state_labels, state_order

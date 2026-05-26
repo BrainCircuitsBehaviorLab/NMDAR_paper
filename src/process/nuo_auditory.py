@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
+from ._transition_params import transition_weighted_sum
 from glmhmmt.tasks.fitted_regressors import (
     FittedWeightRegressorSpec,
     mean_feature_weights_from_fit,
@@ -17,6 +18,7 @@ from glmhmmt.tasks import TaskAdapter, _register
 from src.process.common import (
     PreparedWeightFamilyPlot,
     binned_feature_summary,
+    label_states_by_regressor,
     prepare_grouped_weight_family_plot,
     to_pandas_df,
 )
@@ -42,13 +44,25 @@ _NUM_STIM_BINS = 9
 _NUM_CHOICE_LAGS = 15
 _STIM_BIN_PREFIX = "stim_bin_"
 _CHOICE_LAG_PREFIX = "choice_lag_"
+_REWARD_LAG_PREFIX = "reward_lag_"
 _DIFFICULTY_COL_PREFIX = "difficulty_"
+_TRANSITION_DIFFICULTY_HOT_PREFIX = "difficulty_hot_"
+_PREV_DIFFICULTY_HOT_PREFIX = "prev_difficulty_hot_"
+_PREV_DIFFICULTY_LAG_PREFIX = "prev_difficulty_lag_"
+_PREV_DIFFICULTY_LAG_HOT_PREFIX = "prev_difficulty_lag_hot_"
+_PREV_DAY_REWARD_LAG_PREFIX = "prev_day_total_reward_lag_"
 _BIAS_HOT_COL_PREFIX = "bias_"
 _STIM_PARAM_COL = "stim_param"
 _EVIDENCE_PARAM_COL = "evidence_param"
 _DIFFICULTY_PARAM_COL = "difficulty_param"
 _AT_CHOICE_PARAM_COL = "at_choice_param"
+_REWARD_LAG_PARAM_COL = "reward_lag_param"
+_TRANSITION_DIFFICULTY_PARAM_COL = "difficulty_hot_param"
+_PREV_DIFFICULTY_PARAM_COL = "prev_difficulty_param"
+_TRANSITION_PARAM_MODEL_ID = "one hot"
 _DIFFICULTY_LEVELS = ("easy", "medium", "hard")
+_NUM_DIFFICULTY_LAGS = 20
+_NUM_DAY_REWARD_LAGS = 5
 PRED_COL = "p_pred"
 RESPONSE_MODE = "pm1_or_prob"
 BASELINE = 0.5
@@ -66,13 +80,58 @@ def _choice_lag_names() -> list[str]:
     return [f"{_CHOICE_LAG_PREFIX}{idx:02d}" for idx in range(1, _NUM_CHOICE_LAGS + 1)]
 
 
+def _reward_lag_names() -> list[str]:
+    return [f"{_REWARD_LAG_PREFIX}{idx:02d}" for idx in range(1, _NUM_CHOICE_LAGS + 1)]
+
+
+def _zscore_sequence(values: list[float]) -> list[float]:
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.size == 0:
+        return []
+    mean = float(np.nanmean(arr))
+    std = float(np.nanstd(arr))
+    if not np.isfinite(std) or std <= 0:
+        return [0.0 for _ in arr]
+    return ((arr - mean) / std).astype(np.float32).tolist()
+
+
+def _prev_day_reward_lag_names() -> list[str]:
+    return [f"{_PREV_DAY_REWARD_LAG_PREFIX}{idx:02d}" for idx in range(1, _NUM_DAY_REWARD_LAGS + 1)]
+
+
+def _prev_difficulty_lag_names() -> list[str]:
+    return [f"{_PREV_DIFFICULTY_LAG_PREFIX}{idx:02d}" for idx in range(1, _NUM_DIFFICULTY_LAGS + 1)]
+
+
 def _difficulty_col_names() -> list[str]:
     return [f"{_DIFFICULTY_COL_PREFIX}{level}" for level in _DIFFICULTY_LEVELS]
 
 
+def _transition_difficulty_hot_names() -> list[str]:
+    return [f"{_TRANSITION_DIFFICULTY_HOT_PREFIX}{level}" for level in _DIFFICULTY_LEVELS]
+
+
+def _prev_difficulty_hot_names() -> list[str]:
+    return [f"{_PREV_DIFFICULTY_HOT_PREFIX}{level}" for level in _DIFFICULTY_LEVELS]
+
+
+def _prev_difficulty_lag_hot_names() -> list[str]:
+    return [
+        f"{_PREV_DIFFICULTY_LAG_HOT_PREFIX}{lag_idx:02d}_{level}"
+        for lag_idx in range(1, _NUM_DIFFICULTY_LAGS + 1)
+        for level in _DIFFICULTY_LEVELS
+    ]
+
+
 _STIM_BIN_COLS = _stim_bin_names()
 _CHOICE_LAG_COLS = _choice_lag_names()
+_REWARD_LAG_COLS = _reward_lag_names()
+_PREV_DAY_REWARD_LAG_COLS = _prev_day_reward_lag_names()
 _DIFFICULTY_COLS = _difficulty_col_names()
+_TRANSITION_DIFFICULTY_HOT_COLS = _transition_difficulty_hot_names()
+_PREV_DIFFICULTY_HOT_COLS = _prev_difficulty_hot_names()
+_PREV_DIFFICULTY_LAG_COLS = _prev_difficulty_lag_names()
+_PREV_DIFFICULTY_LAG_HOT_COLS = _prev_difficulty_lag_hot_names()
 
 EMISSION_COLS: list[str] = [
     "bias",
@@ -99,6 +158,12 @@ TRANSITION_COLS: list[str] = [
     "prev_abs_stim",
     "prev_reward",
     "cumulative_reward",
+    "prev_day_total_reward",
+    "prev_day_total_reward_x_cumulative_reward",
+    _REWARD_LAG_PARAM_COL,
+    _TRANSITION_DIFFICULTY_PARAM_COL,
+    "prev_difficulty",
+    _PREV_DIFFICULTY_PARAM_COL,
 ]
 
 _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
@@ -484,6 +549,103 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
     return result
 
 
+def _build_transition_groups(available_cols: list[str]) -> list[dict]:
+    available = set(available_cols)
+    result: list[dict] = []
+    registered: set[str] = set()
+
+    def add_scalar(col: str, label: str | None = None) -> None:
+        if col in available:
+            result.append({"key": col, "label": label or col, "members": {"N": col}})
+            registered.add(col)
+
+    for col in TRANSITION_COLS:
+        add_scalar(col)
+
+    reward_lag_cols = [col for col in _REWARD_LAG_COLS if col in available]
+    if reward_lag_cols:
+        result.append(
+            {
+                "key": "reward_lag",
+                "label": "reward lag",
+                "members": {},
+                "toggle_members": list(reward_lag_cols),
+                "hide_members": True,
+            }
+        )
+        registered.update(reward_lag_cols)
+
+    prev_day_reward_lag_cols = [col for col in _PREV_DAY_REWARD_LAG_COLS if col in available]
+    if prev_day_reward_lag_cols:
+        result.append(
+            {
+                "key": "prev_day_total_reward_lag",
+                "label": "prev day reward lag",
+                "members": {},
+                "toggle_members": list(prev_day_reward_lag_cols),
+                "hide_members": True,
+            }
+        )
+        registered.update(prev_day_reward_lag_cols)
+
+    difficulty_hot_cols = [col for col in _TRANSITION_DIFFICULTY_HOT_COLS if col in available]
+    if difficulty_hot_cols:
+        result.append(
+            {
+                "key": "difficulty_hot",
+                "label": "difficulty one-hot",
+                "members": {},
+                "toggle_members": list(difficulty_hot_cols),
+                "hide_members": True,
+            }
+        )
+        registered.update(difficulty_hot_cols)
+
+    prev_difficulty_hot_cols = [col for col in _PREV_DIFFICULTY_HOT_COLS if col in available]
+    if prev_difficulty_hot_cols:
+        result.append(
+            {
+                "key": "prev_difficulty_hot",
+                "label": "prev difficulty one-hot",
+                "members": {},
+                "toggle_members": list(prev_difficulty_hot_cols),
+                "hide_members": True,
+            }
+        )
+        registered.update(prev_difficulty_hot_cols)
+
+    prev_difficulty_lag_cols = [col for col in _PREV_DIFFICULTY_LAG_COLS if col in available]
+    if prev_difficulty_lag_cols:
+        result.append(
+            {
+                "key": "prev_difficulty_lag",
+                "label": "prev difficulty lag",
+                "members": {},
+                "toggle_members": list(prev_difficulty_lag_cols),
+                "hide_members": True,
+            }
+        )
+        registered.update(prev_difficulty_lag_cols)
+
+    prev_difficulty_lag_hot_cols = [col for col in _PREV_DIFFICULTY_LAG_HOT_COLS if col in available]
+    if prev_difficulty_lag_hot_cols:
+        result.append(
+            {
+                "key": "prev_difficulty_lag_hot",
+                "label": "prev difficulty lag one-hot",
+                "members": {},
+                "toggle_members": list(prev_difficulty_lag_hot_cols),
+                "hide_members": True,
+            }
+        )
+        registered.update(prev_difficulty_lag_hot_cols)
+
+    remaining = [col for col in available_cols if col not in registered]
+    if remaining:
+        result.extend(_build_selector_groups(remaining, []))
+    return result
+
+
 @_register(["nuo_auditory", "auditory_2afc", "nuo_auditive"])
 class NuoAuditoryAdapter(TaskAdapter):
     """Adapter for the binary Nuo auditory task."""
@@ -518,6 +680,10 @@ class NuoAuditoryAdapter(TaskAdapter):
         "bias (|w|)": [("bias", "abs")],
     }
     scoring_key: str = "stim_vals (w)"
+    state_scoring_feature: str | None = None
+    state_scoring_rule: str = "+"
+    state_split_feature: str | None = None
+    state_split_rule: str = "+"
 
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
         """Drop miss trials and add the canonical binary-task columns.
@@ -569,6 +735,42 @@ class NuoAuditoryAdapter(TaskAdapter):
             stim_scale = 1.0
 
         session_order = list(dict.fromkeys(df_sub["session"].to_list()))
+        session_reward_totals = (
+            df_sub.group_by("session", maintain_order=True)
+            .agg(pl.col("performance").cast(pl.Float32).fill_null(0.0).sum().alias("_session_total_reward"))
+        )
+        reward_total_map = dict(
+            zip(
+                session_reward_totals["session"].to_list(),
+                session_reward_totals["_session_total_reward"].to_list(),
+            )
+        )
+        prev_reward_lags_by_session: dict[int, dict[Any, float]] = {}
+        for lag in range(1, _NUM_DAY_REWARD_LAGS + 1):
+            raw_values = [
+                float(reward_total_map.get(session_order[idx - lag], 0.0))
+                if idx >= lag
+                else 0.0
+                for idx in range(len(session_order))
+            ]
+            z_values = _zscore_sequence(raw_values)
+            prev_reward_lags_by_session[lag] = dict(zip(session_order, z_values))
+        prev_reward_session_map = pl.DataFrame(
+            {
+                "session": session_order,
+                "prev_day_total_reward": np.asarray(
+                    [prev_reward_lags_by_session[1][session] for session in session_order],
+                    dtype=np.float32,
+                ),
+                **{
+                    f"{_PREV_DAY_REWARD_LAG_PREFIX}{lag:02d}": np.asarray(
+                        [prev_reward_lags_by_session[lag][session] for session in session_order],
+                        dtype=np.float32,
+                    )
+                    for lag in range(1, _NUM_DAY_REWARD_LAGS + 1)
+                },
+            }
+        )
         session_map = pl.DataFrame(
             {
                 "session": session_order,
@@ -576,6 +778,7 @@ class NuoAuditoryAdapter(TaskAdapter):
             }
         )
         df_sub = df_sub.join(session_map, on="session", how="left")
+        df_sub = df_sub.join(prev_reward_session_map, on="session", how="left")
         session_idx_np = df_sub["_session_idx"].to_numpy().astype(np.int32)
         bias_hot_exprs = [
             pl.Series(
@@ -631,6 +834,43 @@ class NuoAuditoryAdapter(TaskAdapter):
                 for level, col in zip(_DIFFICULTY_LEVELS, _DIFFICULTY_COLS)
             ]
         )
+        df_sub = df_sub.with_columns(
+            [
+                pl.when(pl.col("difficulty").str.to_lowercase() == level)
+                .then(pl.lit(1.0))
+                .otherwise(pl.lit(0.0))
+                .cast(pl.Float32)
+                .alias(col)
+                for level, col in zip(_DIFFICULTY_LEVELS, _TRANSITION_DIFFICULTY_HOT_COLS)
+            ]
+        )
+        df_sub = df_sub.with_columns(
+            [
+                pl.col(col).shift(1).fill_null(0.0).over("session").cast(pl.Float32).alias(prev_col)
+                for col, prev_col in zip(_TRANSITION_DIFFICULTY_HOT_COLS, _PREV_DIFFICULTY_HOT_COLS)
+            ]
+        )
+        difficulty_value_expr = (
+            pl.when(pl.col("difficulty").str.to_lowercase() == "hard")
+            .then(pl.lit(1.0))
+            .when(pl.col("difficulty").str.to_lowercase() == "medium")
+            .then(pl.lit(0.5))
+            .otherwise(pl.lit(0.0))
+        )
+        prev_difficulty_lag_exprs = [
+            difficulty_value_expr.shift(lag).fill_null(0.0).over("session").cast(pl.Float32).alias(name)
+            for lag, name in enumerate(_PREV_DIFFICULTY_LAG_COLS, start=1)
+        ]
+        prev_difficulty_lag_hot_exprs = [
+            pl.when(pl.col("difficulty").str.to_lowercase().shift(lag).fill_null("").over("session") == level)
+            .then(pl.lit(1.0))
+            .otherwise(pl.lit(0.0))
+            .cast(pl.Float32)
+            .alias(f"{_PREV_DIFFICULTY_LAG_HOT_PREFIX}{lag:02d}_{level}")
+            for lag in range(1, _NUM_DIFFICULTY_LAGS + 1)
+            for level in _DIFFICULTY_LEVELS
+        ]
+        df_sub = df_sub.with_columns([*prev_difficulty_lag_exprs, *prev_difficulty_lag_hot_exprs])
 
         df_sub = df_sub.with_columns(
             [
@@ -652,7 +892,16 @@ class NuoAuditoryAdapter(TaskAdapter):
             .alias(name)
             for lag, name in enumerate(_CHOICE_LAG_COLS, start=1)
         ]
-        df_sub = df_sub.with_columns(lag_exprs)
+        reward_lag_exprs = [
+            pl.col("performance")
+            .shift(lag)
+            .fill_null(0.0)
+            .over("session")
+            .cast(pl.Float32)
+            .alias(name)
+            for lag, name in enumerate(_REWARD_LAG_COLS, start=1)
+        ]
+        df_sub = df_sub.with_columns([*lag_exprs, *reward_lag_exprs])
 
         bias_param = _safe_weighted_sum_regressor(df_sub, _BIAS_PARAM_SPEC)
         stim_param = _safe_weighted_sum_regressor(df_sub, _STIM_PARAM_SPEC)
@@ -665,11 +914,17 @@ class NuoAuditoryAdapter(TaskAdapter):
                 .then(pl.col("_cumulative_reward_raw") / pl.col("_cumulative_reward_raw").max().over("session"))
                 .otherwise(pl.lit(0.0))
                 .cast(pl.Float32)
-                .alias("cumulative_reward"),
+                .alias("_cumulative_reward_norm"),
                 pl.col("_prev_choice_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("at_choice"),
                 pl.col("_prev_correct_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("at_correct"),
                 pl.col("_prev_error_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("at_error"),
                 pl.col("prev_reward").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias("reward_trace"),
+                pl.col(f"{_PREV_DIFFICULTY_LAG_PREFIX}01").cast(pl.Float32).alias("prev_difficulty"),
+                pl.col("prev_day_total_reward").fill_null(0.0).cast(pl.Float32),
+                *[
+                    pl.col(col).fill_null(0.0).cast(pl.Float32)
+                    for col in _PREV_DAY_REWARD_LAG_COLS
+                ],
                 (
                     pl.Series("bias_param", bias_param)
                     if bias_param is not None
@@ -694,6 +949,58 @@ class NuoAuditoryAdapter(TaskAdapter):
                     pl.Series(_AT_CHOICE_PARAM_COL, at_choice_param)
                     if at_choice_param is not None
                     else pl.col("_prev_choice_signed").ewm_mean(half_life=half_life, adjust=False).over("session").cast(pl.Float32).alias(_AT_CHOICE_PARAM_COL)
+                ),
+            ]
+        )
+        cumulative_reward_mean = pl.col("_cumulative_reward_norm").mean().over("session")
+        cumulative_reward_std = pl.col("_cumulative_reward_norm").std(ddof=0).over("session")
+        df_sub = df_sub.with_columns(
+            pl.when(cumulative_reward_std > 0)
+            .then((pl.col("_cumulative_reward_norm") - cumulative_reward_mean) / cumulative_reward_std)
+            .otherwise(pl.lit(0.0))
+            .fill_nan(0.0)
+            .fill_null(0.0)
+            .cast(pl.Float32)
+            .alias("cumulative_reward")
+        )
+        df_sub = df_sub.with_columns(
+            (
+                pl.col(f"{_PREV_DAY_REWARD_LAG_PREFIX}01") * pl.col("cumulative_reward")
+            )
+            .cast(pl.Float32)
+            .alias("prev_day_total_reward_x_cumulative_reward")
+        )
+        df_sub = df_sub.with_columns(
+            [
+                pl.Series(
+                    _REWARD_LAG_PARAM_COL,
+                    transition_weighted_sum(
+                        df_sub,
+                        fit_task=self.task_key,
+                        fit_model_id=_TRANSITION_PARAM_MODEL_ID,
+                        source_features=_REWARD_LAG_COLS,
+                        fallback=df_sub.select(pl.mean_horizontal([pl.col(col) for col in _REWARD_LAG_COLS])).to_series().to_numpy(),
+                    ),
+                ),
+                pl.Series(
+                    _TRANSITION_DIFFICULTY_PARAM_COL,
+                    transition_weighted_sum(
+                        df_sub,
+                        fit_task=self.task_key,
+                        fit_model_id=_TRANSITION_PARAM_MODEL_ID,
+                        source_features=_TRANSITION_DIFFICULTY_HOT_COLS,
+                        fallback=df_sub["stim_vals"].abs().to_numpy(),
+                    ),
+                ),
+                pl.Series(
+                    _PREV_DIFFICULTY_PARAM_COL,
+                    transition_weighted_sum(
+                        df_sub,
+                        fit_task=self.task_key,
+                        fit_model_id=_TRANSITION_PARAM_MODEL_ID,
+                        source_features=_PREV_DIFFICULTY_LAG_HOT_COLS,
+                        fallback=df_sub["prev_difficulty"].to_numpy(),
+                    ),
                 ),
             ]
         )
@@ -726,7 +1033,19 @@ class NuoAuditoryAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(feature_df))
         ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        allowed_ucols = self.available_transition_cols()
+        dynamic_ucols = [
+            col
+            for col in [
+                *_REWARD_LAG_COLS,
+                *_PREV_DAY_REWARD_LAG_COLS,
+                *_TRANSITION_DIFFICULTY_HOT_COLS,
+                *_PREV_DIFFICULTY_HOT_COLS,
+                *_PREV_DIFFICULTY_LAG_COLS,
+                *_PREV_DIFFICULTY_LAG_HOT_COLS,
+            ]
+            if col in feature_df.columns
+        ]
+        allowed_ucols = list(dict.fromkeys([*self.available_transition_cols(), *dynamic_ucols]))
         bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(
@@ -776,21 +1095,32 @@ class NuoAuditoryAdapter(TaskAdapter):
         return list(self.emission_cols) + self._dynamic_emission_cols(df)
 
     def default_transition_cols(self) -> List[str]:
-        return list(self.transition_cols)
+        return list(
+            dict.fromkeys(
+                [
+                    *self.transition_cols,
+                    *_REWARD_LAG_COLS,
+                    *_PREV_DAY_REWARD_LAG_COLS,
+                    *_TRANSITION_DIFFICULTY_HOT_COLS,
+                    *_PREV_DIFFICULTY_HOT_COLS,
+                    *_PREV_DIFFICULTY_LAG_COLS,
+                    *_PREV_DIFFICULTY_LAG_HOT_COLS,
+                ]
+            )
+        )
 
     def available_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
         available_cols = list(self.emission_cols) + [_EVIDENCE_PARAM_COL]
         return list(dict.fromkeys(available_cols + self._dynamic_emission_cols(df)))
 
     def available_transition_cols(self) -> List[str]:
-        return list(self.transition_cols)
+        return self.default_transition_cols()
 
     def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_emission_groups(list(available_cols))
 
     def build_transition_groups(self, available_cols: List[str]) -> list[dict]:
-        del available_cols
-        return []
+        return _build_transition_groups(list(available_cols))
 
     def weight_family_specs(self, weights_df=None) -> Dict[str, dict]:
         df = to_pandas_df(weights_df) if weights_df is not None else None
@@ -876,7 +1206,21 @@ class NuoAuditoryAdapter(TaskAdapter):
         allowed_ecols = set(self.available_emission_cols(df))
         ecols = _drop_unavailable_bias_hot_cols(ecols, allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
-        allowed_ucols = self.available_transition_cols()
+        dynamic_ucols = []
+        if df is not None:
+            dynamic_ucols = [
+                col
+                for col in [
+                    *_REWARD_LAG_COLS,
+                    *_PREV_DAY_REWARD_LAG_COLS,
+                    *_TRANSITION_DIFFICULTY_HOT_COLS,
+                    *_PREV_DIFFICULTY_HOT_COLS,
+                    *_PREV_DIFFICULTY_LAG_COLS,
+                    *_PREV_DIFFICULTY_LAG_HOT_COLS,
+                ]
+                if col in df.columns
+            ]
+        allowed_ucols = list(dict.fromkeys([*self.available_transition_cols(), *dynamic_ucols]))
         bad_u = [c for c in ucols if c not in allowed_ucols]
         if bad_e:
             raise ValueError(
@@ -929,53 +1273,14 @@ class NuoAuditoryAdapter(TaskAdapter):
         K: int,
         subjects: list,
     ) -> tuple:
-        """Binary-task state labels using the task's native stimulus sign."""
-        base_feat = list(names.get("X_cols", []))
-        state_labels: dict = {}
-        state_order: dict = {}
-
-        for subj in subjects:
-            W = arrays_store[subj].get("emission_weights") if subj in arrays_store else None
-            if W is None:
-                state_labels[subj] = {k: f"State {k+1}" for k in range(K)}
-                state_order[subj] = list(range(K))
-                continue
-
-            feat = list(arrays_store[subj].get("X_cols", base_feat))
-            W = np.asarray(W)
-            name2fi = {n: i for i, n in enumerate(feat)}
-
-            stim_fi = name2fi.get("stim_vals")
-            if stim_fi is not None:
-                stim_scores = W[:, 0, stim_fi]
-            else:
-                stim_scores = W[:, 0, :].mean(axis=1)
-
-            engaged_k = int(np.argmax(stim_scores))
-            others = [k for k in range(K) if k != engaged_k]
-            labels: dict = {engaged_k: "Engaged"}
-
-            if K == 2:
-                labels[others[0]] = "Disengaged"
-                order = [engaged_k, others[0]]
-            elif K == 3:
-                bias_fi = name2fi.get("bias")
-                if bias_fi is not None:
-                    bias_disp = W[others, 0, bias_fi]
-                    biased_l = others[int(np.argmin(bias_disp))]
-                    biased_r = others[int(np.argmax(bias_disp))]
-                else:
-                    biased_l, biased_r = others[0], others[1]
-                labels[biased_l] = "Biased L"
-                labels[biased_r] = "Biased R"
-                order = [engaged_k, biased_l, biased_r]
-            else:
-                others_sorted = sorted(others, key=lambda k: stim_scores[k], reverse=True)
-                for dis, k in enumerate(others_sorted, start=1):
-                    labels[k] = f"Disengaged {dis}"
-                order = [engaged_k] + others_sorted
-
-            state_labels[subj] = labels
-            state_order[subj] = order
-
-        return state_labels, state_order
+        return label_states_by_regressor(
+            arrays_store,
+            names,
+            K,
+            subjects,
+            primary_feature=getattr(self, "state_scoring_feature", None),
+            primary_rule=getattr(self, "state_scoring_rule", "+"),
+            split_feature=getattr(self, "state_split_feature", None),
+            split_rule=getattr(self, "state_split_rule", "+"),
+            preferred_features=("evidence_param", "stim_param", "stim_vals"),
+        )

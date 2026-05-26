@@ -13,14 +13,14 @@ import polars as pl
 import seaborn as sns
 
 from glmhmmt.plots import (
-    plot_transition_matrix as _plot_transition_matrix_simple,
-    plot_transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
+    transition_matrix as _plot_transition_matrix_simple,
+    transition_matrix_by_subject as _plot_transition_matrix_by_subject_simple,
 )
 from glmhmmt.postprocess import (
     build_transition_matrix_by_subject_payload,
     build_transition_matrix_payload,
 )
-from glmhmmt.model_plotting.legacy import (
+from glmhmmt.plots.legacy import (
     _state_color,
     plot_posterior_probs,
     plot_change_triggered_posteriors_by_subject,
@@ -574,10 +574,10 @@ def plot_cat_panel(ax, df, group_col, order, title, xlabel, ylabel=None, palette
     if df["subject"].n_unique() > 1:
         ax.fill_between(xpos, mm - sm, mm + sm, color="black", alpha=0.12)
         for idx, (x, y, err) in enumerate(zip(xpos, md, sd)):
-            ax.errorbar(x, y, yerr=err, fmt="o", color=colors_used[idx], ms=7, capsize=3)
+            ax.errorbar(x, y, yerr=err, fmt="o", color=colors_used[idx], ms=5, capsize=3)
     else:
         for idx, (x, y) in enumerate(zip(xpos, md)):
-            ax.errorbar(x, y, fmt="o", color=colors_used[idx], ms=7, capsize=3)
+            ax.errorbar(x, y, fmt="o", color=colors_used[idx], ms=5, capsize=3)
 
     tick_labels = [dict(zip(order, labels)).get(c, c) for c in cats] if labels else cats
     ax.set_xticks(xpos)
