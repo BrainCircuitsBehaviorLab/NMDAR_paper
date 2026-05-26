@@ -1,0 +1,36 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 50,
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_param",
+        "prev_choice"
+    ],
+    "transition_cols": [
+        "filtered_reward",
+        "filtered_choice",
+        "filtered_stim_side",
+        "drug_x_filtered_reward",
+        "Drug"
+    ],
+    "frozen_emissions": {},
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "mohammadi drug2",
+    "cv_mode": "none",
+    "cv_repeats": 0
+}

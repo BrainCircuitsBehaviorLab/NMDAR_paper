@@ -2,35 +2,35 @@
     "task": "MCDR",
     "tau": 50,
     "subjects": [
-        "A83",
-        "A86",
-        "A89",
-        "A92",
-        "A93",
-        "A95",
-        "A96",
-        "A87"
+        "B16",
+        "B17",
+        "B18",
+        "B19",
+        "B22",
+        "B23",
+        "B24",
+        "B26",
+        "B28",
+        "B31",
+        "B32",
+        "B33",
+        "B34",
+        "B35",
+        "B36",
+        "B37"
     ],
     "emission_cols": [
         "bias",
-        "stim1L",
-        "stim1C",
-        "stim1R",
-        "stim2L",
-        "stim2C",
-        "stim2R",
-        "stim3L",
-        "stim3C",
-        "stim3R",
-        "stim4L",
-        "stim4C",
-        "stim4R"
+        "choice_lag_param",
+        "stim_param"
     ],
     "frozen_emissions": {},
+    "baseline_class_idx": 1,
     "K_list": [
         2
     ],
     "model_id": "One-hot",
     "cv_mode": "none",
-    "cv_repeats": 0
+    "cv_repeats": 0,
+    "condition_filter": "all"
 }

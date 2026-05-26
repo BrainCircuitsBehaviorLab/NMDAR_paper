@@ -1,0 +1,30 @@
+{
+    "task": "2AFC_DRUG",
+    "model_id": "saline_param",
+    "alias": "saline_param",
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+    ],
+    "tau": 3,
+    "cv_mode": "none",
+    "cv_repeats": 0,
+    "emission_cols": [
+        "bias_param",
+        "stim_param",
+        "choice_lag_param"
+    ],
+    "condition_filter": "saline",
+    "K_list": [
+        2
+    ],
+    "frozen_emissions": {}
+}
