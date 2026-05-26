@@ -346,6 +346,47 @@ def _style_legacy_psych_axis(ax: plt.Axes, xticks: Sequence[float]) -> None:
     ax.set_ylabel(r"$p(\mathrm{right})$")
 
 
+def _apply_signed_delay_axis_ticks(
+    ax: plt.Axes,
+    positions: Sequence[float],
+    labels: Sequence[str],
+) -> None:
+    ax.set_xticks(positions, labels=labels)
+    ax.xaxis.set_ticks_position("bottom")
+    ax.tick_params(
+        axis="x",
+        which="major",
+        bottom=True,
+        top=False,
+        direction="out",
+        length=7,
+        width=1.1,
+        color="#111827",
+        labelcolor="#111827",
+        pad=4,
+    )
+    ax.spines["bottom"].set_visible(True)
+    ax.spines["bottom"].set_linewidth(1.1)
+    ax.spines["bottom"].set_color("#111827")
+
+
+def _style_signed_delay_psych_axis(
+    ax: plt.Axes,
+    positions: Sequence[float],
+    labels: Sequence[str],
+) -> None:
+    _apply_signed_delay_axis_ticks(ax, positions, labels)
+    ax.set_xlim(-0.5, len(labels) - 0.5)
+    ax.set_ylim([0, 1])
+    ax.set_yticks([0, 0.5, 1], [0, 0.5, 1])
+    ax.tick_params(axis="both", labelsize=11)
+    ax.xaxis.label.set_size(12)
+    ax.yaxis.label.set_size(12)
+    ax.title.set_size(13)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
 def _require_plot_col(df: pd.DataFrame, col: str) -> str:
     if col not in df.columns:
         raise KeyError(f"Missing required plotting column {col!r}.")
@@ -767,12 +808,14 @@ def _plot_signed_delay_psych_panel(
     df_pd: pd.DataFrame,
     *,
     color: str,
+    model_color: str | None = None,
     label: str | None = None,
     choice_col: str = "response",
     pred_col: str = "p_pred",
     subj_col: str = "subject",
     weight_col: str | None = None,
     legend: bool = False,
+    show_subject_lines: bool = True,
 ) -> None:
     summary, subject_summary, order, labels = _signed_delay_psych_summary(
         df_pd,
@@ -786,19 +829,27 @@ def _plot_signed_delay_psych_panel(
         ax.set_axis_off()
         return
     x = summary["_x_code"].to_numpy(dtype=float)
-    for _, grp in subject_summary.groupby(subj_col, observed=True):
-        grp = grp.sort_values("_x_code")
-        ax.plot(
-            grp["_x_code"].to_numpy(dtype=float),
-            grp["model_mean"].to_numpy(dtype=float),
-            "-",
-            color=color,
-            alpha=0.12,
-            lw=1.0,
-            zorder=2,
-        )
+    if show_subject_lines:
+        for _, grp in subject_summary.groupby(subj_col, observed=True):
+            grp = grp.sort_values("_x_code")
+            ax.plot(
+                grp["_x_code"].to_numpy(dtype=float),
+                grp["model_mean"].to_numpy(dtype=float),
+                "-",
+                color=color,
+                alpha=0.12,
+                lw=1.0,
+                zorder=2,
+            )
 
-    ax.plot(x, summary["model_mean"].to_numpy(dtype=float), color="black", lw=2.0, label="Model", zorder=6)
+    ax.plot(
+        x,
+        summary["model_mean"].to_numpy(dtype=float),
+        color=model_color or "black",
+        lw=2.3,
+        label="Model",
+        zorder=6,
+    )
     ax.errorbar(
         x,
         summary["data_mean"].to_numpy(dtype=float),
@@ -806,21 +857,24 @@ def _plot_signed_delay_psych_panel(
         fmt="o",
         color=color,
         ecolor=color,
-        elinewidth=1.0,
+        elinewidth=1.5,
         capsize=0,
-        ms=5,
+        ms=5.8,
         label=label,
         zorder=5,
     )
-    ax.axhline(0.5, color="#888888", lw=0.8, ls="--", zorder=0)
+    ax.axhline(0.5, color="tab:gray", ls="--", lw=1.6, zorder=0)
     if "-10" in order and "10" in order:
-        ax.axvline((order.index("-10") + order.index("10")) / 2.0, color="#888888", lw=0.8, ls="--", zorder=0)
-    ax.set_xlim(-0.5, len(order) - 0.5)
-    ax.set_xticks(range(len(order)), labels=labels)
+        ax.axvline(
+            (order.index("-10") + order.index("10")) / 2.0,
+            color="tab:gray",
+            ls="--",
+            lw=1.6,
+            zorder=0,
+        )
+    _style_signed_delay_psych_axis(ax, range(len(order)), labels)
     ax.set_xlabel("Signed delay")
     ax.set_ylabel(r"$P(\mathrm{right})$")
-    ax.set_ylim(0, 1)
-    ax.set_yticks([0, 0.5, 1.0])
     if legend:
         ax.legend(frameon=False, fontsize=8)
 
@@ -984,12 +1038,14 @@ def plot_categorical_performance_all_by_state(
                 _ax_overlay,
                 _df_state,
                 color=color,
+                model_color=color,
                 label=lbl,
                 choice_col=choice_col,
                 weight_col=_weight_col,
                 pred_col=f"_pR_state_rank_{k}" if f"_pR_state_rank_{k}" in _df_state.columns else pred_col,
                 subj_col=subj_col,
                 legend=False,
+                show_subject_lines=False,
             )
         _ax_overlay.legend(frameon=False, fontsize=8)
 
@@ -1005,11 +1061,13 @@ def plot_categorical_performance_all_by_state(
                 ax,
                 _df_state,
                 color=color,
+                model_color=color,
                 label=lbl,
                 choice_col=choice_col,
                 weight_col=_weight_col,
                 pred_col=f"_pR_state_rank_{k}" if f"_pR_state_rank_{k}" in _df_state.columns else pred_col,
                 subj_col=subj_col,
+                show_subject_lines=False,
             )
             if k == 0:
                 ax.set_ylabel(r"$P(\mathrm{right})$")
@@ -1482,38 +1540,14 @@ SIGNED_DELAY_LABELS = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
 
 
 def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
-    df_pd = to_pandas_df(plot_df).copy()
-    choice_col = next(
-        (
-            col
-            for col in ("response", "choices", "Choice")
-            if col in df_pd.columns
-        ),
-        None,
-    )
-    if choice_col is None:
-        raise KeyError("plot_accuracy requires a response/choices/Choice column.")
-    if choice_col != "response":
-        df_pd["response"] = df_pd[choice_col]
-
-    df_pd = attach_response_right_column(df_pd, response_mode=process.RESPONSE_MODE)
-    df_pd = attach_signed_delay_columns(df_pd)
-    if "_signed_delay_cat" not in df_pd.columns or not df_pd["_signed_delay_cat"].notna().any():
-        raise KeyError("plot_accuracy requires stimulus and delay columns to compute signed delay.")
-
-    signed_delay_order, signed_delay_tick_labels = process.signed_delay_order_and_labels(df_pd)
-    df_pd["_signed_delay_plot"] = df_pd["_signed_delay_cat"].astype(str)
-    df_pd = df_pd[df_pd["_signed_delay_plot"].isin(signed_delay_order)].copy()
-
+    df_pd = to_pandas_df(plot_df)
+    
     return plot_mean_over_data(
         df_pd,
-        x_col="_signed_delay_plot",
-        x_order=signed_delay_order,
-        x_tick_labels=signed_delay_tick_labels,
+        x_col="delays",
         invert_x=False,
-        y_col="_response_right",
-        xlabel="Signed delay",
-        ylabel=r"$p(\mathrm{right})$",
+        y_col="hit",
+        xlabel="Delay (s)",
         title=title,
         baseline=0.5,
         color="tab:blue",
