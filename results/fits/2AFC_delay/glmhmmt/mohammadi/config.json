@@ -1,0 +1,35 @@
+{
+    "task": "2AFC_delay",
+    "tau": 50,
+    "subjects": [
+        "C37",
+        "C38",
+        "E10",
+        "E11",
+        "E13",
+        "N19",
+        "N24",
+        "N25",
+        "N27",
+        "N28"
+    ],
+    "emission_cols": [
+        "stim",
+        "bias",
+        "delay",
+        "prev_choice"
+    ],
+    "transition_cols": [
+        "filtered_reward",
+        "filtered_choice",
+        "filtered_stim_side"
+    ],
+    "frozen_emissions": {},
+    "baseline_class_idx": 1,
+    "K_list": [
+        4
+    ],
+    "model_id": "mohammadi",
+    "cv_mode": "none",
+    "cv_repeats": 0
+}

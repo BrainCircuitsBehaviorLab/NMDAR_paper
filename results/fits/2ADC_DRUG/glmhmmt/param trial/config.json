@@ -1,0 +1,34 @@
+{
+    "task": "2ADC_DRUG",
+    "tau": 50,
+    "subjects": [
+        "C37",
+        "C38",
+        "E10",
+        "E11",
+        "E13",
+        "N19",
+        "N24",
+        "N25",
+        "N27",
+        "N28"
+    ],
+    "emission_cols": [
+        "bias_param",
+        "stim_x_delay_param",
+        "choice_lag_param"
+    ],
+    "transition_cols": [
+        "cumulative_reward",
+        "trial_index",
+        "drug_x_cumulative_reward"
+    ],
+    "frozen_emissions": {},
+    "baseline_class_idx": 1,
+    "K_list": [
+        2
+    ],
+    "model_id": "param trial",
+    "cv_mode": "none",
+    "cv_repeats": 0
+}

@@ -1,0 +1,29 @@
+{
+    "task": "2AFC",
+    "tau": 2,
+    "emission_cols": [
+        "bias",
+        "stim_param",
+        "choice_lag_param"
+    ],
+    "requested_emission_cols": [
+        "bias",
+        "stim_param",
+        "choice_lag_param"
+    ],
+    "resolved_emission_cols": [
+        "bias",
+        "stim_param",
+        "choice_lag_param"
+    ],
+    "num_classes": 2,
+    "lapse_mode": "none",
+    "lapse_max": 0.2,
+    "n_restarts": 1,
+    "restart_noise_scale": 0.05,
+    "seed": 0,
+    "baseline_class_idx": 0,
+    "emission_model": "standard",
+    "model_id": "one hot2 param",
+    "condition_filter": "all"
+}

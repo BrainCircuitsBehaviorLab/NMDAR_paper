@@ -1,0 +1,36 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 50,
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+    ],
+    "emission_cols": [
+        "bias_param",
+        "stim_param",
+        "choice_lag_param"
+    ],
+    "transition_cols": [
+        "Drug",
+        "drug_x_cumulative_reward",
+        "prev_day_total_reward_x_cumulative_reward",
+        "cumulative_reward",
+        "prev_day_total_reward"
+    ],
+    "frozen_emissions": {},
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "param drug prev_day",
+    "cv_mode": "none",
+    "cv_repeats": 0
+}
