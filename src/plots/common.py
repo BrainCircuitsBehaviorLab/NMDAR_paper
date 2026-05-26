@@ -299,6 +299,7 @@ def plot_mean_over_data(
     show_baseline_ttest: bool = False,
     ax: plt.Axes | None = None,
     figsize=(3.0, 3.0),
+    label: str | None = None,
     **style,
 ):
     if ax is None:
@@ -404,6 +405,7 @@ def plot_mean_over_data(
         color=color,
         ecolor=color,
         capsize=0,
+        label=label,
     )
 
     ax.axhline(baseline, color="gray", ls="--")
@@ -444,12 +446,19 @@ def plot_mean_over_data(
                 label,
                 ha="center",
                 va="bottom",
-                fontsize=9,
+                # fontsize=9,
                 color="black",
             )
 
     if invert_x:
-        ax.invert_xaxis()
+        # Only invert if not already inverted (track with a marker on the axis)
+        if not getattr(ax, '_x_inverted_marker', False):
+            ax.invert_xaxis()
+            ax._x_inverted_marker = True
+
+    # Add legend if labels are present
+    if label is not None or ax.get_lines():
+        ax.legend(frameon=False)
 
     return fig
 

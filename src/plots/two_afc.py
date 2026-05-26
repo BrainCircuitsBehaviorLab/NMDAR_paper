@@ -1495,7 +1495,7 @@ _binned_feature_summary = lambda df, feature_col, choice_col, pred_col, subj_col
 _attach_rank_posterior_cols = attach_rank_posterior_cols
 _attach_rank_state_model_cols = attach_rank_state_model_cols
 
-def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
+def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), color=None, title="2AFC", label=None):
     df_pd = (
         plot_df.to_pandas().copy()
         if hasattr(plot_df, "to_pandas")
@@ -1516,9 +1516,10 @@ def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC"):
         xlabel=xlabel,
         title=title,
         baseline=0.5,
-        color="tab:blue",
+        color=color if color is not None else "tab:blue",
         ax=ax,
         figsize=figsize,
+        label=label,
     )
 
 def plot_rb(
@@ -1528,6 +1529,7 @@ def plot_rb(
     title="2AFC",
     color=None,
     show_baseline_ttest=False,
+    label=None,
 ):
     df_pd = to_pandas_df(plot_df).copy()
     df_pd["abs_ILD"] = pd.to_numeric(df_pd["ILD"], errors="coerce").abs()
@@ -1549,6 +1551,7 @@ def plot_rb(
         show_baseline_ttest=show_baseline_ttest,
         ax=ax,
         figsize=figsize,
+        label=label,
     )
 
 

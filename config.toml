@@ -15,7 +15,7 @@ states_hex_k4 = [
 ]
 
 [plot-saver]
-format = "png"
+format = "svg"
 default_label = "Save"
 save_all_label = "Save all model plots"
 

@@ -56,10 +56,8 @@ def _():
 @app.cell
 def _(Path, plt, sns):
     # Set style
-    sns.set_theme(style='ticks', context='paper')
-    # style_path = os.path.expanduser('~/PycharmProjects/alexis_style.mplstyle')
+    sns.set_theme(style='ticks', context='notebook')
     plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
-    # plt.style.use(style_path)
     return
 
 
@@ -92,11 +90,11 @@ def _(get_adapter):
 
 @app.cell
 def _(MCDR, data_path, pl, two_afc):
-    df_2AFC = two_afc.subject_filter(pl.read_parquet(data_path / "alexis_combined.parquet"))
+    # df_2AFC = two_afc.subject_filter(pl.read_parquet(data_path / "alexis_combined.parquet"))
+    df_2AFC = two_afc.subject_filter(pl.read_parquet(data_path / "df_alexis_drug_combined.parquet"))  # With drug
     df_2AFC_delay = pl.read_parquet(data_path / "tiffany.parquet")
     df_MCDR = MCDR.subject_filter(pl.read_parquet(data_path / "MCDR_all.parquet"))
     # df_MCDR = df_MCDR.filter(pl.col("batch") == "11B")
-    df_2AFC
     return df_2AFC, df_2AFC_delay, df_MCDR
 
 
@@ -124,12 +122,15 @@ def _(
     pl,
     plot_mean_over_data,
     plt,
-    save_fixed_bbox_pdf,
     two_afc_delay_plots,
 ):
     # 2ADC
-    two_afc_delay_plots.plot_accuracy(df_2AFC_delay, figsize=fig_size(n_cols=2), title='')
-    plt.savefig('acc_vs_delay.pdf')
+
+    # two_afc_delay_plots.plot_accuracy(df_2AFC_delay, figsize=fig_size(n_cols=2), title='')
+    fig_, ax_ = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
+    two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'Saline'), ax=ax_, color="tab:gray", title="", label='Saline')
+    two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'NR2B'), ax=ax_, color="tab:pink", title="", label='Drug')
+    plt.savefig('acc_vs_delay.svg')
     plt.show()
 
     signed_delay_order = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
@@ -153,48 +154,34 @@ def _(
         title="",
         baseline=0.5,
         color="tab:blue",
-        figsize=fig_size(n_cols=2),
+        figsize=fig_size(n_cols=3),
     )
-    plt.savefig('p_right_vs_signed_delay.pdf')
+    plt.savefig('p_right_vs_signed_delay.svg')
     plt.show()
 
     print(f"Number of subjects: {df_2AFC_delay['subject'].n_unique()}")
     # two_afc_delay_plots.plot_rb(df_2AFC_delay, figsize=fig_size(n_cols=3), title='')
     # plt.savefig('2ADC_rb.svg')
     # plt.show()
-    fig_2ADC, ax_2ADC = plt.subplots(figsize = fig_size(3,1.25))
-    # two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "NR2B"), ax = ax_2ADC, figsize=fig_size(n_cols=3), title='', color = "tab:pink")
-    # two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Saline"), ax = ax_2ADC, figsize=fig_size(n_cols=3), title='', color = "tab:gray")
-    two_afc_delay_plots.plot_rb(
-        df_2AFC_delay.filter(pl.col("drug") == "Rest"),
-        ax=ax_2ADC,
-        figsize=fig_size(3, 1.25),
-        title="",
-        show_baseline_ttest=True,
-    )
-    save_fixed_bbox_pdf(fig_2ADC, '2ADC_rb.pdf')
+
+    fig_2ADC, ax_2ADC = plt.subplots(figsize = fig_size(n_cols=3), constrained_layout=True)
+    two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "NR2B"), ax = ax_2ADC, title='', color = "tab:pink")
+    two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Saline"), ax = ax_2ADC, title='', color = "tab:gray")
+    # two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Rest"), ax = ax_2ADC, figsize=fig_size(n_cols=3), title='', show_baseline_ttest=True)
+    plt.savefig('2ADC_rb.svg')
     plt.show()
     return
 
 
 @app.cell
-def _(df_2AFC):
-    df_2AFC
-    return
-
-
-@app.cell
-def _(
-    df_2AFC,
-    fig_size,
-    plot_mean_over_data,
-    plt,
-    save_fixed_bbox_pdf,
-    two_afc_plots,
-):
+def _(df_2AFC, fig_size, pl, plot_mean_over_data, plt, two_afc_plots):
     # 2AFC
-    two_afc_plots.plot_accuracy(df_2AFC, figsize=fig_size(n_cols=2), title="")
-    plt.savefig("performance-2AFC.pdf")
+
+    # two_afc_plots.plot_accuracy(df_2AFC, figsize=fig_size(n_cols=2), title="")
+    fig, ax = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
+    two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 0), ax=ax, color="tab:gray", title="")
+    two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 1), ax=ax, color="tab:pink", title="")
+    plt.savefig("acc_vs_ild.svg")
     plt.show()
 
     df_2AFC_p_right = df_2AFC.to_pandas().copy()
@@ -208,26 +195,21 @@ def _(
         title="",
         baseline=0.5,
         color="tab:blue",
-        figsize=fig_size(n_cols=2),
+        figsize=fig_size(n_cols=3),
     )
     plt.gca().set_xticks(
         [-20, -8, -4, -2, 0, 2, 4, 8, 20],
         labels=["-20", "-8", "", "", "0", "", "", "8", "20"],
     )
-    plt.savefig("p_right_vs_ild.pdf")
+    plt.savefig("p_right_vs_ild.svg")
     plt.show()
+
     print(f"Number of subjects: {df_2AFC['subject'].n_unique()}")
-    fig_2AFC, ax_2AFC = plt.subplots(figsize=fig_size(3,1.25))
-    # two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 1), ax=ax_2AFC, figsize=fig_size(n_cols=3), title="", color="tab:pink")
-    # two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 0), ax=ax_2AFC, figsize=fig_size(n_cols=3), title="", color="tab:gray")
-    two_afc_plots.plot_rb(
-        df_2AFC,
-        ax=ax_2AFC,
-        figsize=fig_size(3, 1.25),
-        title="",
-        show_baseline_ttest=True,
-    )
-    save_fixed_bbox_pdf(fig_2AFC, "2AFC_rb.pdf")
+    fig_2AFC, ax_2AFC = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
+    two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 0), ax=ax_2AFC, title="", color="tab:gray")
+    two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 1), ax=ax_2AFC, title="", color="tab:pink")
+    # two_afc_plots.plot_rb(df_2AFC, ax=ax_2AFC, figsize=fig_size(3, 1.25), title="", show_baseline_ttest=True)
+    plt.savefig("2AFC_rb.svg")
     plt.show()
     return
 

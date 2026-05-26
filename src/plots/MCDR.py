@@ -761,6 +761,7 @@ def plot_rb(df, ax=None, figsize=(3.0, 3.0), title="MCDR", **kwargs):
         show_baseline_ttest=bool(kwargs.get("show_baseline_ttest", False)),
         ax=ax,
         figsize=figsize,
+        label=kwargs.get("label"),
     )
 
 def plot_right_by_regressor_simple(

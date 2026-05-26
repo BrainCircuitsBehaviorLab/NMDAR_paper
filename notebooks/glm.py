@@ -288,8 +288,8 @@ def _(
 
 
 @app.cell
-def _(trial_df):
-    trial_df.group_by(["batch", "subject", "drug"]).len()
+def _():
+    #trial_df.group_by(["batch", "subject", "drug"]).len()
     return
 
 
