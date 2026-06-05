@@ -45,6 +45,8 @@ def _():
         get_adapter,
         make_plot_saver,
         mo,
+        np,
+        pd,
         pl,
         plot_mean_over_data,
         plt,
@@ -115,6 +117,120 @@ def _(MCDR, two_afc, two_afc_delay):
 
 
 @app.cell
+def _(np, pd, plot_mean_over_data):
+    def psychometric_repeat(
+        plot_df,
+        ax=None,
+        figsize=(3.0, 3.0),
+        title="",
+        color="tab:blue",
+        *,
+        session_col,
+        trial_col,
+        choice_col,
+        stimulus_col,
+        subject_col="subject",
+        delay_col=None,
+        difficulty_col=None,
+        is_mcdr=False,
+    ):
+        df_pd = plot_df.to_pandas().copy() if hasattr(plot_df, "to_pandas") else pd.DataFrame(plot_df).copy()
+
+        required_cols = [subject_col, session_col, trial_col, choice_col, stimulus_col]
+        missing_cols = [column for column in required_cols if column not in df_pd.columns]
+        optional_cols = [column for column in [delay_col, difficulty_col] if column is not None]
+        missing_cols.extend(column for column in optional_cols if column not in df_pd.columns)
+        if missing_cols:
+            raise KeyError(f"psychometric_repeat missing dataframe columns: {', '.join(missing_cols)}")
+
+        sort_cols = [subject_col, session_col, trial_col]
+        plot_df = df_pd.sort_values(sort_cols, kind="stable").copy()
+        plot_df["choice"] = pd.to_numeric(plot_df[choice_col], errors="coerce")
+        plot_df["previous_choice"] = plot_df.groupby(
+            [subject_col, session_col],
+            observed=True,
+        )["choice"].shift(1)
+        plot_df["_repeat"] = (plot_df["choice"] == plot_df["previous_choice"]).astype(float)
+
+        if is_mcdr:
+            baseline = 1.0 / 3.0
+        else:
+            choice_values = set(plot_df["choice"].dropna().unique().tolist())
+            if choice_values.issubset({-1.0, 1.0}):
+                plot_df["previous_choice_sign"] = plot_df["previous_choice"]
+            elif choice_values.issubset({0.0, 1.0}):
+                plot_df["previous_choice_sign"] = (2.0 * plot_df["previous_choice"]) - 1.0
+            else:
+                raise ValueError("psychometric_repeat expects binary choices unless is_mcdr=True.")
+            baseline = 0.5
+
+        signed_stimulus = pd.to_numeric(plot_df[stimulus_col], errors="coerce")
+        x_order = None
+        x_tick_labels = None
+        if delay_col is not None:
+            x_values = (
+                pd.to_numeric(plot_df[delay_col], errors="coerce").abs()
+                * np.sign(signed_stimulus)
+                * plot_df["previous_choice_sign"]
+            )
+            x_order = ["neg_0.1", "neg_1", "neg_3", "neg_10", "pos_10", "pos_3", "pos_1", "pos_0.1"]
+            x_tick_labels = ["0", "1", "3", "10", "10", "3", "1", "0"]
+
+            delay_magnitude = pd.Series(x_values, index=plot_df.index).abs()
+            delay_label = np.where(
+                np.isclose(delay_magnitude, 0.1),
+                "0.1",
+                delay_magnitude.round().astype("Int64").astype(str),
+            )
+            delay_side = np.where(x_values < 0, "neg", "pos")
+            x_values = pd.Series(delay_side, index=plot_df.index) + "_" + pd.Series(delay_label, index=plot_df.index)
+            xlabel = "Delay signed by prev. choice"
+        elif is_mcdr:
+            if difficulty_col is None:
+                raise ValueError("psychometric_repeat requires difficulty_col when is_mcdr=True.")
+            difficulty_labels = plot_df[difficulty_col].astype(str).map(
+                {
+                    "VG": "VG",
+                    "DS": "DS",
+                    "DM": "DM",
+                    "DL": "DL",
+                }
+            )
+            current_target = pd.to_numeric(plot_df[stimulus_col], errors="coerce")
+            side_labels = np.where(current_target == plot_df["previous_choice"], "pos", "neg")
+            x_values = pd.Series(side_labels, index=plot_df.index) + "_" + difficulty_labels
+            x_order = ["neg_VG", "neg_DS", "neg_DM", "neg_DL", "pos_DL", "pos_DM", "pos_DS", "pos_VG"]
+            x_tick_labels = ["-VG", "-DS", "-DM", "-DL", "DL", "DM", "DS", "VG"]
+            xlabel = "Dif. signed by prev. choice"
+        else:
+            x_values = signed_stimulus * plot_df["previous_choice_sign"]
+            x_values = pd.Series(x_values, index=plot_df.index).mask(lambda values: np.isclose(values, 0.0), 0.0)
+            xlabel = "Stim. signed by prev. choice"
+
+        plot_df["_repeat_x"] = x_values
+        plot_df = plot_df.dropna(subset=["_repeat_x", "_repeat", "previous_choice"]).copy()
+
+        return plot_mean_over_data(
+            plot_df,
+            x_col="_repeat_x",
+            y_col="_repeat",
+            subject_col=subject_col,
+            x_order=x_order,
+            x_tick_labels=x_tick_labels,
+            xlabel=xlabel,
+            ylabel=r"$p(\mathrm{repeat})$",
+            title=title,
+            baseline=baseline,
+            baseline_area=True,
+            color=color,
+            ax=ax,
+            figsize=figsize,
+        )
+
+    return (psychometric_repeat,)
+
+
+@app.cell
 def _(
     attach_signed_delay_columns,
     df_2AFC_delay,
@@ -170,6 +286,34 @@ def _(
     # two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Rest"), ax = ax_2ADC, figsize=fig_size(n_cols=3), title='', show_baseline_ttest=True)
     plt.savefig('2ADC_rb.svg')
     plt.show()
+
+    fig_2ADC_repeat, ax_2ADC_repeat = plt.subplots(figsize=fig_size(2))
+    psychometric_repeat(
+        df_2AFC_delay.filter(pl.col("drug") == "NR2B"),
+        ax=ax_2ADC_repeat,
+        figsize=fig_size(2, 1.25),
+        title="",
+        color="tab:pink",
+        session_col="session",
+        trial_col="trial",
+        choice_col="choices",
+        stimulus_col="stim",
+        delay_col="delays",
+    )
+    psychometric_repeat(
+        df_2AFC_delay.filter(pl.col("drug") == "Saline"),
+        ax=ax_2ADC_repeat,
+        figsize=fig_size(2, 1.25),
+        title="",
+        color="tab:gray",
+        session_col="session",
+        trial_col="trial",
+        choice_col="choices",
+        stimulus_col="stim",
+        delay_col="delays",
+    )
+    save_fixed_bbox_pdf(fig_2ADC_repeat, "2ADC_psychometric_repeat.pdf")
+    plt.show()
     return
 
 
@@ -211,11 +355,45 @@ def _(df_2AFC, fig_size, pl, plot_mean_over_data, plt, two_afc_plots):
     # two_afc_plots.plot_rb(df_2AFC, ax=ax_2AFC, figsize=fig_size(3, 1.25), title="", show_baseline_ttest=True)
     plt.savefig("2AFC_rb.svg")
     plt.show()
+
+    fig_2AFC_repeat, ax_2AFC_repeat = plt.subplots(figsize=fig_size(2))
+    psychometric_repeat(
+        df_2AFC.filter(pl.col("Drug") == 1),
+        ax=ax_2AFC_repeat,
+        figsize=fig_size(2, 1.25),
+        title="",
+        color="tab:pink",
+        session_col="Session",
+        trial_col="Trial",
+        choice_col="Choice",
+        stimulus_col="ILD",
+    )
+    psychometric_repeat(
+        df_2AFC.filter(pl.col("Drug") == 0),
+        ax=ax_2AFC_repeat,
+        figsize=fig_size(2, 1.25),
+        title="",
+        color="tab:gray",
+        session_col="Session",
+        trial_col="Trial",
+        choice_col="Choice",
+        stimulus_col="ILD",
+    )
+    save_fixed_bbox_pdf(fig_2AFC_repeat, "2AFC_psychometric_repeat.pdf")
+    plt.show()
     return
 
 
 @app.cell
-def _(MCDR_plots, df_MCDR, fig_size, pl, plt, save_fixed_bbox_pdf):
+def _(
+    MCDR_plots,
+    df_MCDR,
+    fig_size,
+    pl,
+    plt,
+    psychometric_repeat,
+    save_fixed_bbox_pdf,
+):
     palette_a = ['#230027', '#9C69A3', '#C698CB', '#C88FEC', '#EFD9F5']
     labels_a = ["Visual", "Easy", "Medium", "Hard"]
     order_a = ["VG", "SL", "SM", "SS"]
@@ -262,20 +440,50 @@ def _(MCDR_plots, df_MCDR, fig_size, pl, plt, save_fixed_bbox_pdf):
     plt.savefig('performance-3CDR.pdf')
     plt.show()
 
-    fig_MCDR, ax_MCDR = plt.subplots(figsize = fig_size(3,1.25))
-    # MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "saline", pl.col("batch") == "11B"), ax = ax_MCDR, figsize=fig_size(n_cols=3), title='', color = "tab:gray")
-    # MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "drug", pl.col("batch") == "11B"), ax = ax_MCDR, figsize=fig_size(n_cols=3), title='',  color = "tab:pink")
+    fig_MCDR, ax_MCDR = plt.subplots(figsize = fig_size(2))
+    MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "saline", pl.col("batch") == "11B"), ax = ax_MCDR, figsize=fig_size(n_cols=3), title='', color = "tab:gray")
+    MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "drug", pl.col("batch") == "11B"), ax = ax_MCDR, figsize=fig_size(n_cols=3), title='',  color = "tab:pink")
     # MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "rest", pl.col("batch") == "11B"), ax = ax_MCDR, figsize=fig_size(n_cols=3), title='',  color = "tab:red")
-    MCDR_plots.plot_rb(
-        df_MCDR.filter(pl.col("batch") == "11B"),
-        ax=ax_MCDR,
-        figsize=fig_size(3, 1.25),
-        title="",
-        show_baseline_ttest=True,
-    )
+    # MCDR_plots.plot_rb(
+    #     df_MCDR.filter(pl.col("batch") == "11B"),
+    #     ax=ax_MCDR,
+    #     figsize=fig_size(2),
+    #     title="",
+    #     show_baseline_ttest=True,
+    # )
     # ax.set_ylim(0.2,0.6)
 
     save_fixed_bbox_pdf(fig_MCDR, 'MCDR_rb.pdf')
+    plt.show()
+
+    fig_MCDR_repeat, ax_MCDR_repeat = plt.subplots(figsize=fig_size(2))
+    psychometric_repeat(
+        df_MCDR.filter(pl.col("drug") == "saline", pl.col("batch") == "11B"),
+        ax=ax_MCDR_repeat,
+        figsize=fig_size(2, 1.25),
+        title="",
+        color="tab:gray",
+        session_col="session",
+        trial_col="trial",
+        choice_col="response",
+        stimulus_col="stimulus",
+        difficulty_col="ttype_c",
+        is_mcdr=True,
+    )
+    psychometric_repeat(
+        df_MCDR.filter(pl.col("drug") == "drug", pl.col("batch") == "11B"),
+        ax=ax_MCDR_repeat,
+        figsize=fig_size(2, 1.25),
+        title="",
+        color="tab:pink",
+        session_col="session",
+        trial_col="trial",
+        choice_col="response",
+        stimulus_col="stimulus",
+        difficulty_col="ttype_c",
+        is_mcdr=True,
+    )
+    save_fixed_bbox_pdf(fig_MCDR_repeat, "MCDR_psychometric_repeat.pdf")
     plt.show()
     return
 
@@ -485,6 +693,349 @@ def _(
     )
 
     plt.show()
+    return (Line2D,)
+
+
+@app.cell
+def _(
+    Line2D,
+    df_2AFC,
+    df_2AFC_delay,
+    df_MCDR,
+    fig_size,
+    np,
+    pl,
+    plt,
+    psychometric_repeat,
+):
+
+    _panel_size = fig_size(3)
+    fig_repeat_mosaic, axes_repeat_mosaic = plt.subplot_mosaic(
+        [["delay", "afc", "mcdr"]],
+        figsize=(fig_size(1,3)),
+        layout="constrained",
+    )
+
+    psychometric_repeat(
+        df_2AFC_delay.filter(pl.col("drug") == "NR2B"),
+        ax=axes_repeat_mosaic["delay"],
+        figsize=fig_size(3),
+        title="",
+        color="tab:pink",
+        session_col="session",
+        trial_col="trial",
+        choice_col="choices",
+        stimulus_col="stim",
+        delay_col="delays",
+    )
+    psychometric_repeat(
+        df_2AFC_delay.filter(pl.col("drug") == "Saline"),
+        ax=axes_repeat_mosaic["delay"],
+        figsize=fig_size(3),
+        title="",
+        color="tab:gray",
+        session_col="session",
+        trial_col="trial",
+        choice_col="choices",
+        stimulus_col="stim",
+        delay_col="delays",
+    )
+    axes_repeat_mosaic["delay"].set_title("2AFC delay")
+
+    psychometric_repeat(
+        df_2AFC.filter(pl.col("Drug") == 1),
+        ax=axes_repeat_mosaic["afc"],
+        figsize=fig_size(3),
+        title="",
+        color="tab:pink",
+        session_col="Session",
+        trial_col="Trial",
+        choice_col="Choice",
+        stimulus_col="ILD",
+    )
+    psychometric_repeat(
+        df_2AFC.filter(pl.col("Drug") == 0),
+        ax=axes_repeat_mosaic["afc"],
+        figsize=fig_size(3),
+        title="",
+        color="tab:gray",
+        session_col="Session",
+        trial_col="Trial",
+        choice_col="Choice",
+        stimulus_col="ILD",
+    )
+    axes_repeat_mosaic["afc"].set_title("2AFC")
+    axes_repeat_mosaic["afc"].set_xticks(
+        axes_repeat_mosaic["afc"].get_xticks(),
+        [
+            "" if any(np.isclose(_tick, _hidden_tick) for _hidden_tick in [-4, -2,2,4]) else _label.get_text()
+            for _tick, _label in zip(
+                axes_repeat_mosaic["afc"].get_xticks(),
+                axes_repeat_mosaic["afc"].get_xticklabels(),
+                strict=False,
+            )
+        ],
+    )
+
+    psychometric_repeat(
+        df_MCDR.filter(pl.col("drug") == "saline", pl.col("batch") == "11B"),
+        ax=axes_repeat_mosaic["mcdr"],
+        figsize=fig_size(3),
+        title="",
+        color="tab:gray",
+        session_col="session",
+        trial_col="trial",
+        choice_col="response",
+        stimulus_col="stimulus",
+        difficulty_col="ttype_c",
+        is_mcdr=True,
+    )
+    psychometric_repeat(
+        df_MCDR.filter(pl.col("drug") == "drug", pl.col("batch") == "11B"),
+        ax=axes_repeat_mosaic["mcdr"],
+        figsize=fig_size(3),
+        title="",
+        color="tab:pink",
+        session_col="session",
+        trial_col="trial",
+        choice_col="response",
+        stimulus_col="stimulus",
+        difficulty_col="ttype_c",
+        is_mcdr=True,
+    )
+    axes_repeat_mosaic["mcdr"].set_title("MCDR")
+
+    for _ax in axes_repeat_mosaic.values():
+        _legend = _ax.get_legend()
+        if _legend is not None:
+            _legend.remove()
+
+    axes_repeat_mosaic["mcdr"].set_ylabel("")
+    axes_repeat_mosaic["afc"].set_ylabel("")
+    fig_repeat_mosaic.legend(
+        handles=[
+            Line2D([0], [0], color="tab:pink", marker="o", linewidth=1.5, label="Drug"),
+            Line2D([0], [0], color="tab:gray", marker="o", linewidth=1.5, label="Saline"),
+        ],
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=3,
+        frameon=False,
+    )
+
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Example 2AFC session raster
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    pick_random_2afc_session = mo.ui.button(
+        value=0,
+        on_click=lambda value: (value or 0) + 1,
+        label="Pick random session",
+    )
+    pick_random_2afc_session
+    return (pick_random_2afc_session,)
+
+
+@app.cell
+def _(df_2AFC, mo, np, pd, pick_random_2afc_session, pl, plt, sns):
+    def _repeat_counts_by_session(df):
+        _pdf = (
+            df.select(["subject", "Session", "Trial", "Choice"])
+            .sort(["subject", "Session", "Trial"])
+            .to_pandas()
+        )
+        _pdf["Choice"] = pd.to_numeric(_pdf["Choice"], errors="coerce")
+        _pdf["_previous_choice"] = _pdf.groupby(["subject", "Session"], observed=True)["Choice"].shift(1)
+        _pdf["_repeat_choice"] = (
+            _pdf["Choice"].notna()
+            & _pdf["_previous_choice"].notna()
+            & (_pdf["Choice"] == _pdf["_previous_choice"])
+        )
+        return (
+            _pdf.groupby(["subject", "Session"], observed=True)
+            .agg(
+                n_trials=("Choice", "size"),
+                n_repetitions=("_repeat_choice", "sum"),
+            )
+            .reset_index()
+            .sort_values(["subject", "Session"], kind="stable")
+            .reset_index(drop=True)
+        )
+
+    def _selected_2afc_session(df, session_summary, click_count):
+        _session_summary = session_summary[session_summary["n_trials"] > 1].reset_index(drop=True)
+        mo.stop(_session_summary.empty, mo.md("No 2AFC sessions with at least two trials."))
+
+        _rng = np.random.default_rng(int(click_count or 0))
+        _row_idx = int(_rng.integers(0, len(_session_summary)))
+        _row = _session_summary.iloc[_row_idx].to_dict()
+        _session_df = (
+            df.filter(
+                (pl.col("subject").cast(pl.Utf8) == str(_row["subject"]))
+                & (pl.col("Session").cast(pl.Utf8) == str(_row["Session"]))
+            )
+            .sort("Trial")
+            .to_pandas()
+            .reset_index(drop=True)
+        )
+        return _row, _session_df
+
+    def _compute_repeat_choice(session_df):
+        _choice = pd.to_numeric(session_df["Choice"], errors="coerce")
+        _prev_choice = _choice.shift(1)
+        return (_choice.notna() & _prev_choice.notna() & (_choice == _prev_choice)).to_numpy()
+
+    def _plot_session_raster(session_meta, session_df, repeat_choice, session_summary, *, chunk_size=20):
+        _n_trials = len(session_df)
+        _trial_x = np.arange(_n_trials, dtype=float)
+        _hit = pd.to_numeric(session_df["Hit"], errors="coerce")
+        _repeat_correct = repeat_choice & (_hit.fillna(0).to_numpy(dtype=float) > 0)
+        _repeat_incorrect = repeat_choice & ~_repeat_correct
+
+        _fig, (_ax_raster, _ax_chunk, _ax_hist) = plt.subplots(
+            3,
+            1,
+            figsize=(8,8),
+            gridspec_kw={"height_ratios": [1.0, 1.2, 1.0]},
+            sharex=False,
+            layout="constrained",
+        )
+
+        _trial_colors = np.full(_n_trials, "tab:gray", dtype=object)
+        _trial_colors[_repeat_incorrect] = "tab:blue"
+        _trial_colors[_repeat_correct] = "#084594"
+
+        _ax_raster.bar(
+            _trial_x,
+            np.ones(_n_trials),
+            width=1.0,
+            align="edge",
+            color=_trial_colors,
+            linewidth=0,
+        )
+        _ax_raster.set_xlim(0, _n_trials)
+        _ax_raster.set_ylim(0, 1.0)
+        _ax_raster.set_yticks([])
+        _ax_raster.set_ylabel("Trials")
+        _session_label = str(session_meta["Session"])
+        _ax_raster.set_title(
+            f"subject {session_meta['subject']} | {_session_label} | "
+            f"{_n_trials} trials | {int(repeat_choice.sum())} repeats"
+        )
+
+        _legend_handles = [
+            plt.Line2D([0], [0], color="tab:gray", lw=6, label="Alternate"),
+            plt.Line2D([0], [0], color="tab:blue", lw=6, label="Repeat incorrect"),
+            plt.Line2D([0], [0], color="#084594", lw=6, label="Repeat correct"),
+        ]
+        _ax_raster.legend(
+            handles=_legend_handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.2),
+            ncol=3,
+            frameon=False,
+        )
+
+        _chunk_idx = (_trial_x // chunk_size).astype(int)
+        _n_chunks = int(_chunk_idx.max()) + 1 if _n_trials else 0
+        _incorrect_repeat_counts = np.bincount(
+            _chunk_idx,
+            weights=_repeat_incorrect.astype(int),
+            minlength=_n_chunks,
+        )
+        _chunk_centers = (np.arange(_n_chunks) * chunk_size) + (chunk_size / 2)
+        _cumulative_incorrect_repeats = np.cumsum(_incorrect_repeat_counts)
+
+        _ax_chunk.bar(
+            _chunk_centers,
+            _incorrect_repeat_counts,
+            width=chunk_size * 0.8,
+            color="tab:blue",
+            label=f"Incorrect repeats per {chunk_size}-trial chunk",
+        )
+        _ax_cumulative = _ax_chunk.twinx()
+        _ax_cumulative.plot(
+            _chunk_centers,
+            _cumulative_incorrect_repeats,
+            color="#222222",
+            marker="o",
+            label="Cumulative incorrect repeats",
+        )
+
+        _ax_chunk.set_xlim(0, _n_trials)
+        _ax_chunk.set_xlabel("Trial in session")
+        _ax_chunk.set_ylabel("Incorrect repeat count")
+        _ax_cumulative.set_ylabel("Cumulative incorrect repeats")
+        _ax_chunk.set_title(f"Incorrect repeat-choice count by {chunk_size}-trial chunk")
+
+        _max_count = max(1, int(np.nanmax(_incorrect_repeat_counts)) if len(_incorrect_repeat_counts) else 1)
+        _ax_chunk.set_ylim(0, _max_count + 1)
+        _ax_cumulative.set_ylim(0, max(1, int(_cumulative_incorrect_repeats[-1]) if len(_cumulative_incorrect_repeats) else 1) + 1)
+
+        _handles, _labels = _ax_chunk.get_legend_handles_labels()
+        _handles_2, _labels_2 = _ax_cumulative.get_legend_handles_labels()
+        _ax_chunk.legend(
+            _handles + _handles_2,
+            _labels + _labels_2,
+            loc="upper left",
+            frameon=False,
+        )
+
+        _session_repetitions = pd.to_numeric(session_summary["n_repetitions"], errors="coerce").dropna()
+        _selected_repetitions = int(session_meta["n_repetitions"])
+        _hist_max = max(int(_session_repetitions.max()), _selected_repetitions, 1)
+        _bin_width = max(5, int(np.ceil(_hist_max / 20)))
+        _bins = np.arange(0, _hist_max + _bin_width + 1, _bin_width)
+        _ax_hist.hist(
+            _session_repetitions,
+            bins=_bins,
+            color="tab:green",
+        )
+        _ax_hist.axvline(
+            _selected_repetitions,
+            color="black",
+            label="Selected session",
+        )
+        _ax_hist.set_xlabel("Repeat choices per session")
+        _ax_hist.set_ylabel("Sessions")
+        _ax_hist.set_title("Distribution of session repeat-choice counts")
+        _ax_hist.legend(loc="upper right", frameon=False)
+
+        sns.despine(ax=_ax_raster, left=True, bottom=True)
+        sns.despine(ax=_ax_chunk)
+        sns.despine(ax=_ax_cumulative, left=True, right=False)
+        sns.despine(ax=_ax_hist)
+        return _fig
+
+    _session_repeat_summary = _repeat_counts_by_session(df_2AFC)
+    _session_meta, _session_df = _selected_2afc_session(
+        df_2AFC,
+        _session_repeat_summary,
+        pick_random_2afc_session.value,
+    )
+    _repeat_choice = _compute_repeat_choice(_session_df)
+    _fig = _plot_session_raster(
+        _session_meta,
+        _session_df,
+        _repeat_choice,
+        _session_repeat_summary,
+    )
+    _fig
+    return
+
+
+@app.cell
+def _():
     return
 
 
