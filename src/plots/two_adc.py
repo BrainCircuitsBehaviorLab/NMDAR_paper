@@ -1539,62 +1539,6 @@ SIGNED_DELAY_ORDER = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
 SIGNED_DELAY_LABELS = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
 
 
-<<<<<<< HEAD
-def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay", color=None, label=None):
-    df_pd = to_pandas_df(plot_df).copy()
-    # choice_col = next(
-    #     (
-    #         col
-    #         for col in ("response", "choices", "Choice")
-    #         if col in df_pd.columns
-    #     ),
-    #     None,
-    # )
-    # if choice_col is None:
-    #     raise KeyError("plot_accuracy requires a response/choices/Choice column.")
-    # if choice_col != "response":
-    #     df_pd["response"] = df_pd[choice_col]
-    #
-    # df_pd = attach_response_right_column(df_pd, response_mode=process.RESPONSE_MODE)
-    # df_pd = attach_signed_delay_columns(df_pd)
-    # if "_signed_delay_cat" not in df_pd.columns or not df_pd["_signed_delay_cat"].notna().any():
-    #     raise KeyError("plot_accuracy requires stimulus and delay columns to compute signed delay.")
-    #
-    # signed_delay_order, signed_delay_tick_labels = process.signed_delay_order_and_labels(df_pd)
-    # df_pd["_signed_delay_plot"] = df_pd["_signed_delay_cat"].astype(str)
-    # df_pd = df_pd[df_pd["_signed_delay_plot"].isin(signed_delay_order)].copy()
-    #
-    # return plot_mean_over_data(
-    #     df_pd,
-    #     x_col="_signed_delay_plot",
-    #     x_order=signed_delay_order,
-    #     x_tick_labels=signed_delay_tick_labels,
-    #     invert_x=False,
-    #     y_col="_response_right",
-    #     xlabel="Signed delay",
-    #     ylabel=r"$p(\mathrm{right})$",
-    #     title=title,
-    #     baseline=0.5,
-    #     color=color if color is not None else "tab:blue",
-    #     ax=ax,
-    #     figsize=figsize,
-    #     label=label,
-    # )
-
-    return plot_mean_over_data(
-            df_pd,
-            x_col="delays",
-            invert_x=False,
-            y_col="hit",
-            xlabel="Delay (s)",
-            title=title,
-            baseline=0.5,
-            color=color if color is not None else "tab:blue",
-            ax=ax,
-            figsize=figsize,
-            label=label
-        )
-=======
 def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
     df_pd = to_pandas_df(plot_df)
     
@@ -1610,7 +1554,6 @@ def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
         ax=ax,
         figsize=figsize,
     )
->>>>>>> 7ef894321746edae47114278a16f0ca2f248ff57
 
 
 def plot_rb(

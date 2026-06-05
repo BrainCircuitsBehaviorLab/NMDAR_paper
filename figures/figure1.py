@@ -238,6 +238,8 @@ def _(
     pl,
     plot_mean_over_data,
     plt,
+    psychometric_repeat,
+    save_fixed_bbox_pdf,
     two_afc_delay_plots,
 ):
     # 2ADC
@@ -318,7 +320,16 @@ def _(
 
 
 @app.cell
-def _(df_2AFC, fig_size, pl, plot_mean_over_data, plt, two_afc_plots):
+def _(
+    df_2AFC,
+    fig_size,
+    pl,
+    plot_mean_over_data,
+    plt,
+    psychometric_repeat,
+    save_fixed_bbox_pdf,
+    two_afc_plots,
+):
     # 2AFC
 
     # two_afc_plots.plot_accuracy(df_2AFC, figsize=fig_size(n_cols=2), title="")
