@@ -1,0 +1,31 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 3,
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+    ],
+    "emission_cols": [
+        "stim_param",
+        "choice_lag_param_2",
+        "prev_choice",
+        "bias"
+    ],
+    "frozen_emissions": {},
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "drug_param2",
+    "cv_mode": "none",
+    "cv_repeats": 0,
+    "condition_filter": "drug"
+}

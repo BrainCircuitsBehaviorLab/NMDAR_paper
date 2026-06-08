@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.8"
 app = marimo.App(width="full")
 
 
@@ -14,8 +14,10 @@ def _(mo):
 
 @app.cell
 def _():
+    import importlib
     from pathlib import Path
     import sys
+    import warnings
 
     import marimo as mo
     import matplotlib.pyplot as plt
@@ -42,10 +44,18 @@ def _():
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import build_views
     from plot_saver import make_plot_saver
+    from src.process import common as process_common
     from src.process import MCDR as process_mcdr
     from src.process import two_afc as process_two_afc
     from src.process import two_adc as process_two_adc
-    from src.process.common import add_choice_lag_summary_regressor
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"Task key .* already registered", category=RuntimeWarning)
+        process_common = importlib.reload(process_common)
+        process_mcdr = importlib.reload(process_mcdr)
+        process_two_afc = importlib.reload(process_two_afc)
+        process_two_adc = importlib.reload(process_two_adc)
+    add_choice_lag_summary_regressor = process_common.add_choice_lag_summary_regressor
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     paths = get_runtime_paths()
@@ -950,7 +960,7 @@ def _(
         )
         _choice_lag_features = [
             feature
-            for feature in ["choice_param", "at_choice", "at_choice_param"]
+            for feature in ["choice_param", "at_choice", "at_choice_param", "prev_choice"]
             if feature in _features
         ] + sorted(
             [

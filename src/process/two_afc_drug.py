@@ -18,6 +18,8 @@ from .two_afc import (
     _AT_CHOICE_PARAM_SPEC as BASE_AT_CHOICE_PARAM_SPEC,
     _BIAS_PARAM_SPEC as BASE_BIAS_PARAM_SPEC,
     _CHOICE_LAG_PARAM_COL,
+    _CHOICE_LAG_PARAM_2_COL,
+    _CHOICE_LAG_PARAM_2_SPEC as BASE_CHOICE_LAG_PARAM_2_SPEC,
     _CHOICE_LAG_PARAM_SPEC as BASE_CHOICE_LAG_PARAM_SPEC,
     _KEEP_EXPERIMENTS,
     _SF_COL_PREFIX,
@@ -81,6 +83,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
     bias_param_spec = BASE_BIAS_PARAM_SPEC
     at_choice_param_spec = BASE_AT_CHOICE_PARAM_SPEC
     choice_lag_param_spec = BASE_CHOICE_LAG_PARAM_SPEC
+    choice_lag_param_2_spec = BASE_CHOICE_LAG_PARAM_2_SPEC
 
     def read_dataset(self) -> pl.DataFrame:
         """Return all Alexis 2AFC batches with a unified ``Drug`` column.
@@ -194,6 +197,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
         include_bias_param = "bias_param" in requested
         include_at_choice_param = "at_choice_param" in requested
         include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested
+        include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested
 
         missing_optional = (
             (include_stim_strength and not any(str(col).startswith(_SF_COL_PREFIX) for col in feature_df.columns))
@@ -201,6 +205,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
             or (include_bias_param and "bias_param" not in feature_df.columns)
             or (include_at_choice_param and "at_choice_param" not in feature_df.columns)
             or (include_choice_lag_param and _CHOICE_LAG_PARAM_COL not in feature_df.columns)
+            or (include_choice_lag_param_2 and _CHOICE_LAG_PARAM_2_COL not in feature_df.columns)
         )
         if missing_optional:
             raw_cols = [
@@ -235,6 +240,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
                 include_bias_param=False,
                 include_at_choice_param=False,
                 include_choice_lag_param=include_choice_lag_param,
+                include_choice_lag_param_2=include_choice_lag_param_2,
             )
             if include_bias_param or include_at_choice_param:
                 feature_pd = feature_df.to_pandas()

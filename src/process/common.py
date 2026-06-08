@@ -169,6 +169,8 @@ def prepare_grouped_weight_family_plot(
 
 
 def display_regressor_name(regressor_col: str) -> str:
+    if regressor_col == "choice_lag_param_2":
+        return r"$A_{t,\geq 2}^{\mathrm{choice,param}}$"
     if regressor_col == "choice_lag_one_hot_sum":
         return r"$A_t$"
     if regressor_col == "choice_lag_glm_weighted_sum":
@@ -749,6 +751,7 @@ def padded_numeric_limits(
 
 def pick_choice_history_regressor(regressor_options: list[str]) -> str | None:
     preferred_order = [
+        "choice_lag_param_2",
         "choice_lag_one_hot_sum",
         "choice_lag_param",
         "at_choice_param",
@@ -815,6 +818,7 @@ ACTION_TRACE_CANDIDATES = (
     "at_choice",
     "at_choice_param",
     "choice_lag_one_hot_sum",
+    "choice_lag_param_2",
     "choice_lag_param",
     "A_R",
     "A_L",
@@ -2561,12 +2565,67 @@ def score_states_by_regressor(
     return vals
 
 
+def score_states_by_scoring_terms(
+    weights: np.ndarray,
+    feature_names: Sequence[str],
+    terms: Sequence[tuple[str, str | int]],
+    *,
+    default_rule: str | None = "+",
+    weight_row_idx: int = 0,
+) -> np.ndarray:
+    """Score each state from one or more explicit scoring terms.
+
+    A term is ``(feature, rule_or_row)``. String selectors are scoring rules
+    such as ``"pos"``, ``"neg"``, or ``"abs"`` applied to ``weight_row_idx``.
+    Integer selectors are explicit emission-weight rows, used by multi-class
+    tasks where a semantic score averages over multiple class-specific weights.
+    """
+    W = np.asarray(weights, dtype=float)
+    if W.ndim == 2:
+        W = W[:, None, :]
+    if W.ndim != 3:
+        raise ValueError(f"Expected emission weights with shape (K, C-1, M), got {W.shape}.")
+    if W.shape[0] == 0:
+        return np.asarray([], dtype=float)
+
+    name2fi = {str(name): idx for idx, name in enumerate(feature_names)}
+    scores = np.zeros(W.shape[0], dtype=float)
+    n_terms = 0
+
+    for feature_name, selector in terms:
+        feature = str(feature_name)
+        if feature not in name2fi:
+            continue
+        if isinstance(selector, str):
+            row_idx = min(max(int(weight_row_idx), 0), W.shape[1] - 1)
+            rule = selector
+        else:
+            row_idx = min(max(int(selector), 0), W.shape[1] - 1)
+            rule = default_rule
+
+        vals = W[:, row_idx, name2fi[feature]]
+        normalized_rule = normalize_state_scoring_rule(rule)
+        if normalized_rule == "-":
+            vals = -vals
+        elif normalized_rule == "abs":
+            vals = np.abs(vals)
+
+        scores += vals
+        n_terms += 1
+
+    if n_terms == 0:
+        return np.asarray([], dtype=float)
+    return scores / n_terms
+
+
 def label_states_by_regressor(
     arrays_store: dict,
     names: dict,
     K: int,
     subjects: Sequence,
     *,
+    scoring_key: str | None = None,
+    scoring_options: dict | None = None,
     primary_feature: str | None = None,
     primary_rule: str | None = "+",
     split_feature: str | None = None,
@@ -2595,18 +2654,31 @@ def label_states_by_regressor(
             continue
 
         feat = [str(feature) for feature in subject_store.get("X_cols", base_feat)]
-        score_feature = choose_state_scoring_feature(
-            feat,
-            preferred=preferred_features,
-            requested=primary_feature,
-        )
-        primary_scores = score_states_by_regressor(
-            W,
-            feat,
-            score_feature,
-            primary_rule,
-            weight_row_idx=weight_row_idx,
-        )
+        option_terms = []
+        if primary_feature is None and scoring_key is not None and scoring_options:
+            option_terms = list(scoring_options.get(scoring_key, []) or [])
+
+        if option_terms:
+            primary_scores = score_states_by_scoring_terms(
+                W,
+                feat,
+                option_terms,
+                default_rule=primary_rule,
+                weight_row_idx=weight_row_idx,
+            )
+        else:
+            score_feature = choose_state_scoring_feature(
+                feat,
+                preferred=preferred_features,
+                requested=primary_feature,
+            )
+            primary_scores = score_states_by_regressor(
+                W,
+                feat,
+                score_feature,
+                primary_rule,
+                weight_row_idx=weight_row_idx,
+            )
         if primary_scores.size == 0:
             state_labels[subj] = {k: f"State {k + 1}" for k in range(K)}
             state_order[subj] = list(range(K))

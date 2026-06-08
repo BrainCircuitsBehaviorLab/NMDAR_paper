@@ -467,6 +467,7 @@ def _(
         "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
         "at_choice_param": r"$\mathrm{A}_t$",
         "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
+        "choice_lag_param_2": r"$\mathrm{A}_{t,\geq 2}^{\mathrm{choice,param}}$",
     }
 
     feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
@@ -571,6 +572,7 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
         "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
         "at_choice_param": r"$\mathrm{A}_t$",
         "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
+        "choice_lag_param_2": r"$\mathrm{A}_{t,\geq 2}^{\mathrm{choice,param}}$",
     }
     _feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
 
@@ -1076,15 +1078,20 @@ def _(mo, plot_df_all, plots, save_plot, selected, views):
 
 @app.cell
 def _(fig_size, mo, plot_df_all, plots, plt, save_plot):
+    _choice_history_regressor = (
+        "choice_lag_param_2"
+        if "choice_lag_param_2" in plot_df_all.columns
+        else "choice_lag_param"
+    )
     mo.stop(
-        "choice_lag_param" not in plot_df_all.columns,
+        _choice_history_regressor not in plot_df_all.columns,
         mo.md("No choice-history regressor available for p(right) by regressor."),
     )
 
     fig_right, ax_right = plt.subplots(figsize=fig_size(2,1))
     _ax_right_regressor = plots.plot_right_by_regressor(
         plot_df_all,
-        regressor_col="choice_lag_param",
+        regressor_col=_choice_history_regressor,
         title=None,
         ax=ax_right,
     )
@@ -1100,7 +1107,7 @@ def _(fig_size, mo, plot_df_all, plots, plt, save_plot):
             save_plot(
                 fig_right,
                 "p(right) by choice history",
-                stem="right_by_choice_lag_param",
+                stem=f"right_by_{_choice_history_regressor}",
             ),
         ],
         align="center",
@@ -1192,8 +1199,13 @@ def _(
     selected,
     views,
 ):
+    _choice_history_regressor = (
+        "choice_lag_param_2"
+        if "choice_lag_param_2" in plot_df_all.columns
+        else "choice_lag_param"
+    )
     mo.stop(
-        "choice_lag_param" not in plot_df_all.columns,
+        _choice_history_regressor not in plot_df_all.columns,
         mo.md("No choice-history regressor available for binned accuracy."),
     )
     _views_sel = {s: views[s] for s in selected}
@@ -1206,7 +1218,7 @@ def _(
     )
     _binned_result = plots.plot_binned_accuracy_figure(
         plot_df_all,
-        regressor_col="choice_lag_param",
+        regressor_col=_choice_history_regressor,
         adapter=adapter,
         views=_views_sel,
         max_panels=1,
@@ -1225,7 +1237,7 @@ def _(
             save_plot(
                 _fig_binned,
                 "binned accuracy by choice history",
-                stem="accuracy_binned_choice_lag_param",
+                stem=f"accuracy_binned_{_choice_history_regressor}",
             ),
         ],
         align="center",
@@ -1843,12 +1855,15 @@ def _(
     adapter,
     build_state_accuracy_payload,
     build_state_posterior_count_payload,
+    df_all,
     mo,
     model_plots,
+    pd,
     pl,
     plt,
     save_plot,
     selected,
+    sns,
     trial_df,
 ):
     mo.stop(not selected, mo.md("No fitted subjects available."))
@@ -1865,6 +1880,78 @@ def _(
     _fig_post = model_plots.state_posterior_count_kde(build_state_posterior_count_payload(_trial_df_sel), ax=ax)
     ax.spines["right"].set_visible(True)
 
+    def _pick_column(_df, _candidates):
+        for _candidate in _candidates:
+            if _candidate and _candidate in _df.columns:
+                return _candidate
+        return None
+
+    _state_nlicks_message = None
+    _fig_nlicks = None
+    _trial_pdf = _trial_df_sel.to_pandas()
+    _state_col = _pick_column(_trial_pdf, ["state_label", "state_label_pred"])
+    if "nLicks" in _trial_pdf.columns:
+        state_nlicks_df = _trial_pdf.copy()
+    else:
+        _behavioral_cols = getattr(adapter, "behavioral_cols", {}) or {}
+        _session_col = _pick_column(
+            df_all,
+            [getattr(adapter, "session_col", None), _behavioral_cols.get("session"), "session", "Session"],
+        )
+        _trial_col = _pick_column(
+            df_all,
+            [getattr(adapter, "sort_col", None), _behavioral_cols.get("trial_idx"), "trial_idx", "trial", "Trial"],
+        )
+        if "nLicks" in df_all.columns and _session_col is not None and _trial_col is not None:
+            _lick_pdf = (
+                df_all
+                .select(["subject", _session_col, _trial_col, "nLicks"])
+                .rename({_session_col: "session", _trial_col: "trial_idx"})
+                .to_pandas()
+            )
+            state_nlicks_df = _trial_pdf.merge(
+                _lick_pdf,
+                on=["subject", "session", "trial_idx"],
+                how="left",
+            )
+        else:
+            state_nlicks_df = pd.DataFrame()
+            _state_nlicks_message = mo.md("`nLicks` is not available for this task/dataframe.")
+
+    if _state_nlicks_message is None and _state_col is not None and not state_nlicks_df.empty:
+        state_nlicks_df = state_nlicks_df.copy()
+        state_nlicks_df["nLicks"] = pd.to_numeric(state_nlicks_df["nLicks"], errors="coerce")
+        state_nlicks_df = state_nlicks_df.dropna(subset=["nLicks", _state_col])
+        if state_nlicks_df.empty:
+            _state_nlicks_message = mo.md("No valid `nLicks` values for selected fitted trials.")
+        else:
+            _fig_nlicks, _ax_nlicks = plt.subplots(figsize=(4, 4))
+            sns.boxplot(
+                data=state_nlicks_df,
+                x=_state_col,
+                y="nLicks",
+                ax=_ax_nlicks,
+                color="tab:blue",
+                showfliers=False,
+            )
+            sns.stripplot(
+                data=state_nlicks_df,
+                x=_state_col,
+                y="nLicks",
+                ax=_ax_nlicks,
+                color="tab:blue",
+                alpha=0.25,
+                size=2,
+                jitter=0.2,
+            )
+            _ax_nlicks.set_xlabel("State")
+            _ax_nlicks.set_ylabel("Number of licks")
+            _ax_nlicks.tick_params(axis="x", rotation=30)
+            sns.despine(ax=_ax_nlicks)
+            _fig_nlicks.tight_layout()
+    elif _state_nlicks_message is None:
+        _state_nlicks_message = mo.md("State labels are not available for the `nLicks` boxplot.")
+
     mo.vstack(
         [
             mo.hstack(
@@ -1878,6 +1965,18 @@ def _(
                                 "accuracy by state",
                                 stem="state_accuracy",
                             ),
+                        ],
+                        align="center",
+                    ),
+                    mo.vstack(
+                        [
+                            mo.md("#### Number of licks by state"),
+                            _fig_nlicks if _fig_nlicks is not None else _state_nlicks_message,
+                            save_plot(
+                                _fig_nlicks,
+                                "number of licks by state",
+                                stem="state_nlicks",
+                            ) if _fig_nlicks is not None else mo.md(""),
                         ],
                         align="center",
                     ),

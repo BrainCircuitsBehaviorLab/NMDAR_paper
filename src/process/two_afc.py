@@ -86,6 +86,7 @@ EMISSION_COLS: list[str] = [
     "at_choice",
     "at_choice_param",
     "choice_lag_param",
+    "choice_lag_param_2",
     "at_error",
     "at_correct",
     "reward_trace",
@@ -122,6 +123,7 @@ _LEGACY_TRANSITION_COLS: list[str] = [
 ]
 _STIM_PARAM_COL = "stim_param"
 _CHOICE_LAG_PARAM_COL = "choice_lag_param"
+_CHOICE_LAG_PARAM_2_COL = "choice_lag_param_2"
 _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     target_name="stim_param",
     fit_task="2AFC",
@@ -157,6 +159,15 @@ _CHOICE_LAG_PARAM_SPEC = FittedWeightRegressorSpec(
     arrays_suffix="glm_arrays.npz",
     source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
 )
+_CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
+    target_name=_CHOICE_LAG_PARAM_2_COL,
+    fit_task="2AFC",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
+    exclude_features=(f"{_CHOICE_LAG_COL_PREFIX}01",),
+)
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "stim_vals": r"$\mathrm{Stimulus}$",
@@ -169,6 +180,7 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "at_choice": r"$\mathrm{A}_t^{\mathrm{choice}}$",
     "at_choice_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
     "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
+    "choice_lag_param_2": r"$\mathrm{A}_{t,\geq 2}^{\mathrm{choice,param}}$",
     "at_error": r"$\mathrm{A}_t^{\mathrm{error}}$",
     "at_correct": r"$\mathrm{A}_t^{\mathrm{correct}}$",
     "reward_trace": r"$\mathrm{Reward}_{\mathrm{trace}}$",
@@ -193,6 +205,7 @@ _EMISSION_GROUPS: list[dict] = [
     {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
     {"key": "at_choice_param", "label": "choice param", "members": {"N": "at_choice_param"}},
     {"key": "choice_lag_param", "label": "choice lag param", "members": {"N": "choice_lag_param"}},
+    {"key": "choice_lag_param_2", "label": "choice lag param 2+", "members": {"N": "choice_lag_param_2"}},
     {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
     {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
     {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
@@ -1205,6 +1218,7 @@ class TwoAFCAdapter(TaskAdapter):
     bias_param_spec: FittedWeightRegressorSpec = _BIAS_PARAM_SPEC
     at_choice_param_spec: FittedWeightRegressorSpec = _AT_CHOICE_PARAM_SPEC
     choice_lag_param_spec: FittedWeightRegressorSpec = _CHOICE_LAG_PARAM_SPEC
+    choice_lag_param_2_spec: FittedWeightRegressorSpec = _CHOICE_LAG_PARAM_2_SPEC
 
     # ── state-scoring options ────────────────────────────────────────────────
     # For 2AFC the weight matrix is (K, 1, M) where W[k,0,:] is the
@@ -1216,10 +1230,10 @@ class TwoAFCAdapter(TaskAdapter):
     # Score per state = mean over listed pairs.
     _SCORING_OPTIONS: dict = {
         "stim_vals (w)": [("stim_vals", "pos")],
-        "stim_vals (-w)": [("stim_vals", "pos")],
+        "stim_vals (-w)": [("stim_vals", "neg")],
         "stim_vals (|w|)": [("stim_vals", "abs")],
         "stim_param (w)": [("stim_param", "pos")],
-        "stim_param (-w)": [("stim_param", "pos")],
+        "stim_param (-w)": [("stim_param", "neg")],
         "stim_param (|w|)": [("stim_param", "abs")],
         "4-state high stim_param + bias": [],
         "4-state signed stim_param + bias": [],
@@ -1274,6 +1288,7 @@ class TwoAFCAdapter(TaskAdapter):
         include_bias_param: bool = False,
         include_at_choice_param: bool = False,
         include_choice_lag_param: bool = False,
+        include_choice_lag_param_2: bool = False,
     ) -> pl.DataFrame:
         """Return the Alexis 2AFC feature dataframe owned by this adapter."""
         from glmhmmt.cli.alexis_functions import get_action_trace, make_frames_dm
@@ -1583,6 +1598,18 @@ class TwoAFCAdapter(TaskAdapter):
                     [part, pd.DataFrame({_CHOICE_LAG_PARAM_COL: choice_lag_param}, index=part.index)],
                     axis=1,
                 )
+            if include_choice_lag_param_2:
+                try:
+                    choice_lag_param_2 = _weighted_sum_regressor_zero_fill(part, self.choice_lag_param_2_spec)
+                except FileNotFoundError as exc:
+                    raise ValueError(
+                        f"Cannot build {self.choice_lag_param_2_spec.target_name!r}; pooled fitted weights are unavailable "
+                        f"for {self.choice_lag_param_2_spec.fit_task}/{self.choice_lag_param_2_spec.fit_model_kind}/{self.choice_lag_param_2_spec.fit_model_id}."
+                    ) from exc
+                part = pd.concat(
+                    [part, pd.DataFrame({_CHOICE_LAG_PARAM_2_COL: choice_lag_param_2}, index=part.index)],
+                    axis=1,
+                )
             parts.append(part)
 
         return pl.from_pandas(pd.concat(parts, ignore_index=True))
@@ -1597,6 +1624,7 @@ class TwoAFCAdapter(TaskAdapter):
             include_bias_param=False,
             include_at_choice_param=False,
             include_choice_lag_param=False,
+            include_choice_lag_param_2=False,
         )
 
     def _resolved_emission_cols(
@@ -1647,6 +1675,7 @@ class TwoAFCAdapter(TaskAdapter):
         include_bias_param = "bias_param" in requested_emission_cols
         include_at_choice_param = "at_choice_param" in requested_emission_cols
         include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested_emission_cols
+        include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested_emission_cols
         feature_df = self._build_feature_df(
             df_sub,
             tau=tau,
@@ -1655,6 +1684,7 @@ class TwoAFCAdapter(TaskAdapter):
             include_bias_param=include_bias_param,
             include_at_choice_param=include_at_choice_param,
             include_choice_lag_param=include_choice_lag_param,
+            include_choice_lag_param_2=include_choice_lag_param_2,
         )
         return self.build_design_matrices(
             feature_df,
@@ -1677,12 +1707,14 @@ class TwoAFCAdapter(TaskAdapter):
         include_bias_param = "bias_param" in requested_emission_cols
         include_at_choice_param = "at_choice_param" in requested_emission_cols
         include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested_emission_cols
+        include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested_emission_cols
         missing_optional = (
             (include_stim_strength and not any(str(col).startswith(_SF_COL_PREFIX) for col in feature_df.columns))
             or (include_stim_param and _STIM_PARAM_COL not in feature_df.columns)
             or (include_bias_param and "bias_param" not in feature_df.columns)
             or (include_at_choice_param and "at_choice_param" not in feature_df.columns)
             or (include_choice_lag_param and _CHOICE_LAG_PARAM_COL not in feature_df.columns)
+            or (include_choice_lag_param_2 and _CHOICE_LAG_PARAM_2_COL not in feature_df.columns)
         )
         if missing_optional:
             raw_cols = [
@@ -1718,6 +1750,7 @@ class TwoAFCAdapter(TaskAdapter):
                 include_bias_param=include_bias_param,
                 include_at_choice_param=include_at_choice_param,
                 include_choice_lag_param=include_choice_lag_param,
+                include_choice_lag_param_2=include_choice_lag_param_2,
             )
         ecols = self._resolved_emission_cols(feature_df, emission_cols)
         ucols = transition_cols if transition_cols is not None else self.default_transition_cols()
@@ -1759,7 +1792,14 @@ class TwoAFCAdapter(TaskAdapter):
         default_cols = [
             c
             for c in self.emission_cols
-            if c not in {"stim_strength", _STIM_PARAM_COL, "bias_param", "at_choice_param", _CHOICE_LAG_PARAM_COL}
+            if c not in {
+                "stim_strength",
+                _STIM_PARAM_COL,
+                "bias_param",
+                "at_choice_param",
+                _CHOICE_LAG_PARAM_COL,
+                _CHOICE_LAG_PARAM_2_COL,
+            }
         ]
         if df is not None:
             default_cols.extend(self.sf_cols(df))
@@ -1983,6 +2023,8 @@ class TwoAFCAdapter(TaskAdapter):
             names,
             K,
             subjects,
+            scoring_key=getattr(self, "scoring_key", None),
+            scoring_options=getattr(self, "_SCORING_OPTIONS", None),
             primary_feature=getattr(self, "state_scoring_feature", None),
             primary_rule=getattr(self, "state_scoring_rule", "+"),
             split_feature=getattr(self, "state_split_feature", None),

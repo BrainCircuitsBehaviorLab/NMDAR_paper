@@ -72,6 +72,7 @@ EMISSION_COLS: list[str] = [
     "stim_x_delay_param",
     "at_choice",
     "choice_lag_param",
+    "choice_lag_param_2",
     "at_error",
     "at_correct",
     "reward_trace",
@@ -152,6 +153,15 @@ _CHOICE_LAG_PARAM_SPEC = FittedWeightRegressorSpec(
     arrays_suffix="glm_arrays.npz",
     source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
 )
+_CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
+    target_name="choice_lag_param_2",
+    fit_task="2AFC_delay",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
+    exclude_features=(f"{_CHOICE_LAG_COL_PREFIX}01",),
+)
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "stim": r"$\mathrm{Stimulus}$",
@@ -164,6 +174,7 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
     "at_choice": r"$\mathrm{A}_t^{\mathrm{choice}}$",
     "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
+    "choice_lag_param_2": r"$\mathrm{A}_{t,\geq 2}^{\mathrm{choice,param}}$",
     "at_error": r"$\mathrm{A}_t^{\mathrm{error}}$",
     "at_correct": r"$\mathrm{A}_t^{\mathrm{correct}}$",
     "reward_trace": r"$\mathrm{Reward}_{\mathrm{trace}}$",
@@ -195,6 +206,7 @@ _EMISSION_GROUPS: list[dict] = [
     {"key": "stim_x_delay_param", "label": "stim×delay param", "members": {"N": "stim_x_delay_param"}},
     {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
     {"key": "choice_lag_param", "label": "choice lag param", "members": {"N": "choice_lag_param"}},
+    {"key": "choice_lag_param_2", "label": "choice lag param 2+", "members": {"N": "choice_lag_param_2"}},
     {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
     {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
     {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
@@ -1779,6 +1791,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
         delay_param = _safe_weighted_sum_regressor(feature_df, _DELAY_PARAM_SPEC)
         stim_x_delay_param = _safe_weighted_sum_regressor(feature_df, _STIM_X_DELAY_PARAM_SPEC)
         choice_lag_param = _safe_weighted_sum_regressor(feature_df, _CHOICE_LAG_PARAM_SPEC)
+        choice_lag_param_2 = _safe_weighted_sum_regressor(feature_df, _CHOICE_LAG_PARAM_2_SPEC)
         reward_lag_cols = _reward_lag_cols(list(feature_df.columns))
         difficulty_hot_cols = _difficulty_hot_cols(list(feature_df.columns))
         prev_difficulty_hot_cols = _prev_difficulty_lag_hot_cols(list(feature_df.columns))
@@ -1812,6 +1825,11 @@ class TwoAFCDelayAdapter(TaskAdapter):
                 "choice_lag_param": (
                     np.asarray(choice_lag_param, dtype=np.float32)
                     if choice_lag_param is not None
+                    else np.zeros(len(feature_df), dtype=np.float32)
+                ),
+                "choice_lag_param_2": (
+                    np.asarray(choice_lag_param_2, dtype=np.float32)
+                    if choice_lag_param_2 is not None
                     else np.zeros(len(feature_df), dtype=np.float32)
                 ),
                 "reward_lag_param": transition_weighted_sum(
@@ -2179,6 +2197,8 @@ class TwoAFCDelayAdapter(TaskAdapter):
             names,
             K,
             subjects,
+            scoring_key=getattr(self, "scoring_key", None),
+            scoring_options=getattr(self, "_SCORING_OPTIONS", None),
             primary_feature=getattr(self, "state_scoring_feature", None),
             primary_rule=getattr(self, "state_scoring_rule", "+"),
             split_feature=getattr(self, "state_split_feature", None),
