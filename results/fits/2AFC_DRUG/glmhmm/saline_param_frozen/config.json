@@ -14,9 +14,9 @@
         "25"
     ],
     "emission_cols": [
-        "bias_param",
         "stim_param",
-        "choice_lag_param"
+        "choice_lag_param",
+        "bias"
     ],
     "frozen_emissions": {
         "0": {

@@ -1,7 +1,6 @@
 {
     "task": "2AFC_DRUG",
-    "model_id": "saline_param",
-    "alias": "saline_param",
+    "tau": 3,
     "subjects": [
         "14",
         "16",
@@ -14,17 +13,18 @@
         "24",
         "25"
     ],
-    "tau": 3,
-    "cv_mode": "none",
-    "cv_repeats": 0,
     "emission_cols": [
-        "bias_param",
         "stim_param",
-        "choice_lag_param"
+        "choice_lag_param",
+        "bias"
     ],
-    "condition_filter": "saline",
+    "frozen_emissions": {},
+    "baseline_class_idx": 0,
     "K_list": [
         2
     ],
-    "frozen_emissions": {}
+    "model_id": "saline_param",
+    "cv_mode": "none",
+    "cv_repeats": 0,
+    "condition_filter": "saline"
 }

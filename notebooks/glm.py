@@ -63,7 +63,11 @@ def _():
     process_mcdr = importlib.reload(process_mcdr)
     from src.process import two_afc as process_two_afc
     from src.process import two_adc as process_two_adc
-    from src.process.common import add_choice_lag_summary_regressor, display_regressor_name
+    from src.process.common import (
+        add_choice_lag_summary_regressor,
+        attach_repeat_choice_evidence,
+        display_regressor_name,
+    )
 
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
@@ -88,6 +92,7 @@ def _():
         add_choice_lag_summary_regressor,
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
+        attach_repeat_choice_evidence,
         build_editor_payload,
         build_trial_and_weights_df,
         build_trial_df,
@@ -473,16 +478,18 @@ def _(
     from scipy.stats import ttest_1samp
 
     def _significance_stars(pvalue: float) -> str:
-        if not np.isfinite(pvalue) or pvalue >= 0.05:
+        if not np.isfinite(pvalue):
             return ""
         if pvalue < 0.001:
             return "***"
         if pvalue < 0.01:
             return "**"
-        return "*"
+        if pvalue < 0.05:
+            return "*"
+        return ""
 
     def _annotate_weight_family_against_zero(prepared, ax: plt.Axes | None) -> None:
-        if prepared is None or ax is None or prepared.plot_kind != "box":
+        if prepared is None or ax is None or prepared.plot_kind not in {"box", "line"}:
             return
 
         df = pd.DataFrame(prepared.data).copy()
@@ -507,31 +514,47 @@ def _(
         if not x_order:
             return
 
-        _, y_top = ax.get_ylim()
         data_low = float(np.nanmin(df["weight"].to_numpy(dtype=float)))
         data_high = float(np.nanmax(df["weight"].to_numpy(dtype=float)))
         y_bottom = min(float(ax.get_ylim()[0]), data_low, 0.0)
-        y_top = max(float(y_top), data_high, 0.0)
+        y_top = max(float(ax.get_ylim()[1]), data_high, 0.0)
         y_span = y_top - y_bottom
         if not np.isfinite(y_span) or y_span <= 0:
             y_span = 1.0
-        y_text = y_top + 0.04 * y_span
 
         annotated = False
-        for xpos, x_label in enumerate(x_order, start=1):
+        max_y_text = -np.inf
+        x_start = 1 if prepared.plot_kind == "box" else 0
+
+        for xpos, x_label in enumerate(x_order, start=x_start):
             values = (
-                df.loc[df["x_label"] == x_label]
-                .groupby("subject", observed=False)["weight"]
-                .mean()
+                df.loc[df["x_label"] == x_label, "weight"]
                 .dropna()
                 .to_numpy(dtype=float)
             )
+
             if values.size < 2:
                 continue
+
+            if prepared.plot_kind == "box":
+                q1 = np.quantile(values, 0.25)
+                q3 = np.quantile(values, 0.75)
+                iqr = q3 - q1
+                upper_whisker_limit = q3 + 1.5 * iqr
+                whisker_values = values[values <= upper_whisker_limit]
+                y_anchor = float(np.nanmax(whisker_values if whisker_values.size else values))
+            else:
+                y_anchor = float(np.nanmax(values))
+
+            y_text = y_anchor + 0.02 * y_span
+            max_y_text = max(max_y_text, y_text)
+
             pvalue = float(ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue)
             label = _significance_stars(pvalue)
+
             if not label:
                 continue
+
             ax.text(
                 xpos,
                 y_text,
@@ -542,10 +565,11 @@ def _(
                 color="black",
                 clip_on=False,
             )
+
             annotated = True
 
         if annotated:
-            ax.set_ylim(y_bottom, y_text + 0.05 * y_span)
+            ax.set_ylim(y_bottom, max(y_top, max_y_text + 0.03 * y_span))
 
     def plot_stim_hot_weights(
         weights_df,
@@ -598,9 +622,12 @@ def _(
         return fig
 
     def plot_bias_hot_weights(weights_df) -> plt.Figure | None:
-        return plot_prepared_weight_family(
-            adapter.prepare_weight_family_plot(weights_df, "bias_hot")
-        )
+        prepared = adapter.prepare_weight_family_plot(weights_df, "bias_hot")
+        fig = plot_prepared_weight_family(prepared)
+        if task_name == "MCDR" and fig is not None:
+            target_ax = fig.axes[0] if fig.axes else None
+            _annotate_weight_family_against_zero(prepared, target_ax)
+        return fig
 
     def plot_sequence_feature_weights(weights_df) -> plt.Figure | None:
         """Plot only sequential stimulus features (s_i / sf_i) from the canonical weights df."""
@@ -892,7 +919,20 @@ def _(
     #     )
     # )
     # _fig_lr = None if _ax_lr is None else _ax_lr.figure
-    def _plot_one_hot_family(plotter, *, mcdr_mode):
+    def _choice_lag_tick_labels(labels):
+        ticks = []
+        tick_labels = []
+        for pos, raw_label in enumerate(labels, start=1):
+            label = str(raw_label)
+            if not label.isdigit():
+                return None, None
+            lag = int(label)
+            if lag % 5 == 0:
+                ticks.append(pos)
+                tick_labels.append(label)
+        return ticks, tick_labels
+
+    def _plot_one_hot_family(plotter, *, mcdr_mode, sparse_choice_lag_ticks: bool = False):
         _fig, _ax = plt.subplots(
             figsize=fig_size(2, 1),
             constrained_layout=True,
@@ -901,6 +941,12 @@ def _(
         if _plotted_fig is None:
             plt.close(_fig)
             return None, None
+        if sparse_choice_lag_ticks:
+            _labels = [tick.get_text() for tick in _ax.get_xticklabels()]
+            _ticks, _tick_labels = _choice_lag_tick_labels(_labels)
+            if _ticks:
+                _ax.set_xticks(_ticks)
+                _ax.set_xticklabels(_tick_labels)
         return _plotted_fig, _ax
 
     _fig_stim_hot, _ax_stim_hot = _plot_one_hot_family(
@@ -910,25 +956,19 @@ def _(
     _fig_choice_lag, _ax_choice_lag = _plot_one_hot_family(
         plot_choice_lag_weights,
         mcdr_mode=_mcdr_mode,
+        sparse_choice_lag_ticks=True,
     )
     if _ax_stim_hot is not None and _ax_choice_lag is not None:
-        _ylims = np.asarray(
-            [_ax_stim_hot.get_ylim(), _ax_choice_lag.get_ylim()],
-            dtype=float,
-        )
-        _lower = float(np.nanmin(_ylims[:, 0]))
-        _upper = float(np.nanmax(_ylims[:, 1]))
-        if np.isfinite(_lower) and np.isfinite(_upper):
-            if _lower == _upper:
-                _pad = 1.0 if _lower == 0 else abs(_lower) * 0.05
-                _lower -= _pad
-                _upper += _pad
-            _ax_stim_hot.set_ylim(_lower, _upper)
-            _ax_choice_lag.set_ylim(_lower, _upper)
+        _stim_upper = float(_ax_stim_hot.get_ylim()[1])
+        _choice_upper = float(_ax_choice_lag.get_ylim()[1])
+        if np.isfinite(_stim_upper):
+            _ax_stim_hot.set_ylim(-0.25, _stim_upper)
+        if np.isfinite(_choice_upper):
+            _ax_choice_lag.set_ylim(-0.1, max(1.0, _choice_upper))
     # _fig_choice_lag = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("choice")))
     _fig_bias_hot = plot_bias_hot_weights(_weights_df_sel)
     # _fig_bias_hot = model_plots.emission_weights_summary_boxplot(weights_df.filter(pl.col("feature").str.contains("choice").not_(), pl.col("feature").str.contains("stim").not_()))
-    _fig_lapses = model_plots.lapse_rates_boxplot(views=views_sel, K=K, collapse_history_choices=True)
+    _fig_lapses = model_plots.lapse_rates_boxplot(views=views_sel, K=K, collapse_history_choices=True, figsize=fig_size(3,1))
     _fig_seq = plot_sequence_feature_weights(_weights_df_sel)
     # _items = [mo.md("#### By subject"), _fig_by_subject]
     _items = []
@@ -1010,6 +1050,195 @@ def _(
     mo.vstack(_items, align="center")
     # _fig_summary
     # _fig_choice_lag
+    return
+
+
+@app.cell
+def _(fig_size, mo, np, pd, pl, plt, save_plot, selected, sns, weights_df):
+    from scipy.stats import ttest_1samp as _ttest_1samp
+
+    sns.set_context("paper")
+
+    def significance_stars(pvalue: float) -> str:
+        if not np.isfinite(pvalue):
+            return ""
+        if pvalue < 0.001:
+            return "***"
+        if pvalue < 0.01:
+            return "**"
+        if pvalue < 0.05:
+            return "*"
+        return ""
+
+    def annotate_choice_lag_ttests(ax, panel_df: pd.DataFrame, lag_order: list[int], y: float = 1) -> None:
+        for lag in lag_order:
+            values = panel_df.loc[panel_df["lag"] == lag, "weight"].dropna().to_numpy(dtype=float)
+            ax.text(
+                lag,
+                y,
+                significance_stars(float(_ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue)),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="black",
+                clip_on=False,
+            )
+
+    _weights_df_sel = weights_df.filter(pl.col("subject").is_in(selected))
+    _choice_df = _weights_df_sel.to_pandas() if hasattr(_weights_df_sel, "to_pandas") else pd.DataFrame(_weights_df_sel)
+    _choice_df = _choice_df.copy()
+    _choice_df["feature"] = _choice_df["feature"].astype(str)
+    _choice_df["weight"] = pd.to_numeric(_choice_df["weight"], errors="coerce")
+    _choice_df["lag"] = pd.to_numeric(
+        _choice_df["feature"].str.extract(r"^choice_lag_(\d+)$", expand=False),
+        errors="coerce",
+    )
+    _choice_df = _choice_df[_choice_df["lag"].between(1, 100) & np.isfinite(_choice_df["weight"])].copy()
+    mo.stop(_choice_df.empty, mo.md("No `choice_lag` weights found."))
+
+    _choice_df["lag"] = _choice_df["lag"].astype(int)
+    _lag_order = sorted(_choice_df["lag"].unique().tolist())
+    _choice_df = _choice_df[_choice_df["lag"].isin(_lag_order)].copy()
+
+    _fig_choice_lag_line, _ax_choice_lag_line = plt.subplots(figsize=fig_size(1,2), constrained_layout=True)
+    sns.lineplot(
+        data=_choice_df,
+        x="lag",
+        y="weight",
+        estimator="mean",
+        errorbar="se",
+        marker="o",
+        markersize=3,
+        linewidth=1.25,
+        color="#1f77b4",
+        ax=_ax_choice_lag_line,
+    )
+    _ax_choice_lag_line.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+    _ax_choice_lag_line.set_title("Choice-lag weights")
+    _ax_choice_lag_line.set_xlabel("Choice lag")
+    _ax_choice_lag_line.set_ylabel("Weight")
+    _ax_choice_lag_line.set_xticks(range(5, max(_lag_order) + 1, 5))
+    _ax_choice_lag_line.set_ylim(-0.5, 2)
+    annotate_choice_lag_ttests(_ax_choice_lag_line, _choice_df, _lag_order)
+
+    mo.vstack(
+        [
+            mo.md("#### Choice-lag weights lineplot"),
+            _fig_choice_lag_line,
+            save_plot(_fig_choice_lag_line, "choice lag weights lineplot", stem="choice_lag_lineplot"),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(fig_size, mo, np, pd, pl, plt, save_plot, selected, sns, weights_df):
+    from scipy.stats import ttest_1samp as _ttest_1samp
+
+    sns.set_context("paper")
+
+    def _significance_stars(pvalue: float) -> str:
+        if not np.isfinite(pvalue):
+            return ""
+        if pvalue < 0.001:
+            return "***"
+        if pvalue < 0.01:
+            return "**"
+        if pvalue < 0.05:
+            return "*"
+        return ""
+
+    def _annotate_choice_lag_ttests(
+        ax,
+        panel_df: pd.DataFrame,
+        lag_order: list[int],
+        y: float = 3.75,
+    ) -> None:
+        for lag in lag_order:
+            values = panel_df.loc[panel_df["lag"] == lag, "weight"].dropna().to_numpy(dtype=float)
+            if values.size < 2:
+                continue
+            ax.text(
+                lag,
+                y,
+                _significance_stars(float(_ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue)),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="black",
+                clip_on=False,
+            )
+
+    _weights_df_sel = weights_df.filter(pl.col("subject").is_in(selected))
+    _choice_df = _weights_df_sel.to_pandas() if hasattr(_weights_df_sel, "to_pandas") else pd.DataFrame(_weights_df_sel)
+    _choice_df = _choice_df.copy()
+    _choice_df["feature"] = _choice_df["feature"].astype(str)
+    _choice_df["weight"] = pd.to_numeric(_choice_df["weight"], errors="coerce")
+    _parsed = _choice_df["feature"].str.extract(r"^choice_lag_(corr|inc)_(\d+)$")
+    _choice_df["outcome_family"] = _parsed[0].map({"corr": "Correct", "inc": "Incorrect"})
+    _choice_df["lag"] = pd.to_numeric(_parsed[1], errors="coerce")
+    _choice_df = _choice_df[
+        _choice_df["outcome_family"].isin(["Correct", "Incorrect"])
+        & _choice_df["lag"].between(1, 100)
+        & np.isfinite(_choice_df["weight"])
+    ].copy()
+    mo.stop(
+        _choice_df.empty,
+        mo.md("No `choice_lag_corr_*` / `choice_lag_inc_*` weights found."),
+    )
+
+    _choice_df["lag"] = _choice_df["lag"].astype(int)
+    _lag_order = sorted(_choice_df["lag"].unique().tolist())
+    _choice_df = _choice_df[_choice_df["lag"].isin(_lag_order)].copy()
+
+    _fig_choice_lag_outcome, _axes_choice_lag_outcome = plt.subplots(
+        1,
+        2,
+        figsize=fig_size(1, 1.6),
+        sharey=True,
+        constrained_layout=True,
+    )
+    _outcome_order = ["Correct", "Incorrect"]
+    for _ax, _outcome_family in zip(_axes_choice_lag_outcome, _outcome_order, strict=False):
+        _panel_df = _choice_df[_choice_df["outcome_family"] == _outcome_family].copy()
+        sns.lineplot(
+            data=_panel_df,
+            x="lag",
+            y="weight",
+            estimator="mean",
+            errorbar="se",
+            marker="o",
+            markersize=3,
+            linewidth=1.25,
+            color="#1f77b4",
+            ax=_ax,
+        )
+        _ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+        _ax.set_title(_outcome_family)
+        _ax.set_xlabel("Choice lag")
+        _ax.set_ylabel("Weight" if _outcome_family == "Correct" else "")
+        _ax.set_xticks(range(5, max(_lag_order) + 1, 5))
+        _ax.set_ylim(-0.5, 2)
+        _annotate_choice_lag_ttests(_ax, _panel_df, _lag_order, 1)
+
+    mo.vstack(
+        [
+            mo.md("#### Correct/incorrect choice-lag weights lineplot"),
+            _fig_choice_lag_outcome,
+            save_plot(
+                _fig_choice_lag_outcome,
+                "correct incorrect choice lag weights lineplot",
+                stem="choice_lag_corr_inc_lineplot",
+            ),
+        ],
+        align="center",
+    )
     return
 
 
@@ -1284,11 +1513,15 @@ def _(
 
 @app.cell
 def _(
+    attach_repeat_choice_evidence,
     fig_size,
     is_2afc,
     mo,
+    np,
+    pd,
     plot_df_all,
     plots,
+    plt,
     regressor_options,
     save_plot,
     ui_accuracy_regressor,
@@ -1321,7 +1554,126 @@ def _(
         figsize = fig_size(2,1)
     )
 
+    _plot_df_cols = set(getattr(plot_df_all, "columns", []))
+    _ild_col = next(
+        (
+            _candidate
+            for _candidate in ("ILD", "ild")
+            if _candidate in _plot_df_cols
+        ),
+        None,
+    )
+    _fig_repeat_ild = None
+    _ild_label = "ILD"
+    if _ild_col is not None:
+        _repeat_ild_df = attach_repeat_choice_evidence(
+            plot_df_all,
+            views=views_sel,
+            is_mcdr=not is_2afc,
+        )
+        _repeat_ild_df = _repeat_ild_df.copy()
+        _repeat_ild_df["_abs_ild"] = pd.to_numeric(_repeat_ild_df[_ild_col], errors="coerce").abs()
+        _repeat_ild_df["_repeat_choice"] = pd.to_numeric(_repeat_ild_df["_repeat_choice"], errors="coerce")
+        _repeat_ild_df["_p_repeat_model"] = pd.to_numeric(_repeat_ild_df["_p_repeat_model"], errors="coerce")
+        _repeat_ild_df = _repeat_ild_df[
+            np.isfinite(_repeat_ild_df["_abs_ild"])
+            & np.isfinite(_repeat_ild_df["_repeat_choice"])
+            & np.isfinite(_repeat_ild_df["_p_repeat_model"])
+        ].copy()
+        if not _repeat_ild_df.empty and _repeat_ild_df["_abs_ild"].nunique() >= 2:
+            _subject_repeat_ild = (
+                _repeat_ild_df.groupby(["subject", "_abs_ild"], observed=True)
+                .agg(
+                    data_mean=("_repeat_choice", "mean"),
+                    model_mean=("_p_repeat_model", "mean"),
+                )
+                .reset_index()
+            )
+            _repeat_ild_summary = (
+                _subject_repeat_ild.groupby("_abs_ild", observed=True)
+                .agg(
+                    data_mean=("data_mean", "mean"),
+                    data_std=("data_mean", "std"),
+                    data_count=("data_mean", "count"),
+                    model_mean=("model_mean", "mean"),
+                    model_std=("model_mean", "std"),
+                )
+                .reset_index()
+                .sort_values("_abs_ild")
+            )
+            _repeat_ild_summary["data_sem"] = _repeat_ild_summary["data_std"].fillna(0.0) / np.sqrt(
+                _repeat_ild_summary["data_count"].clip(lower=1)
+            )
+            _repeat_ild_summary["model_sem"] = _repeat_ild_summary["model_std"].fillna(0.0) / np.sqrt(
+                _repeat_ild_summary["data_count"].clip(lower=1)
+            )
+            _fig_repeat_ild, _ax_repeat_ild = plt.subplots(figsize=fig_size(2, 1), constrained_layout=True)
+            _x = _repeat_ild_summary["_abs_ild"].to_numpy(dtype=float)
+            _model_mean = _repeat_ild_summary["model_mean"].to_numpy(dtype=float)
+            _model_sem = _repeat_ild_summary["model_sem"].to_numpy(dtype=float)
+            _ax_repeat_ild.plot(_x, _model_mean, "o-", color="black", linewidth=2.0, markersize=3, label="Model", zorder=3)
+            _ax_repeat_ild.fill_between(
+                _x,
+                np.clip(_model_mean - _model_sem, 0.0, 1.0),
+                np.clip(_model_mean + _model_sem, 0.0, 1.0),
+                color="black",
+                alpha=0.12,
+                linewidth=0.0,
+                zorder=2,
+            )
+            _ax_repeat_ild.errorbar(
+                _x,
+                _repeat_ild_summary["data_mean"].to_numpy(dtype=float),
+                yerr=_repeat_ild_summary["data_sem"].to_numpy(dtype=float),
+                fmt="o",
+                color="#2b7bba",
+                ecolor="#2b7bba",
+                elinewidth=1.0,
+                capsize=3,
+                label="Data",
+                zorder=4,
+            )
+            _baseline = 1.0 / next(iter(views_sel.values())).num_classes if views_sel else 0.5
+            _ax_repeat_ild.axhline(_baseline, color="gray", lw=0.8, ls="--", alpha=0.8)
+            _ax_repeat_ild.axhspan(0.0, _baseline, color="gray", alpha=0.1, zorder=0)
+            _ax_repeat_ild.set_xlabel(r"$|\mathrm{ILD}|$ (dB)")
+            _ax_repeat_ild.set_ylabel(r"$p(\mathrm{repeat})$")
+            _ax_repeat_ild.set_ylim(0.0, 1.0)
+            _ax_repeat_ild.set_yticks([0.0, _baseline, 1.0])
+            _ax_repeat_ild.set_xticks(_x, labels=[f"{_value:g}" for _value in _x])
+            _ax_repeat_ild.invert_xaxis()
+            _ax_repeat_ild.legend(frameon=False, fontsize=8)
+            _ild_label = r"$|\mathrm{ILD}|$"
+
     # mo.stop(_fig_regressor is None, mo.md(f"No p(repeat) plot available for {_regressor_label}."))
+
+    _repeat_panels = [
+        mo.vstack(
+            [
+                _fig_regressor,
+                save_plot(
+                    _fig_regressor,
+                    f"p(repeat) by {_regressor_label}",
+                    stem=f"psychometric_regressor_{_regressor_for_right}",
+                ),
+            ],
+            align="center",
+        )
+    ]
+    if _fig_repeat_ild is not None:
+        _repeat_panels.append(
+            mo.vstack(
+                [
+                    _fig_repeat_ild,
+                    save_plot(
+                        _fig_repeat_ild,
+                        f"p(repeat) by {_ild_label}",
+                        stem=f"psychometric_repeat_{_ild_col}",
+                    ),
+                ],
+                align="center",
+            )
+        )
 
     mo.hstack(
         [
@@ -1348,25 +1700,198 @@ def _(
                 ],
                 align="center",
             ),
-            mo.vstack(
-                [
-                    _fig_regressor,
-                    save_plot(
-                        _fig_regressor,
-                        f"p(repeat) by {_regressor_label}",
-                        stem=f"psychometric_regressor_{_regressor_for_right}",
-                    ),
-                ],
-                align="center",
-            ),
+            *_repeat_panels,
         ]
     )
     return
 
 
 @app.cell
-def _(adapter, fig_size, mo, plot_df_all, plots, plt, save_plot, views_sel):
-    _evidence_figsize = fig_size(3, 1)
+def _(
+    adapter,
+    fig_size,
+    mo,
+    np,
+    pd,
+    pl,
+    plot_df_all,
+    plots,
+    plt,
+    save_plot,
+    views_sel,
+):
+    def _attach_sum_regressor(_df, *, output_col, prefixes, exclude=(), col_filter=None):
+        _cols = [
+            _col
+            for _col in getattr(_df, "columns", [])
+            if any(str(_col).startswith(_prefix) for _prefix in prefixes)
+            and str(_col) not in set(exclude)
+            and (col_filter is None or col_filter(str(_col)))
+        ]
+        if not _cols or output_col in getattr(_df, "columns", []):
+            return _df
+        if hasattr(_df, "with_columns"):
+            return _df.with_columns(
+                pl.sum_horizontal(
+                    [
+                        pl.col(_col).cast(pl.Float64, strict=False).fill_null(0.0)
+                        for _col in _cols
+                    ]
+                ).alias(output_col)
+            )
+        _out = _df.copy()
+        _out[output_col] = (
+            _out[_cols]
+            .apply(pd.to_numeric, errors="coerce")
+            .fillna(0.0)
+            .sum(axis=1)
+        )
+        return _out
+
+    def _first_existing_col(_df, _candidates):
+        _cols = set(getattr(_df, "columns", []))
+        for _candidate in _candidates:
+            if _candidate in _cols:
+                return _candidate
+        return None
+
+    def _response_right(_df):
+        _response = pd.to_numeric(_df["response"], errors="coerce")
+        _unique = set(_response.dropna().unique().tolist())
+        _num_classes = next((getattr(_view, "num_classes", None) for _view in views_sel.values()), None)
+        if _num_classes == 3:
+            return (_response == 2).astype(float)
+        if _unique.issubset({-1.0, 1.0}):
+            return (_response > 0).astype(float)
+        return _response.astype(float)
+
+    def _prepare_pright_by_total_evidence(
+        _df,
+        *,
+        trace_col,
+        discrete_trace_bins=False,
+        n_trace_bins=4,
+        n_evidence_bins=10,
+    ):
+        _df_pd = _df.to_pandas().copy() if hasattr(_df, "to_pandas") else pd.DataFrame(_df).copy()
+        _model_col = "pR" if "pR" in _df_pd.columns else "p_pred" if "p_pred" in _df_pd.columns else None
+        _required = {"subject", "response", trace_col}
+        if _model_col is None or not _required.issubset(_df_pd.columns):
+            return None
+
+        _df_pd["_response_right"] = _response_right(_df_pd)
+        _df_pd["_p_right_model"] = pd.to_numeric(_df_pd[_model_col], errors="coerce")
+        _df_pd["_trace_value"] = pd.to_numeric(_df_pd[trace_col], errors="coerce")
+        _p_right = np.clip(_df_pd["_p_right_model"].to_numpy(dtype=float), 1e-6, 1.0 - 1e-6)
+        _df_pd["_fitted_right_evidence"] = np.log(_p_right / (1.0 - _p_right))
+        _df_pd = _df_pd[
+            np.isfinite(_df_pd["_response_right"])
+            & np.isfinite(_df_pd["_p_right_model"])
+            & np.isfinite(_df_pd["_trace_value"])
+            & np.isfinite(_df_pd["_fitted_right_evidence"])
+        ].copy()
+        if _df_pd.empty or _df_pd["_trace_value"].nunique() < 2:
+            return None
+
+        _evidence_bin_count = min(int(n_evidence_bins), int(_df_pd["_fitted_right_evidence"].nunique()))
+        if _evidence_bin_count < 2:
+            return None
+        if discrete_trace_bins:
+            _df_pd["_trace_bin"] = _df_pd["_trace_value"]
+        else:
+            _trace_bin_count = min(int(n_trace_bins), int(_df_pd["_trace_value"].nunique()))
+            if _trace_bin_count < 2:
+                return None
+            _df_pd["_trace_bin"] = pd.qcut(
+                _df_pd["_trace_value"],
+                q=_trace_bin_count,
+                labels=False,
+                duplicates="drop",
+            )
+        _df_pd["_evidence_bin"] = pd.qcut(
+            _df_pd["_fitted_right_evidence"],
+            q=_evidence_bin_count,
+            labels=False,
+            duplicates="drop",
+        )
+        _df_pd = _df_pd.dropna(subset=["_trace_bin", "_evidence_bin"]).copy()
+        if _df_pd.empty:
+            return None
+        if not discrete_trace_bins:
+            _df_pd["_trace_bin"] = _df_pd["_trace_bin"].astype(int)
+        _df_pd["_evidence_bin"] = _df_pd["_evidence_bin"].astype(int)
+
+        _subj = (
+            _df_pd.groupby(["_trace_bin", "subject", "_evidence_bin"], observed=True)
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=("_p_right_model", "mean"),
+                x_center=("_fitted_right_evidence", "mean"),
+            )
+            .reset_index()
+        )
+        if _subj.empty:
+            return None
+        _summary = (
+            _subj.groupby(["_trace_bin", "_evidence_bin"], observed=True)
+            .agg(
+                data_mean=("data_mean", "mean"),
+                data_std=("data_mean", "std"),
+                data_count=("data_mean", "count"),
+                model_mean=("model_mean", "mean"),
+                x_center=("x_center", "mean"),
+            )
+            .reset_index()
+            .sort_values(["_trace_bin", "x_center"])
+        )
+        _summary["data_sem"] = _summary["data_std"].fillna(0.0) / np.sqrt(
+            _summary["data_count"].clip(lower=1)
+        )
+        return _summary
+
+    def _plot_pright_by_total_evidence(_df, *, trace_col, trace_label, ax, discrete_trace_bins=False):
+        _summary = _prepare_pright_by_total_evidence(
+            _df,
+            trace_col=trace_col,
+            discrete_trace_bins=discrete_trace_bins,
+        )
+        if _summary is None or _summary.empty:
+            ax.set_axis_off()
+            return None
+        _line_order = sorted(_summary["_trace_bin"].dropna().unique().tolist())
+        _palette = plt.get_cmap("viridis")(np.linspace(0.15, 0.85, len(_line_order)))
+        for _trace_bin, _color in zip(_line_order, _palette, strict=False):
+            _sub = _summary[_summary["_trace_bin"] == _trace_bin].sort_values("x_center")
+            _x = _sub["x_center"].to_numpy(dtype=float)
+            ax.plot(
+                _x,
+                _sub["model_mean"].to_numpy(dtype=float),
+                "-",
+                color=_color,
+                lw=2.0,
+                label=f"{float(_trace_bin):g}" if discrete_trace_bins else f"Q{int(_trace_bin) + 1}",
+            )
+            ax.errorbar(
+                _x,
+                _sub["data_mean"].to_numpy(dtype=float),
+                yerr=_sub["data_sem"].to_numpy(dtype=float),
+                fmt="o",
+                color=_color,
+                ecolor=_color,
+                elinewidth=1.0,
+                ms=4,
+                capsize=3,
+                zorder=5,
+            )
+        ax.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.5)
+        ax.axvline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
+        ax.set_xlabel("Right-vs-rest fitted evidence")
+        ax.set_ylabel(r"$p(\mathrm{right})$")
+        ax.set_ylim(0.0, 1.0)
+        ax.legend(title=trace_label, frameon=False, fontsize=8)
+        return ax
+
+    _evidence_figsize = fig_size(2, 1)
     _fig_total_evidence, _ax_total_evidence = plt.subplots(
         1,
         1,
@@ -1381,6 +1906,64 @@ def _(adapter, fig_size, mo, plot_df_all, plots, plt, save_plot, views_sel):
         figsize=_evidence_figsize,
     )
     _ax_total_evidence.set_xlabel("Fitted Evidence")
+
+    _plot_df_evidence_traces = plot_df_all
+    _plot_df_evidence_traces = _attach_sum_regressor(
+        _plot_df_evidence_traces,
+        output_col="stimulus_one_hot_sum",
+        prefixes=("stim_",),
+        exclude=("stim_0", "stim_param", "stimulus", "stim_vals", "stim_strength", "stim_d", "stimd", "stimd_n_z"),
+        col_filter=lambda _col: _col.removeprefix("stim_").isdigit(),
+    )
+    _plot_df_evidence_traces = _attach_sum_regressor(
+        _plot_df_evidence_traces,
+        output_col="stim_x_delay_one_hot_sum",
+        prefixes=("stim_x_delay_hot_",),
+    )
+    _action_trace_regressor = _first_existing_col(
+        _plot_df_evidence_traces,
+        ["choice_lag_param", "choice_lag_one_hot_sum", "choice_lag_glm_weighted_sum", "at_choice_param"],
+    )
+    _stimulus_group_col = _first_existing_col(
+        _plot_df_evidence_traces,
+        ["stim_x_delay", "ILD", "ild"],
+    )
+    _pright_evidence_panels = []
+    for _trace_col, _trace_label, _trace_name, _discrete_trace_bins in [
+        (_action_trace_regressor, r"$A$", "action trace", False),
+        (_stimulus_group_col, "Stim.", "stimulus", True),
+    ]:
+        if _trace_col is None:
+            continue
+        _fig_pright_evidence, _ax_pright_evidence = plt.subplots(
+            1,
+            1,
+            figsize=_evidence_figsize,
+            layout="constrained",
+        )
+        _plotted_pright = _plot_pright_by_total_evidence(
+            _plot_df_evidence_traces,
+            trace_col=_trace_col,
+            trace_label=_trace_label,
+            ax=_ax_pright_evidence,
+            discrete_trace_bins=_discrete_trace_bins,
+        )
+        if _plotted_pright is None:
+            plt.close(_fig_pright_evidence)
+            continue
+        _pright_evidence_panels.append(
+            mo.vstack(
+                [
+                    _fig_pright_evidence,
+                    save_plot(
+                        _fig_pright_evidence,
+                        f"p(right) by total evidence binned by {_trace_name}",
+                        stem=f"pright_total_evidence_binned_{_trace_col}",
+                    ),
+                ],
+                align="center",
+            )
+        )
 
     _fig_repeat_evidence, _ax_repeat_evidence = plt.subplots(
         1,
@@ -1411,6 +1994,7 @@ def _(adapter, fig_size, mo, plot_df_all, plots, plt, save_plot, views_sel):
                 ],
                 align="center",
             ),
+            *_pright_evidence_panels,
             mo.vstack(
                 [
                     _fig_repeat_evidence,
@@ -1428,9 +2012,108 @@ def _(adapter, fig_size, mo, plot_df_all, plots, plt, save_plot, views_sel):
 
 
 @app.cell
-def _(plot_df_all, ui_accuracy_regressor):
-    ui_accuracy_regressor.value
-    plot_df_all
+def _(fig_size, mo, np, pd, plot_df_all, plt, save_plot, views_sel):
+    _stim_col = (
+        "stim_x_delay"
+        if "stim_x_delay" in plot_df_all.columns
+        else "ILD"
+        if "ILD" in plot_df_all.columns
+        else "ild"
+        if "ild" in plot_df_all.columns
+        else None
+    )
+    mo.stop(
+        _stim_col is None or "choice_lag_param" not in plot_df_all.columns,
+        mo.md("Need `choice_lag_param` and raw `ILD`/`stim_x_delay` columns for conditional p(right) plots."),
+    )
+
+    def _response_right(_df):
+        _response = pd.to_numeric(_df["response"], errors="coerce")
+        if next(iter(views_sel.values())).num_classes == 3:
+            return (_response == 2).astype(float)
+        return (_response > 0).astype(float)
+
+    def _summary(_df, *, x_col, line_col, x_quantile=False, line_quantile=False):
+        _df = _df.to_pandas().copy() if hasattr(_df, "to_pandas") else pd.DataFrame(_df).copy()
+        _df["_response_right"] = _response_right(_df)
+        _df["_x"] = pd.to_numeric(_df[x_col], errors="coerce")
+        _df["_line_value"] = pd.to_numeric(_df[line_col], errors="coerce")
+        _df["_p_right"] = pd.to_numeric(_df["pR"], errors="coerce")
+        _df = _df.dropna(subset=["subject", "_response_right", "_x", "_line_value", "_p_right"])
+        if _df.empty or _df["_x"].nunique() < 2 or _df["_line_value"].nunique() < 2:
+            return None
+        _df["_line"] = (
+            pd.qcut(_df["_line_value"], q=min(4, _df["_line_value"].nunique()), labels=False, duplicates="drop")
+            if line_quantile
+            else _df["_line_value"]
+        )
+        _df["_xbin"] = (
+            pd.qcut(_df["_x"], q=min(10, _df["_x"].nunique()), labels=False, duplicates="drop")
+            if x_quantile
+            else _df["_x"]
+        )
+        _df = _df.dropna(subset=["_line", "_xbin"])
+        _subject = (
+            _df.groupby(["_line", "subject", "_xbin"], observed=True)
+            .agg(data=("_response_right", "mean"), model=("_p_right", "mean"), x=("_x", "mean"))
+            .reset_index()
+        )
+        _out = (
+            _subject.groupby(["_line", "_xbin"], observed=True)
+            .agg(data_mean=("data", "mean"), data_std=("data", "std"), n=("data", "count"), model_mean=("model", "mean"), x=("x", "mean"))
+            .reset_index()
+            .sort_values(["_line", "x"])
+        )
+        _out["data_sem"] = _out["data_std"].fillna(0) / np.sqrt(_out["n"].clip(lower=1))
+        return _out
+
+    def _plot(_ax, _summary_df, *, legend_title, line_quantile, palette_name):
+        if _summary_df is None or _summary_df.empty:
+            _ax.set_axis_off()
+            return False
+        _order = sorted(_summary_df["_line"].dropna().unique().tolist())
+        _colors = plt.get_cmap(palette_name)(np.linspace(0.15, 0.85, len(_order)))
+        for _line, _color in zip(_order, _colors, strict=False):
+            _sub = _summary_df[_summary_df["_line"] == _line]
+            _label = f"Q{int(_line) + 1}" if line_quantile else f"{float(_line):g}"
+            _ax.plot(_sub["x"], _sub["model_mean"], "-", color=_color, lw=2, label=_label)
+            _ax.errorbar(_sub["x"], _sub["data_mean"], yerr=_sub["data_sem"], fmt="o", color=_color, ecolor=_color, ms=4, capsize=3)
+        _ax.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.5)
+        _ax.set_ylim(0, 1)
+        _ax.set_ylabel(r"$p(\mathrm{right})$")
+        _ax.legend(title=legend_title, frameon=False, fontsize=8)
+        return True
+
+    _fig_conditional, (_ax_stim_by_a, _ax_a_by_stim) = plt.subplots(1, 2, figsize=fig_size(4, 1), layout="constrained")
+    _drawn_1 = _plot(
+        _ax_stim_by_a,
+        _summary(plot_df_all, x_col=_stim_col, line_col="choice_lag_param", line_quantile=True),
+        legend_title=r"$A$",
+        line_quantile=True,
+        palette_name="RdBu",
+    )
+    _ax_stim_by_a.set_xlabel(_stim_col)
+    _drawn_2 = _plot(
+        _ax_a_by_stim,
+        _summary(plot_df_all, x_col="choice_lag_param", line_col=_stim_col, x_quantile=True),
+        legend_title="Stim.",
+        line_quantile=False,
+        palette_name="viridis",
+    )
+    _ax_a_by_stim.set_xlabel(r"$A$")
+    mo.stop(not (_drawn_1 or _drawn_2), mo.md("No conditional p(right) plots could be drawn."))
+
+    mo.vstack(
+        [
+            _fig_conditional,
+            save_plot(
+                _fig_conditional,
+                "conditional psychometrics by action and stimulus",
+                stem="pright_conditional_action_stimulus",
+            ),
+        ],
+        align="center",
+    )
     return
 
 
@@ -1452,7 +2135,12 @@ def _(
     ui_show_lapses_in_legend,
     views_sel,
 ):
-    _selected_regressor_label = plots.display_regressor_name(ui_accuracy_regressor.value)
+    def _display_action_regressor_label(_regressor):
+        if _regressor in {"at_choice_param", "choice_lag_param", "choice_lag_glm_weighted_sum", "choice_lag_one_hot_sum"}:
+            return r"$A$"
+        return plots.display_regressor_name(_regressor)
+
+    _selected_regressor_label = _display_action_regressor_label(ui_accuracy_regressor.value)
     _panel_size = fig_size(2, 1)
 
     _fig_binned = plots.plot_binned_accuracy_figure(
@@ -1471,13 +2159,19 @@ def _(
     )
     mo.stop(_fig_binned is None, mo.md(f"No binned accuracy plot available for {_selected_regressor_label}."))
     _fig_binned_base = _fig_binned[0] if isinstance(_fig_binned, tuple) else _fig_binned
+    for _legend in _fig_binned_base.legends:
+        _legend.set_title(_selected_regressor_label)
+    for _ax in _fig_binned_base.axes:
+        _legend = _ax.get_legend()
+        if _legend is not None:
+            _legend.set_title(_selected_regressor_label)
     _right_figsize = tuple(float(_size) for _size in _fig_binned_base.get_size_inches())
 
     _plot_df_cols = set(getattr(plot_df_all, "columns", []))
     _secondary_regressor = "choice_lag_glm_weighted_sum" if "choice_lag_glm_weighted_sum" in _plot_df_cols else None
     mo.stop(_secondary_regressor is None, mo.md("No GLM-weighted choice-history regressor available."))
 
-    _secondary_regressor_label = plots.display_regressor_name(_secondary_regressor)
+    _secondary_regressor_label = _display_action_regressor_label(_secondary_regressor)
     _fig_secondary_right_base, (_ax_secondary_right, _ax_secondary_right_legend) = plt.subplots(
         1,
         2,
@@ -1494,6 +2188,10 @@ def _(
     )
 
     mo.stop(_fig_secondary_right is None, mo.md(f"No p(right) plot available for {_secondary_regressor_label}."))
+    _ax_secondary_right.set_xlabel(_secondary_regressor_label)
+    _secondary_legend = _ax_secondary_right_legend.get_legend()
+    if _secondary_legend is not None:
+        _secondary_legend.set_title(_secondary_regressor_label)
 
     mo.vstack(
         [
@@ -1681,7 +2379,7 @@ def _(
         else None
     )
     def _style_autocorr_axis(_ax):
-        _ax.set_ylim(-0.05, 0.2)
+        _ax.set_ylim(-0.02, 0.15)
         _ax.set_title("")
 
     if ui_autocorr_apply_correction.value:
@@ -1694,13 +2392,13 @@ def _(
             figsize=fig_size(2, 1),
         )
         _style_autocorr_axis(_ax_choice_autocorr)
-        _fig_repeat_autocorr, _ax_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1))
+        _fig_repeat_autocorr, _ax_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1.25))
         _fig_repeat_autocorr, _ = plot_corrected_behavior_autocorrelograms(
             prepared_corrected_autocorr,
             axes=[_ax_repeat_autocorr],
             glm_autocorr=_glm_autocorr,
             signals=("Repetition",),
-            figsize=fig_size(2, 1),
+            figsize=fig_size(2, 1.25),
         )
         _style_autocorr_axis(_ax_repeat_autocorr)
         _autocorr_display = mo.hstack(
@@ -1765,7 +2463,7 @@ def _(
             figsize=fig_size(2, 1),
         )
         _style_autocorr_axis(_ax_correction_choice_autocorr)
-        _fig_correction_repeat_autocorr, _ax_correction_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1))
+        _fig_correction_repeat_autocorr, _ax_correction_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1.25))
         _fig_correction_repeat_autocorr, _ = plot_corrected_behavior_autocorrelograms(
             prepared_corrected_autocorr,
             axes=[_ax_correction_repeat_autocorr],
@@ -1776,7 +2474,7 @@ def _(
             model_label="Fitted GLM correction",
             ylabel="Cross-session correction",
             signals=("Repetition",),
-            figsize=fig_size(2, 1),
+            figsize=fig_size(2, 1.25),
         )
         _style_autocorr_axis(_ax_correction_repeat_autocorr)
         _autocorr_display = mo.vstack(
@@ -2329,48 +3027,252 @@ def _(mo, plot_df_all, plots, save_plot):
 
 
 @app.cell
-def _(adapter, plot_df_all, plots, plt, views_sel):
-    fig, axd = plt.subplot_mosaic(
-        [["a", "b"], ["c", "d"]],
-        figsize=(7, 5),
-        layout="constrained",
-    )   
-    plots.plot_right_by_regressor(plot_df_all, regressor_col="choice_lag_one_hot_sum", ax=axd["a"])
-    # plots.plot_right_integration_map(
-    #     plot_df_all,
-    #     ax=axd["b"],
-    #     x_col="evidence_param",
-    #     xlabel="Evidence strength",
-    # )
-    plots.plot_right_by_regressor(plot_df_all, regressor_col="choice_lag_one_hot_sum", ax=axd["d"])
-    # plots.plot_right_integration_map(
-    #     plot_df_all,
-    #     ax=axd["c"],
-    #     x_col="evidence_param",
-    #     xlabel="Evidence strength",
-    # )
-    plots.plot_accuracy_by_total_evidence(
-        plot_df_all,
-        adapter=adapter,
-        views=views_sel,
-        ax = axd["a"],
-    )
-    plots.plot_repeat_by_repeat_evidence(
-        plot_df_all,
-        views=views_sel,
-        ax = axd["c"],
-    )
-    for label, ax in zip("abcd", axd.values()):
-        ax.text(
-            -0.25, 1.1, label,
-            transform=ax.transAxes,
-            fontsize=14,
-            fontweight="bold",
-            va="top",
-            ha="right",
+def _(
+    fig_size,
+    is_2afc,
+    mo,
+    np,
+    pd,
+    pl,
+    plot_df_all,
+    plot_stim_hot_weights,
+    plots,
+    plt,
+    save_plot,
+    selected,
+    sns,
+    task_name,
+    ui_mcdr_one_hot_mode,
+    views_sel,
+    weights_df,
+):
+    from scipy.stats import ttest_1samp as _ttest_1samp
+
+    sns.set_context("paper")
+
+    def _significance_stars(pvalue: float) -> str:
+        if not np.isfinite(pvalue):
+            return ""
+        if pvalue < 0.001:
+            return "***"
+        if pvalue < 0.01:
+            return "**"
+        if pvalue < 0.05:
+            return "*"
+        return ""
+
+    def _annotate_choice_lag_ttests(
+        ax: plt.Axes,
+        panel_df: pd.DataFrame,
+        lag_order: list[int],
+        y: float = 1.0,
+    ) -> None:
+        for lag in lag_order:
+            values = panel_df.loc[panel_df["lag"] == lag, "weight"].dropna().to_numpy(dtype=float)
+            if values.size < 2:
+                continue
+            ax.text(
+                lag,
+                y,
+                _significance_stars(float(_ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue)),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="black",
+                clip_on=False,
+            )
+
+    def _split_axis_columns(ax: plt.Axes, ncols: int = 2) -> list[plt.Axes]:
+        fig = ax.figure
+        subgrid = ax.get_subplotspec().subgridspec(1, ncols)
+        ax.remove()
+        axes = []
+        for col in range(ncols):
+            sharey = axes[0] if axes else None
+            axes.append(fig.add_subplot(subgrid[0, col], sharey=sharey))
+        ax._replacement_axes = axes
+        return axes
+
+    def _plot_choice_lag_outcome_lineplots(ax: plt.Axes, selected_weights_df) -> bool:
+        choice_df = selected_weights_df.to_pandas() if hasattr(selected_weights_df, "to_pandas") else pd.DataFrame(selected_weights_df)
+        choice_df = choice_df.copy()
+        choice_df["feature"] = choice_df["feature"].astype(str)
+        choice_df["weight"] = pd.to_numeric(choice_df["weight"], errors="coerce")
+        parsed = choice_df["feature"].str.extract(r"^choice_lag_(corr|inc)_(\d+)$")
+        choice_df["outcome_family"] = parsed[0].map({"corr": "Correct", "inc": "Incorrect"})
+        choice_df["lag"] = pd.to_numeric(parsed[1], errors="coerce")
+        choice_df = choice_df[
+            choice_df["outcome_family"].isin(["Correct", "Incorrect"])
+            & choice_df["lag"].between(1, 100)
+            & np.isfinite(choice_df["weight"])
+        ].copy()
+        if choice_df.empty:
+            return False
+
+        choice_df["lag"] = choice_df["lag"].astype(int)
+        lag_order = sorted(choice_df["lag"].unique().tolist())
+        choice_df = choice_df[choice_df["lag"].isin(lag_order)].copy()
+        outcome_axes = _split_axis_columns(ax)
+        for panel_ax, outcome_family in zip(outcome_axes, ("Correct", "Incorrect"), strict=False):
+            panel_df = choice_df[choice_df["outcome_family"] == outcome_family].copy()
+            sns.lineplot(
+                data=panel_df,
+                x="lag",
+                y="weight",
+                estimator="mean",
+                errorbar="se",
+                marker="o",
+                markersize=3,
+                linewidth=1.25,
+                color="#1f77b4",
+                ax=panel_ax,
+            )
+            panel_ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+            panel_ax.set_title(outcome_family)
+            panel_ax.set_xlabel("Choice lag")
+            panel_ax.set_ylabel("Weight" if outcome_family == "Correct" else "")
+            panel_ax.set_xticks(range(5, max(lag_order) + 1, 5))
+            _annotate_choice_lag_ttests(panel_ax, panel_df, lag_order, y=3.75)
+        y_lims = [panel_ax.get_ylim() for panel_ax in outcome_axes]
+        y_min = min(bottom for bottom, _ in y_lims)
+        y_max = max(top for _, top in y_lims)
+        for panel_ax in outcome_axes:
+            panel_ax.set_ylim(y_min, y_max)
+        return True
+
+    def _plot_choice_lag_lineplot(ax: plt.Axes, selected_weights_df) -> bool:
+        if _plot_choice_lag_outcome_lineplots(ax, selected_weights_df):
+            return True
+
+        choice_df = selected_weights_df.to_pandas() if hasattr(selected_weights_df, "to_pandas") else pd.DataFrame(selected_weights_df)
+        choice_df = choice_df.copy()
+        choice_df["feature"] = choice_df["feature"].astype(str)
+        choice_df["weight"] = pd.to_numeric(choice_df["weight"], errors="coerce")
+        choice_df["lag"] = pd.to_numeric(
+            choice_df["feature"].str.extract(r"^choice_lag_(\d+)$", expand=False),
+            errors="coerce",
         )
-        ax.set_box_aspect(1)
-    fig
+        choice_df = choice_df[choice_df["lag"].between(1, 100) & np.isfinite(choice_df["weight"])].copy()
+        if choice_df.empty:
+            ax.text(
+                0.5,
+                0.5,
+                "No choice-lag weights found",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            return False
+
+        choice_df["lag"] = choice_df["lag"].astype(int)
+        lag_order = sorted(choice_df["lag"].unique().tolist())
+        choice_df = choice_df[choice_df["lag"].isin(lag_order)].copy()
+        sns.lineplot(
+            data=choice_df,
+            x="lag",
+            y="weight",
+            estimator="mean",
+            errorbar="se",
+            marker="o",
+            markersize=3,
+            linewidth=1.25,
+            color="#1f77b4",
+            ax=ax,
+        )
+        ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.set_xlabel("Choice lag")
+        ax.set_ylabel("Weight")
+        ax.set_xticks(list(range(5, max(lag_order) + 1, 5)) or lag_order)
+        ax.set_ylim(-0.5, 2)
+        _annotate_choice_lag_ttests(ax, choice_df, lag_order)
+        return True
+
+    def _drop_categorical_facets(df):
+        drop_cols = [col for col in ("condition", "experiment") if col in getattr(df, "columns", [])]
+        if not drop_cols:
+            return df
+        if isinstance(df, pl.DataFrame):
+            return df.drop(drop_cols)
+        return pd.DataFrame(df).drop(columns=drop_cols, errors="ignore")
+
+    _weights_df_sel = weights_df.filter(pl.col("subject").is_in(selected))
+    _mcdr_mode = ui_mcdr_one_hot_mode.value if task_name == "MCDR" else "folded"
+
+    _fig_glm_summary_mosaic, _axd = plt.subplot_mosaic(
+        [["stim", "categorical"], ["choice_lag", "choice_lag"]],
+        figsize=fig_size(1,1),
+        layout="constrained",
+    )
+
+    _stim_fig = plot_stim_hot_weights(_weights_df_sel, mcdr_mode=_mcdr_mode, ax=_axd["stim"])
+    if _stim_fig is None:
+        _axd["stim"].text(
+            0.5,
+            0.5,
+            "No stimulus weights found",
+            ha="center",
+            va="center",
+            transform=_axd["stim"].transAxes,
+        )
+        _axd["stim"].set_axis_off()
+    else:
+        _stim_upper = float(_axd["stim"].get_ylim()[1])
+        if np.isfinite(_stim_upper):
+            _axd["stim"].set_ylim(-0.25, _stim_upper)
+
+    if task_name == "MCDR":
+        _cat_host_ax = _axd["categorical"]
+        _cat_host_ax.set_axis_off()
+        _cat_axes = [
+            _cat_host_ax.inset_axes([0.00, 0.10, 0.30, 0.82]),
+            _cat_host_ax.inset_axes([0.35, 0.10, 0.30, 0.82]),
+            _cat_host_ax.inset_axes([0.70, 0.10, 0.30, 0.82]),
+        ]
+        plots.plot_categorical_performance_all(
+            plot_df_all,
+            "glm",
+            background_style="model",
+            axes=_cat_axes,
+        )
+    else:
+        _perf_kwargs = {"views": views_sel} if is_2afc else {}
+        plots.plot_categorical_performance_all(
+            _drop_categorical_facets(plot_df_all),
+            "glm",
+            background_style="model",
+            axes=[_axd["categorical"]],
+            **_perf_kwargs,
+        )
+
+    _plot_choice_lag_lineplot(_axd["choice_lag"], _weights_df_sel)
+
+    # for _label, _key in zip("abc", ("stim", "categorical", "choice_lag")):
+    #     _axd[_key].text(
+    #         -0.14,
+    #         1.08,
+    #         _label,
+    #         transform=_axd[_key].transAxes,
+    #         fontsize=14,
+    #         fontweight="bold",
+    #         va="top",
+    #         ha="right",
+    #     )
+    for _key in ("stim", "categorical"):
+        _axd[_key].set_box_aspect(1)
+
+    mo.vstack(
+        [
+            mo.md("#### GLM summary"),
+            _fig_glm_summary_mosaic,
+            save_plot(
+                _fig_glm_summary_mosaic,
+                "GLM summary",
+                stem="glm_summary",
+            ),
+        ],
+        align="center",
+    )
     return
 
 

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.6"
+__generated_with = "0.23.8"
 app = marimo.App(width="full")
 
 
@@ -17,17 +17,22 @@ def _():
     import pandas as pd
     import numpy as np
     from glmhmmt.runtime import get_runtime_paths
-
+    from pathlib import Path
     paths = get_runtime_paths()
-    return paths, pd, pl
+    DATA_PATH = Path("/Users/javierrodriguezmartinez/NMDAR_paper/data/")
+    return DATA_PATH, paths, pd, pl
 
 
 @app.cell
-def _():
-    # df = pl.from_pandas(pd.read_csv(paths.DATA_PATH / "tiffany.csv",index_col=0))
-    # df.write_parquet(paths.DATA_PATH / "tiffany.parquet")
-    # df
-    return
+def _(DATA_PATH, paths, pl):
+    df = pl.read_csv(
+        DATA_PATH / "raw" / "tiffany_complete.csv",
+        infer_schema_length=None,
+        ignore_errors=False,
+    )
+    df.write_parquet(paths.DATA_PATH / "tiffany_complete.parquet")
+    df
+    return (df,)
 
 
 @app.cell

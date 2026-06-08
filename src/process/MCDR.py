@@ -43,7 +43,7 @@ _CHOICE_LAG_SIDES = ("L", "C", "R")
 _CHOICE_LAG_REFERENCE_SIDE = "C"
 _CHOICE_SIDE_TO_CLASS = {"L": 0, "C": 1, "R": 2}
 _NUM_CHOICE_LAGS = 15
-_STIM_PARAM_MODEL_ID = "One-hot"
+_STIM_PARAM_MODEL_ID = "one hot"
 _RAW_PARAM_MODEL_ID = "one hot"
 _STIM_HOT_COLS = tuple(
     f"stim{stim_idx}{side}"

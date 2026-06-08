@@ -19,8 +19,7 @@
         "choice_lag_param"
     ],
     "transition_cols": [
-        "filtered_reward",
-        "filtered_difficulty"
+        "filtered_reward"
     ],
     "frozen_emissions": {
         "0": {
@@ -35,6 +34,6 @@
         2
     ],
     "model_id": "mohammadi2 filt_dif frozen",
-    "cv_mode": "none",
+    "cv_mode": "balanced_session_holdout",
     "cv_repeats": 0
 }

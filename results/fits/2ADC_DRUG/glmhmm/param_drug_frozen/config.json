@@ -16,11 +16,14 @@
     "emission_cols": [
         "stim_x_delay_param",
         "choice_lag_param",
-        "bias_param"
+        "bias"
     ],
     "frozen_emissions": {
         "0": {
             "choice_lag_param": 0.0
+        },
+        "1": {
+            "stim_x_delay_param": 0.0
         }
     },
     "baseline_class_idx": 1,

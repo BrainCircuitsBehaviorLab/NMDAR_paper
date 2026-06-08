@@ -14,10 +14,9 @@
         "N28"
     ],
     "emission_cols": [
-        "stim",
         "bias",
-        "delay",
-        "prev_choice"
+        "prev_choice",
+        "stim_x_delay_param"
     ],
     "transition_cols": [
         "filtered_reward",

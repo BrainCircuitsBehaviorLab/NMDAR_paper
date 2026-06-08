@@ -20,7 +20,7 @@
     ],
     "transition_cols": [
         "filtered_reward",
-        "prev_difficulty"
+        "filtered_difficulty"
     ],
     "frozen_emissions": {},
     "baseline_class_idx": 1,

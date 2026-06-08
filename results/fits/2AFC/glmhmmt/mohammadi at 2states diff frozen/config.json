@@ -3,7 +3,6 @@
     "tau": 50,
     "subjects": [
         "325",
-        "326",
         "327",
         "329",
         "330",
@@ -34,8 +33,7 @@
         "choice_lag_param"
     ],
     "transition_cols": [
-        "filtered_reward",
-        "prev_difficulty"
+        "filtered_reward"
     ],
     "frozen_emissions": {
         "0": {
@@ -50,6 +48,6 @@
         2
     ],
     "model_id": "mohammadi at 2states diff frozen",
-    "cv_mode": "none",
+    "cv_mode": "balanced_session_holdout",
     "cv_repeats": 0
 }

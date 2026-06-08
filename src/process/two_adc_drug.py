@@ -6,7 +6,11 @@ import polars as pl
 
 from glmhmmt.tasks import _register
 
-from .two_adc import TRANSITION_COLS as BASE_TRANSITION_COLS, TwoAFCDelayAdapter
+from .two_adc import (
+    EMISSION_COLS as BASE_EMISSION_COLS,
+    TRANSITION_COLS as BASE_TRANSITION_COLS,
+    TwoAFCDelayAdapter,
+)
 
 
 _DRUG_INTERACTION_SOURCES: tuple[str, ...] = (
@@ -16,9 +20,17 @@ _DRUG_INTERACTION_SOURCES: tuple[str, ...] = (
     "filtered_stim_side",
     "trial_index",
 )
+_DRUG_EMISSION_INTERACTION_SOURCES: tuple[str, ...] = (
+    "stim_x_delay_param",
+    "choice_lag_param",
+)
 DRUG_INTERACTION_COLS: list[str] = [
     f"drug_x_{source_col}" for source_col in _DRUG_INTERACTION_SOURCES
 ]
+DRUG_EMISSION_INTERACTION_COLS: list[str] = [
+    f"drug_x_{source_col}" for source_col in _DRUG_EMISSION_INTERACTION_SOURCES
+]
+EMISSION_COLS: list[str] = [*BASE_EMISSION_COLS, *DRUG_EMISSION_INTERACTION_COLS]
 TRANSITION_COLS: list[str] = [*BASE_TRANSITION_COLS, "drug_code", *DRUG_INTERACTION_COLS]
 
 
@@ -33,7 +45,7 @@ def _add_drug_interactions(feature_df: pl.DataFrame | pd.DataFrame) -> pl.DataFr
                 drug_expr
                 * pl.col(source_col).cast(pl.Float32, strict=False).fill_null(0.0)
             ).alias(f"drug_x_{source_col}")
-            for source_col in _DRUG_INTERACTION_SOURCES
+            for source_col in (*_DRUG_INTERACTION_SOURCES, *_DRUG_EMISSION_INTERACTION_SOURCES)
             if source_col in feature_df.columns
         ]
         exprs = [drug_expr.alias("drug_code"), *interaction_exprs]
@@ -42,7 +54,7 @@ def _add_drug_interactions(feature_df: pl.DataFrame | pd.DataFrame) -> pl.DataFr
     df_pd = feature_df.copy()
     drug = pd.to_numeric(df_pd["drug_code"], errors="coerce").fillna(0.0)
     df_pd["drug_code"] = drug.astype("float32")
-    for source_col in _DRUG_INTERACTION_SOURCES:
+    for source_col in (*_DRUG_INTERACTION_SOURCES, *_DRUG_EMISSION_INTERACTION_SOURCES):
         if source_col in df_pd.columns:
             df_pd[f"drug_x_{source_col}"] = (
                 drug * pd.to_numeric(df_pd[source_col], errors="coerce").fillna(0.0)
@@ -56,6 +68,7 @@ class TwoADCDrugAdapter(TwoAFCDelayAdapter):
 
     task_key: str = "2ADC_DRUG"
     task_label: str = "2ADC Drug"
+    emission_cols: list[str] = EMISSION_COLS
     transition_cols: list[str] = TRANSITION_COLS
 
     def read_dataset(self) -> pl.DataFrame:
@@ -168,4 +181,10 @@ class TwoADCDrugAdapter(TwoAFCDelayAdapter):
         )
 
 
-__all__ = ["TRANSITION_COLS", "DRUG_INTERACTION_COLS", "TwoADCDrugAdapter"]
+__all__ = [
+    "EMISSION_COLS",
+    "TRANSITION_COLS",
+    "DRUG_INTERACTION_COLS",
+    "DRUG_EMISSION_INTERACTION_COLS",
+    "TwoADCDrugAdapter",
+]

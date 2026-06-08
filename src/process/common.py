@@ -172,9 +172,11 @@ def display_regressor_name(regressor_col: str) -> str:
     if regressor_col == "choice_lag_param_2":
         return r"$A_{t,\geq 2}^{\mathrm{choice,param}}$"
     if regressor_col == "choice_lag_one_hot_sum":
-        return r"$A_t$"
+        return r"$A$"
+    if regressor_col in {"at_choice_param", "choice_lag_param"}:
+        return r"$A$"
     if regressor_col == "choice_lag_glm_weighted_sum":
-        return r"$A_t^{\mathrm{choice,ref}}$"
+        return r"$A$"
     return regressor_col.replace("_", " ")
 
 

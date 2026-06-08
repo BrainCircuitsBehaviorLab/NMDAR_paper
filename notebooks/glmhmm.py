@@ -83,10 +83,115 @@ def _():
             return process_two_adc.prepare_predictions_df(df)
         return process_two_afc.prepare_predictions_df(df)
 
+    # Set boxplot_tick_rotation to 35 to restore rotated labels.
+    # Set boxplot_fixed_panel to False to let matplotlib choose panel bounds.
+    boxplot_tick_rotation = 0
+    boxplot_fixed_panel = True
+    boxplot_figsize = (4, 3)
+    boxplot_panel_bounds = (0.16, 0.22, 0.80, 0.70)
+
+    def put_legend_inside_panel(ax, *, loc="upper right", anchor=(0.98, 0.98)):
+        legend = ax.get_legend()
+        if legend is None:
+            return
+        handles = getattr(legend, "legend_handles", getattr(legend, "legendHandles", []))
+        labels = [text.get_text() for text in legend.get_texts()]
+        title = legend.get_title().get_text()
+        legend.remove()
+        ax.legend(
+            handles,
+            labels,
+            title=title or None,
+            frameon=legend.get_frame_on(),
+            loc=loc,
+            bbox_to_anchor=anchor,
+            borderaxespad=0.2,
+        )
+
+    def put_figure_legend_at_bottom(fig, *, bottom=0.24, max_ncol=8, x_anchor=0.46, y_anchor=0.01):
+        legend_entries = {}
+        legend_title = None
+
+        def _add_entries(handles, labels):
+            for handle, label in zip(handles, labels, strict=False):
+                label_text = str(label)
+                label_key = label_text.lower().replace(" ", "")
+                is_engaged_probability_trace = (
+                    ("p(" in label_key or label_key.startswith("$p") or "mathit{p}" in label_key)
+                    and ("engag" in label_key or "enag" in label_key)
+                    and ("rolling" in label_key or "raw" in label_key)
+                )
+                if is_engaged_probability_trace:
+                    continue
+                if label_text and not label_text.startswith("_"):
+                    legend_entries.setdefault(label_text, handle)
+
+        for ax in fig.axes:
+            handles, labels = ax.get_legend_handles_labels()
+            _add_entries(handles, labels)
+
+        legends = list(fig.legends)
+        legends.extend(fig.findobj(lambda artist: artist.__class__.__name__ == "Legend"))
+        for legend in dict.fromkeys(legends):
+            handles = getattr(legend, "legend_handles", getattr(legend, "legendHandles", []))
+            labels = [text.get_text() for text in legend.get_texts()]
+            legend_title = legend_title or legend.get_title().get_text() or None
+            _add_entries(handles, labels)
+            try:
+                legend.remove()
+            except ValueError:
+                pass
+
+        for ax in list(fig.axes):
+            if ax.has_data():
+                continue
+            if ax.get_legend_handles_labels()[0]:
+                continue
+            if ax.get_visible() and not ax.get_xlabel() and not ax.get_ylabel() and not ax.get_title():
+                fig.delaxes(ax)
+
+        if not legend_entries:
+            return
+
+        if hasattr(fig, "set_layout_engine"):
+            fig.set_layout_engine(None)
+        fig.legend(
+            legend_entries.values(),
+            legend_entries.keys(),
+            title=legend_title,
+            loc="lower center",
+            bbox_to_anchor=(x_anchor, y_anchor),
+            bbox_transform=fig.transFigure,
+            ncol=min(max(1, len(legend_entries)), max_ncol),
+            fontsize=8,
+            title_fontsize=9,
+            frameon=False,
+            columnspacing=1.6,
+            handlelength=1.6,
+        )
+        fig.subplots_adjust(bottom=bottom)
+
+    def format_boxplot_panel(ax):
+        ax.figure.set_size_inches(*boxplot_figsize, forward=True)
+        plt.setp(
+            ax.get_xticklabels(),
+            rotation=boxplot_tick_rotation,
+            ha="right" if boxplot_tick_rotation else "center",
+        )
+        if boxplot_fixed_panel:
+            ax.set_position(boxplot_panel_bounds)
+
+    def make_boxplot_axis():
+        fig, ax = plt.subplots(figsize=boxplot_figsize)
+        if boxplot_fixed_panel:
+            ax.set_position(boxplot_panel_bounds)
+        return fig, ax
+
     project_root = _PROJECT_ROOT
     configure_paths(config_path=project_root / "config.toml")
 
     sns.set_style("ticks")
+    sns.set_context("paper")
     paths = get_runtime_paths()
     from src.utils import fig_size
 
@@ -96,6 +201,8 @@ def _():
         ModelManagerWidget,
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
+        boxplot_figsize,
+        boxplot_tick_rotation,
         build_change_triggered_posteriors_payload,
         build_editor_payload,
         build_emission_weights_df,
@@ -112,8 +219,10 @@ def _():
         build_views,
         fig_size,
         fit_main,
+        format_boxplot_panel,
         get_adapter,
         load_fit_arrays,
+        make_boxplot_axis,
         make_plot_saver,
         mo,
         model_plots,
@@ -124,6 +233,8 @@ def _():
         plt,
         prepare_predictions_df,
         project_root,
+        put_figure_legend_at_bottom,
+        put_legend_inside_panel,
         resolve_selected_model_id,
         select_subject_behavior_df,
         sns,
@@ -440,16 +551,29 @@ def _(mo):
 
 
 @app.cell
+def _(build_emission_weights_df, selected, views):
+    _views_sel = {s: views[s] for s in selected}
+    build_emission_weights_df(_views_sel)
+    return
+
+
+@app.cell
 def _(
     K,
+    boxplot_tick_rotation,
     build_emission_weights_df,
+    format_boxplot_panel,
+    make_boxplot_axis,
     mo,
     model_plots,
     np,
     paths,
     pd,
+    pl,
+    put_legend_inside_panel,
     save_plot,
     selected,
+    sns,
     views,
 ):
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
@@ -466,31 +590,55 @@ def _(
         "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
         "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
         "at_choice_param": r"$\mathrm{A}_t$",
-        "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
-        "choice_lag_param_2": r"$\mathrm{A}_{t,\geq 2}^{\mathrm{choice,param}}$",
+        "choice_lag_param": r"$\mathrm{A}$",
+        "stim_x_delay_param":  r"$\mathrm{Stim}:\mathrm{Delay}_{\mathrm{param}}$"
     }
 
     feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
 
-    _summary_figs = model_plots.emission_weights_summary_boxplot(
-        _weights_df,
-        connect_subjects=True,
-        show_ttests=True,
-        feature_labeler=feature_labeler,
-    )
-    _emission_subject_lines = [
-        _line
-        for _line in _summary_figs.lines
-        if _line.get_alpha() == 0.15 and _line.get_linestyle() == "-" and len(_line.get_xdata()) >= 2 and len(_line.get_ydata()) >= 2
-    ]
     _weights_pdf = _weights_df.to_pandas() if hasattr(_weights_df, "to_pandas") else pd.DataFrame(_weights_df)
     _weights_pdf = _weights_pdf.copy()
     _weights_pdf["subject"] = _weights_pdf["subject"].astype(str)
     _weights_pdf["feature"] = _weights_pdf["feature"].astype(str)
     _weights_pdf["weight"] = pd.to_numeric(_weights_pdf["weight"], errors="coerce")
     _weights_pdf = _weights_pdf.dropna(subset=["weight"])
+    _available_features = pd.unique(_weights_pdf["feature"]).tolist()
+    _preferred_feature_order = []
+    for _feature_group in (
+        ["bias_param", "biasparam", "bias"],
+        ["stim_param", "stim", "stim_x_delay_param"],
+        ["at_choice_param", "choice_lag_param", "at_choice", "prev_choice"],
+    ):
+        _preferred_feature_order.extend(
+            _feature
+            for _feature in _feature_group
+            if _feature in _available_features and _feature not in _preferred_feature_order
+        )
+    _plot_feature_order = _preferred_feature_order + [
+        _feature
+        for _feature in _available_features
+        if _feature not in _preferred_feature_order
+    ]
+
+    _summary_fig, _summary_ax = make_boxplot_axis()
+    _summary_figs = model_plots.emission_weights_summary_boxplot(
+        _weights_df.filter((pl.col("feature") == "stim_param") |(pl.col("feature") == "bias") ),
+        connect_subjects=True,
+        show_ttests=True,
+        feature_order=_preferred_feature_order,
+        feature_labeler=feature_labeler,
+        ax=_summary_ax,
+        tick_rotation=boxplot_tick_rotation,
+    )
+    put_legend_inside_panel(_summary_figs, anchor=(0.98, 0.3))
+    format_boxplot_panel(_summary_figs)
+    _emission_subject_lines = [
+        _line
+        for _line in _summary_figs.lines
+        if _line.get_alpha() == 0.15 and _line.get_linestyle() == "-" and len(_line.get_xdata()) >= 2 and len(_line.get_ydata()) >= 2
+    ]
     _line_keys = []
-    for _feature in pd.unique(_weights_pdf["feature"]):
+    for _feature in _plot_feature_order:
         _feature_df = _weights_pdf[_weights_pdf["feature"] == _feature]
         for _subject in sorted(pd.unique(_feature_df["subject"]).tolist()):
             if _feature_df[_feature_df["subject"] == _subject]["weight"].notna().sum() >= 2:
@@ -512,6 +660,7 @@ def _(
                         "y": float(_y),
                     }
                 )
+    sns.set_context("paper")
     ui_emission_summary = mo.ui.matplotlib(_summary_figs, debounce=True)
     mo.vstack(
         [
@@ -521,8 +670,8 @@ def _(
             ui_emission_summary,
             mo.hstack(
                 [
-                    save_plot(_summary_figs, f"Emission Weights lineplot", stem=f"emissions_lineplot", location=(0, 0)),
-                    save_plot(_summary_figs, f"Emission Weights boxplot", stem=f"emissions_boxplot", location=(0, 1)),
+                    save_plot(_summary_figs.figure, f"Emission Weights lineplot", stem=f"emissions_lineplot"),
+                    save_plot(_summary_figs.figure, f"Emission Weights boxplot", stem=f"emissions_boxplot"),
                 ],
                 gap="15",
             ),
@@ -548,19 +697,51 @@ def _(emission_summary_selection_points, mo, pd, ui_emission_summary):
 
 
 @app.cell
-def _(K, build_emission_weights_df, mo, np, pd, selected, views):
-    from itertools import combinations
+def _(np, pd):
+    from scipy.stats import ttest_1samp
 
-    import plotly.graph_objects as _go
-    from scipy.stats import ttest_rel
+    def significance_stars(pvalue: float) -> str:
+        if not np.isfinite(pvalue):
+            return ""
+        if pvalue < 0.001:
+            return "***"
+        if pvalue < 0.01:
+            return "**"
+        if pvalue < 0.05:
+            return "*"
+        return ""
 
-    from glmhmmt.plots.common import significance_label
-    from glmhmmt.plots.emissions import (
-        _emission_boxplot_payload,
-        _fold_three_choice_raw_weights,
-        _prepare_weights_df,
-    )
+    def annotate_choice_lag_ttests(ax, panel_df: pd.DataFrame, lag_order: list[int], y: float = 3.75) -> None:
+        for lag in lag_order:
+            values = panel_df.loc[panel_df["lag"] == lag, "weight"].dropna().to_numpy(dtype=float)
+            ax.text(
+                lag,
+                y,
+                significance_stars(float(ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue)),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="black",
+                clip_on=False,
+            )
 
+    return (annotate_choice_lag_ttests,)
+
+
+@app.cell
+def _(
+    annotate_choice_lag_ttests,
+    build_emission_weights_df,
+    mo,
+    np,
+    pd,
+    plt,
+    save_plot,
+    selected,
+    sns,
+    views,
+):
+    sns.set_context("paper")
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
 
     _views_sel = {s: views[s] for s in selected}
@@ -591,142 +772,164 @@ def _(K, build_emission_weights_df, mo, np, pd, selected, views):
         states=_state_order,
     )
 
-    _n_features = len(_features)
-    _n_states = len(_state_order)
-    _group_width = 0.8
-    _hue_width = _group_width / max(1, _n_states)
-    _colors = [_palette[_state] for _state in _state_order]
-    _subjects = sorted(pd.unique(_df["subject"]).tolist())
-
-    _fig_plotly = _go.Figure()
-
-    for _feat_idx, _feature in enumerate(_features):
-        _positions = [_feat_idx + (_state_idx - (_n_states - 1) / 2.0) * _hue_width for _state_idx in range(_n_states)]
-
-        for _subject, _ys in zip(_subjects, _subject_lines[_feat_idx], strict=False):
-            _ys = np.asarray(_ys, dtype=float)
-            _valid_idx = np.flatnonzero(np.isfinite(_ys))
-            if _valid_idx.size < 2:
-                continue
-            _split_points = np.where(np.diff(_valid_idx) > 1)[0] + 1
-            for _segment in np.split(_valid_idx, _split_points):
-                if _segment.size < 2:
-                    continue
-                _x_segment = [float(_positions[_idx]) for _idx in _segment]
-                _y_segment = [float(_ys[_idx]) for _idx in _segment]
-                _fig_plotly.add_trace(
-                    _go.Scatter(
-                        x=_x_segment,
-                        y=_y_segment,
-                        mode="lines+markers",
-                        line=dict(color="rgba(122, 122, 122, 0.15)", width=1.0),
-                        marker=dict(color="rgba(122, 122, 122, 0.01)", size=10),
-                        customdata=[[_subject, _feature, _feature_labeler(_feature)] for _ in _segment],
-                        hovertemplate=("Subject: %{customdata[0]}<br>Feature: %{customdata[2]}<br>Weight: %{y:.4f}<extra></extra>"),
-                        showlegend=False,
-                        selected=dict(marker=dict(color="rgba(0, 0, 0, 0.45)", size=10)),
-                        unselected=dict(marker=dict(opacity=0.01)),
-                    )
-                )
-
-        for _state_idx, _state in enumerate(_state_order):
-            _values = np.asarray(_grouped_values[_state_idx][_feat_idx], dtype=float)
-            _values = _values[np.isfinite(_values)]
-            if _values.size == 0:
-                continue
-            _fig_plotly.add_trace(
-                _go.Box(
-                    x=[_positions[_state_idx]] * len(_values),
-                    y=_values,
-                    name=str(_state),
-                    width=_hue_width * 0.78,
-                    boxpoints=False,
-                    fillcolor="rgba(255, 255, 255, 0.85)",
-                    line=dict(color="#666666", width=1.1),
-                    marker_color=_colors[_state_idx],
-                    quartilemethod="linear",
-                    whiskerwidth=0,
-                    showlegend=_feat_idx == 0,
-                    hovertemplate=(f"State: {_state}<br>Feature: {_feature_labeler(_feature)}<br>Weight: %{{y:.4f}}<extra></extra>"),
-                )
-            )
-            _box_half_width = (_hue_width * 0.78) / 2.0
-            _fig_plotly.add_shape(
-                type="line",
-                x0=_positions[_state_idx] - _box_half_width,
-                x1=_positions[_state_idx] + _box_half_width,
-                y0=float(np.median(_values)),
-                y1=float(np.median(_values)),
-                line=dict(color=_colors[_state_idx], width=3.0),
-            )
-
-    for _feat_idx, _per_subject_values in enumerate(_subject_lines):
-        _finite_groups = [
-            _values[np.isfinite(_values)]
-            for _values in (_grouped_values[_state_idx][_feat_idx] for _state_idx in range(_n_states))
-            if np.isfinite(_values).any()
-        ]
-        if not _finite_groups or _n_states < 2:
-            continue
-
-        _finite_values = np.concatenate(_finite_groups)
-        _y_range = float(np.max(_finite_values) - np.min(_finite_values))
-        if not np.isfinite(_y_range) or _y_range <= 0:
-            _y_range = 1.0
-        _y_base = float(np.max(_finite_values))
-        _step = _y_range * 0.08
-        _bracket_height = _y_range * 0.02
-
-        for _pair_idx, (_state_a, _state_b) in enumerate(combinations(range(_n_states), 2)):
-            _paired = _per_subject_values[np.isfinite(_per_subject_values[:, _state_a]) & np.isfinite(_per_subject_values[:, _state_b])]
-            if _paired.shape[0] < 2:
-                continue
-
-            _pvalue = float(ttest_rel(_paired[:, _state_a], _paired[:, _state_b]).pvalue)
-            _x1 = _feat_idx + (_state_a - (_n_states - 1) / 2.0) * _hue_width
-            _x2 = _feat_idx + (_state_b - (_n_states - 1) / 2.0) * _hue_width
-            _y = _y_base + _step * (_pair_idx + 1)
-            _fig_plotly.add_shape(
-                type="path",
-                path=(f"M {_x1},{_y} L {_x1},{_y + _bracket_height} L {_x2},{_y + _bracket_height} L {_x2},{_y}"),
-                line=dict(color="black", width=1.0),
-            )
-            _fig_plotly.add_annotation(
-                x=(_x1 + _x2) / 2.0,
-                y=_y + _bracket_height,
-                text=significance_label(_pvalue),
-                showarrow=False,
-                yanchor="bottom",
-                font=dict(color="black", size=12),
-            )
-
-    _fig_plotly.add_hline(y=0, line_color="black", line_dash="dash", line_width=0.8)
-    _fig_plotly.update_xaxes(
-        tickmode="array",
-        tickvals=list(range(_n_features)),
-        ticktext=_display_features,
-        tickangle=35,
-        title_text="",
+    _choice_df = _weights_pdf.copy()
+    _choice_df["subject"] = _choice_df["subject"].astype(str)
+    _choice_df["state_label"] = _choice_df["state_label"].astype(str)
+    _choice_df["feature"] = _choice_df["feature"].astype(str)
+    _choice_df["weight"] = pd.to_numeric(_choice_df["weight"], errors="coerce")
+    _choice_df["lag"] = pd.to_numeric(
+        _choice_df["feature"].str.extract(r"^choice_lag_(\d+)$", expand=False),
+        errors="coerce",
     )
-    _fig_plotly.update_yaxes(title_text="Weight", zeroline=False)
-    _fig_plotly.update_layout(
-        template="simple_white",
-        boxmode="overlay",
-        dragmode="select",
-        height=430,
-        width=max(650, int(140 * max(1, _n_features))),
-        margin=dict(l=60, r=140, t=25, b=95),
-        legend=dict(x=1.01, y=1.0, xanchor="left", yanchor="top"),
-    )
+    _choice_df = _choice_df[
+        _choice_df["state_label"].isin(["Engaged", "Disengaged"])
+        & _choice_df["lag"].between(1, 100)
+        & np.isfinite(_choice_df["weight"])
+    ].copy()
+    mo.stop(_choice_df.empty, mo.md("No `choice_lag_01` through `choice_lag_100` emission weights found."))
 
-    ui_emission_summary_plotly = mo.ui.plotly(_fig_plotly)
-    selected_emission_subjects_plotly = sorted(
-        {str(_point.get("customdata", [None])[0]) for _point in ui_emission_summary_plotly.points if _point.get("customdata")}
+    _choice_df["lag"] = _choice_df["lag"].astype(int)
+    _lag_order = list(range(1, 101))
+    _choice_df = _choice_df[_choice_df["lag"].isin(_lag_order)].copy()
+
+    _fig_choice_lag_states, _axes_choice_lag_states = plt.subplots(
+        1,
+        2,
+        figsize=(10,4),
+        sharey=True,
+        constrained_layout=True,
     )
+    _state_order = ["Engaged", "Disengaged"]
+    for _ax, _state_label in zip(_axes_choice_lag_states, _state_order, strict=False):
+        _state_df = _choice_df[_choice_df["state_label"] == _state_label].copy()
+        sns.lineplot(
+            data=_state_df,
+            x="lag",
+            y="weight",
+            estimator="mean",
+            errorbar="se",
+            marker="o",
+            markersize=3,
+            linewidth=1.25,
+            color="#1f77b4",
+            ax=_ax,
+        )
+        _ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+        _ax.set_title(_state_label)
+        _ax.set_xlabel("Choice lag")
+        _ax.set_ylabel("Weight" if _state_label == "Engaged" else "")
+        _ax.set_xticks(range(5, 101, 5))
+        _ax.set_ylim(-0.5, 2)
+        annotate_choice_lag_ttests(_ax, _state_df, _lag_order, 1.75)
+
     mo.vstack(
         [
-            ui_emission_summary_plotly,
-            mo.md("Selected subjects: " + (", ".join(selected_emission_subjects_plotly) if selected_emission_subjects_plotly else "_none_")),
+            mo.md("#### Choice-lag emission weights by state"),
+            _fig_choice_lag_states,
+            save_plot(
+                _fig_choice_lag_states,
+                "choice lag emission weights by state",
+                stem="choice_lag_100_by_state",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(
+    annotate_choice_lag_ttests,
+    build_emission_weights_df,
+    mo,
+    np,
+    pd,
+    plt,
+    save_plot,
+    selected,
+    sns,
+    views,
+):
+    sns.set_context("paper")
+    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
+
+    _views_sel = {s: views[s] for s in selected}
+    _weights_df = build_emission_weights_df(_views_sel)
+    _weights_pdf = _weights_df.to_pandas() if hasattr(_weights_df, "to_pandas") else pd.DataFrame(_weights_df)
+    _required = {"subject", "state_label", "feature", "weight"}
+    mo.stop(
+        _weights_pdf.empty or not _required.issubset(_weights_pdf.columns),
+        mo.md("No state-labelled emission weights available."),
+    )
+
+    _choice_df = _weights_pdf.copy()
+    _choice_df["subject"] = _choice_df["subject"].astype(str)
+    _choice_df["state_label"] = _choice_df["state_label"].astype(str)
+    _choice_df["feature"] = _choice_df["feature"].astype(str)
+    _choice_df["weight"] = pd.to_numeric(_choice_df["weight"], errors="coerce")
+    _parsed = _choice_df["feature"].str.extract(r"^choice_lag_(corr|inc)_(\d+)$")
+    _choice_df["outcome_family"] = _parsed[0].map({"corr": "Correct", "inc": "Incorrect"})
+    _choice_df["lag"] = pd.to_numeric(_parsed[1], errors="coerce")
+    _choice_df = _choice_df[
+        _choice_df["state_label"].isin(["Engaged", "Disengaged"])
+        & _choice_df["outcome_family"].isin(["Correct", "Incorrect"])
+        & _choice_df["lag"].between(1, 100)
+        & np.isfinite(_choice_df["weight"])
+    ].copy()
+    mo.stop(
+        _choice_df.empty,
+        mo.md("No `choice_lag_corr_01` / `choice_lag_inc_01` through lag 100 emission weights found."),
+    )
+
+    _choice_df["lag"] = _choice_df["lag"].astype(int)
+    _lag_order = list(range(1, 101))
+    _choice_df = _choice_df[_choice_df["lag"].isin(_lag_order)].copy()
+
+    _fig_choice_lag_outcome_states, _axes_choice_lag_outcome_states = plt.subplots(
+        2,
+        2,
+        figsize=(12, 7),
+        sharey=True,
+        constrained_layout=True,
+    )
+    _outcome_order = ["Correct", "Incorrect"]
+    _state_order = ["Engaged", "Disengaged"]
+    for _row_idx, _outcome_family in enumerate(_outcome_order):
+        for _col_idx, _state_label in enumerate(_state_order):
+            _ax = _axes_choice_lag_outcome_states[_row_idx, _col_idx]
+            _panel_df = _choice_df[
+                (_choice_df["outcome_family"] == _outcome_family)
+                & (_choice_df["state_label"] == _state_label)
+            ].copy()
+            sns.lineplot(
+                data=_panel_df,
+                x="lag",
+                y="weight",
+                estimator="mean",
+                errorbar="se",
+                marker="o",
+                markersize=3,
+                linewidth=1.25,
+                color="#1f77b4",
+                ax=_ax,
+            )
+            _ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+            _ax.set_title(f"{_outcome_family} - {_state_label}")
+            _ax.set_xlabel("Choice lag" if _row_idx == len(_outcome_order) - 1 else "")
+            _ax.set_ylabel("Weight" if _col_idx == 0 else "")
+            _ax.set_xticks(range(5, 101, 5))
+            _ax.set_ylim(-0.5, 4)
+            annotate_choice_lag_ttests(_ax, _panel_df, _lag_order)
+
+    mo.vstack(
+        [
+            mo.md("#### Correct/incorrect choice-lag emission weights by state"),
+            _fig_choice_lag_outcome_states,
+            save_plot(
+                _fig_choice_lag_outcome_states,
+                "correct incorrect choice lag emission weights by state",
+                stem="choice_lag_corr_inc_100_by_state",
+            ),
         ],
         align="center",
     )
@@ -747,8 +950,10 @@ def _(
     arrays_store,
     build_transition_matrix_by_subject_payload,
     build_transition_matrix_payload,
+    fig_size,
     mo,
     model_plots,
+    plt,
     save_plot,
     selected,
     state_labels,
@@ -768,12 +973,14 @@ def _(
         K=K,
         subjects=selected,
     )
-    _fig_summary = model_plots.transition_matrix(**_summary_payload)
+    _fig_summary, _ax_summary = plt.subplots(figsize=fig_size(2,1))
+    _fig_summary = model_plots.transition_matrix(**_summary_payload, ax=_ax_summary)
+    _fig_summary.set_title("")
     mo.vstack(
         [
             _fig_summary,
             save_plot(
-                _fig_summary,
+                _fig_summary.figure,
                 f"Mean Transition Matrix",
                 stem=f"mean_transition_matrix",
             ),
@@ -793,11 +1000,14 @@ def _(mo):
 
 @app.cell
 def _(
+    boxplot_figsize,
     build_state_dwell_times_payload,
     fig_size,
+    format_boxplot_panel,
     mo,
     model_plots,
     pl,
+    plt,
     save_plot,
     selected,
     trial_df,
@@ -816,21 +1026,40 @@ def _(
     _dwell_ax_size = fig_size(2, 1)
     _n_dwell_states = max(1, len(_dwell_payload.get("state_order") or []))
     _n_dwell_subjects = max(1, len(_dwell_payload.get("subject_order") or []))
+    _fig_dwell_summary, _axes_dwell_summary = plt.subplots(
+        1,
+        _n_dwell_states,
+        figsize=(_dwell_ax_size[0] * _n_dwell_states, _dwell_ax_size[1]),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
     _fig_dwell_summary, _axes_dwell_summary = model_plots.state_dwell_times_summary(
         _dwell_payload,
-        figsize=(_dwell_ax_size[0] * _n_dwell_states, _dwell_ax_size[1]),
+        axes=_axes_dwell_summary,
     )
+    _fig_dwell_cumulative, _ax_dwell_cumulative = plt.subplots(figsize=_dwell_ax_size)
     _fig_dwell_cumulative, _ax_dwell_cumulative = model_plots.state_dwell_times_cumulative(
         _dwell_payload,
-        figsize=_dwell_ax_size,
+        ax=_ax_dwell_cumulative,
     )
+    _fig_dwell_median, _ax_dwell_median = plt.subplots(figsize=boxplot_figsize)
     _fig_dwell_median, _ax_dwell_median = model_plots.state_dwell_median_boxplot(
         _dwell_payload,
-        figsize=_dwell_ax_size,
+        ax=_ax_dwell_median,
+    )
+    format_boxplot_panel(_ax_dwell_median)
+    _fig_dwell_by_subject, _axes_dwell_by_subject = plt.subplots(
+        _n_dwell_subjects,
+        _n_dwell_states,
+        figsize=(_dwell_ax_size[0] * _n_dwell_states, _dwell_ax_size[1] * _n_dwell_subjects),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
     )
     _fig_dwell_by_subject, _axes_dwell_by_subject = model_plots.state_dwell_times_by_subject(
         _dwell_payload,
-        figsize=(_dwell_ax_size[0] * _n_dwell_states, _dwell_ax_size[1] * _n_dwell_subjects),
+        axes=_axes_dwell_by_subject,
     )
     mo.vstack(
         [
@@ -991,6 +1220,7 @@ def _(
         ax=_ax_reg_overlay,
         **_state_plot_kwargs,
     )
+    _ax_reg_overlay.set_xlabel(r"$A$")
 
     _fig_reg_state, _axes_reg_state = plt.subplots(1, K, figsize=(4 * K, 4), sharey=True)
     _fig_reg_state, _ = plots.plot_regressor_psychometric_by_state(
@@ -1051,24 +1281,702 @@ def _(
 
 
 @app.cell
-def _(mo, plot_df_all, plots, save_plot, selected, views):
+def _(
+    K,
+    boxplot_tick_rotation,
+    build_emission_weights_df,
+    fig_size,
+    mo,
+    model_plots,
+    np,
+    pd,
+    pl,
+    plot_df_all,
+    plots,
+    plt,
+    put_legend_inside_panel,
+    save_plot,
+    selected,
+    sns,
+    views,
+):
+    from scipy.stats import ttest_1samp as _ttest_1samp
+
+    sns.set_context("paper")
+    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
+
+    def _significance_stars(pvalue: float) -> str:
+        if not np.isfinite(pvalue):
+            return ""
+        if pvalue < 0.001:
+            return "***"
+        if pvalue < 0.01:
+            return "**"
+        if pvalue < 0.05:
+            return "*"
+        return ""
+
+    def _annotate_choice_lag_ttests(
+        ax,
+        panel_df: pd.DataFrame,
+        lag_order: list[int],
+        y: float,
+    ) -> None:
+        for lag in lag_order:
+            values = panel_df.loc[panel_df["lag"] == lag, "weight"].dropna().to_numpy(dtype=float)
+            if values.size < 2:
+                continue
+            ax.text(
+                lag,
+                y,
+                _significance_stars(float(_ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue)),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="black",
+                clip_on=False,
+            )
+
+    def _split_axis_columns(ax, ncols: int = 2):
+        fig = ax.figure
+        subgrid = ax.get_subplotspec().subgridspec(1, ncols)
+        ax.remove()
+        axes = []
+        for col in range(ncols):
+            sharey = axes[0] if axes else None
+            axes.append(fig.add_subplot(subgrid[0, col], sharey=sharey))
+        ax._replacement_axes = axes
+        return axes
+
     _views_sel = {s: views[s] for s in selected}
-    _fig_repeat_evidence = plots.plot_repeat_by_repeat_evidence(
+    _weights_df = build_emission_weights_df(_views_sel)
+    _weights_pdf = _weights_df.to_pandas() if hasattr(_weights_df, "to_pandas") else pd.DataFrame(_weights_df)
+    _required = {"subject", "state_label", "feature", "weight"}
+    mo.stop(
+        _weights_pdf.empty or not _required.issubset(_weights_pdf.columns),
+        mo.md("No state-labelled emission weights available."),
+    )
+
+    _fig_glmhmm_summary, _axd_glmhmm_summary = plt.subplot_mosaic(
+        [
+            ["stim", "categorical"],
+            ["choice_engaged", "choice_engaged"],
+            ["choice_disengaged", "choice_disengaged"],
+        ],
+        figsize=fig_size(1, 0.75),
+        layout="constrained",
+    )
+
+    _feature_labels = {
+        "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
+        "stim_x_delay_param": r"$\mathrm{Stim}:\mathrm{Delay}_{\mathrm{param}}$",
+        "bias": r"$\mathrm{Bias}$",
+        "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
+        "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
+    }
+    _feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
+    _preferred_feature_order = ["bias", "bias_param", "biasparam", "stim_param", "stim_x_delay_param"]
+    _summary_df = _weights_df.filter(
+        (pl.col("feature") == "stim_param") | (pl.col("feature") == "bias")
+    )
+    if _summary_df.is_empty():
+        _summary_df = _weights_df.filter(pl.col("feature").is_in(_preferred_feature_order))
+    if _summary_df.is_empty():
+        _axd_glmhmm_summary["stim"].text(
+            0.5,
+            0.5,
+            "No stim/bias weights found",
+            ha="center",
+            va="center",
+            transform=_axd_glmhmm_summary["stim"].transAxes,
+        )
+        _axd_glmhmm_summary["stim"].set_axis_off()
+    else:
+        _summary_pdf = _summary_df.to_pandas() if hasattr(_summary_df, "to_pandas") else pd.DataFrame(_summary_df)
+        _available_features = pd.unique(_summary_pdf["feature"].astype(str)).tolist()
+        _feature_order = [_feature for _feature in _preferred_feature_order if _feature in _available_features]
+        _feature_order.extend(_feature for _feature in _available_features if _feature not in _feature_order)
+        model_plots.emission_weights_summary_boxplot(
+            _summary_df,
+            K=K,
+            connect_subjects=True,
+            show_ttests=True,
+            feature_order=_feature_order,
+            feature_labeler=_feature_labeler,
+            ax=_axd_glmhmm_summary["stim"],
+            tick_rotation=boxplot_tick_rotation,
+        )
+        put_legend_inside_panel(_axd_glmhmm_summary["stim"], anchor=(0.98, 0.3))
+
+    _state_plot_kwargs = dict(
+        background_style="model",
+        show_weighted_points=True,
+        show_data_smooth=True,
+        show_model_smooth=True,
+        model_line_mode="smooth",
+        state_assignment_mode="map",
+        figure_dpi=300,
+    )
+    plots.plot_categorical_performance_state_overlay(
+        df=plot_df_all,
+        views=_views_sel,
+        model_name=f"glmhmm K={K} — all states",
+        ax=_axd_glmhmm_summary["categorical"],
+        **_state_plot_kwargs,
+    )
+
+    _choice_df = _weights_pdf.copy()
+    _choice_df["subject"] = _choice_df["subject"].astype(str)
+    _choice_df["state_label"] = _choice_df["state_label"].astype(str)
+    _choice_df["feature"] = _choice_df["feature"].astype(str)
+    _choice_df["weight"] = pd.to_numeric(_choice_df["weight"], errors="coerce")
+    _parsed = _choice_df["feature"].str.extract(r"^choice_lag_(corr|inc)_(\d+)$")
+    _choice_df["outcome_family"] = _parsed[0].map({"corr": "Correct", "inc": "Incorrect"})
+    _choice_df["lag"] = pd.to_numeric(_parsed[1], errors="coerce")
+    _choice_df = _choice_df[
+        _choice_df["state_label"].isin(["Engaged", "Disengaged"])
+        & _choice_df["outcome_family"].isin(["Correct", "Incorrect"])
+        & _choice_df["lag"].between(1, 100)
+        & np.isfinite(_choice_df["weight"])
+    ].copy()
+
+    if _choice_df.empty:
+        _fallback_choice_df = _weights_pdf.copy()
+        _fallback_choice_df["subject"] = _fallback_choice_df["subject"].astype(str)
+        _fallback_choice_df["state_label"] = _fallback_choice_df["state_label"].astype(str)
+        _fallback_choice_df["feature"] = _fallback_choice_df["feature"].astype(str)
+        _fallback_choice_df["weight"] = pd.to_numeric(_fallback_choice_df["weight"], errors="coerce")
+        _fallback_choice_df["lag"] = pd.to_numeric(
+            _fallback_choice_df["feature"].str.extract(r"^choice_lag_(\d+)$", expand=False),
+            errors="coerce",
+        )
+        _fallback_choice_df = _fallback_choice_df[
+            _fallback_choice_df["state_label"].isin(["Engaged", "Disengaged"])
+            & _fallback_choice_df["lag"].between(1, 100)
+            & np.isfinite(_fallback_choice_df["weight"])
+        ].copy()
+        _fallback_choice_df["lag"] = _fallback_choice_df["lag"].astype(int)
+        _fallback_lag_order = list(range(1, 101))
+        for _state_label, _key in (("Engaged", "choice_engaged"), ("Disengaged", "choice_disengaged")):
+            _ax = _axd_glmhmm_summary[_key]
+            _state_df = _fallback_choice_df[_fallback_choice_df["state_label"] == _state_label].copy()
+            if _state_df.empty:
+                _ax.text(
+                    0.5,
+                    0.5,
+                    f"No {_state_label} choice-lag weights",
+                    ha="center",
+                    va="center",
+                    transform=_ax.transAxes,
+                )
+                _ax.set_axis_off()
+                continue
+            sns.lineplot(
+                data=_state_df,
+                x="lag",
+                y="weight",
+                estimator="mean",
+                errorbar="se",
+                marker="o",
+                markersize=3,
+                linewidth=1.25,
+                color={"Engaged": "tab:green", "Disengaged": "tab:gray"}[_state_label],
+                ax=_ax,
+            )
+            _ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+            _ax.set_xlabel("Choice lag")
+            _ax.set_ylabel("Weight")
+            _ax.set_xticks(range(5, 101, 5))
+            _ax.set_ylim(-0.5, 2)
+            _annotate_choice_lag_ttests(_ax, _state_df, _fallback_lag_order, y=1.75)
+            if _state_label == "Engaged":
+                _ax.set_xlabel("")
+                _ax.tick_params(axis="x", labelbottom=False)
+    else:
+        _choice_df["lag"] = _choice_df["lag"].astype(int)
+        _lag_order = list(range(1, 101))
+        _choice_df = _choice_df[_choice_df["lag"].isin(_lag_order)].copy()
+        for _state_label, _key in (("Engaged", "choice_engaged"), ("Disengaged", "choice_disengaged")):
+            _host_ax = _axd_glmhmm_summary[_key]
+            _outcome_axes = _split_axis_columns(_host_ax)
+            for _outcome_ax, _outcome_family in zip(_outcome_axes, ("Correct", "Incorrect"), strict=False):
+                _panel_df = _choice_df[
+                    (_choice_df["outcome_family"] == _outcome_family)
+                    & (_choice_df["state_label"] == _state_label)
+                ].copy()
+                sns.lineplot(
+                    data=_panel_df,
+                    x="lag",
+                    y="weight",
+                    estimator="mean",
+                    errorbar="se",
+                    marker="o",
+                    markersize=3,
+                    linewidth=1.25,
+                    color={"Engaged": "tab:green", "Disengaged": "tab:gray"}[_state_label],
+                    ax=_outcome_ax,
+                )
+                _outcome_ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+                _outcome_ax.set_title(f"{_outcome_family} — {_state_label}")
+                _outcome_ax.set_xlabel("Choice lag")
+                _outcome_ax.set_ylabel("Weight" if _outcome_family == "Correct" else "")
+                _outcome_ax.set_xticks(range(5, 101, 5))
+                _outcome_ax.set_ylim(-0.5, 4)
+                _annotate_choice_lag_ttests(_outcome_ax, _panel_df, _lag_order, y=3.75)
+                if _state_label == "Engaged":
+                    _outcome_ax.set_xlabel("")
+                    _outcome_ax.tick_params(axis="x", labelbottom=False)
+
+    for _key in ("stim", "categorical"):
+        _axd_glmhmm_summary[_key].set_box_aspect(1)
+    _fig_glmhmm_summary.canvas.draw()
+    _label_grid = {
+        "stim": (0, 0, "a"),
+        "categorical": (0, 1, "b"),
+        "choice_engaged": (1, 0, "c"),
+        "choice_disengaged": (2, 0, "d"),
+    }
+    _label_axes = {
+        _key: (getattr(_axd_glmhmm_summary[_key], "_replacement_axes", None) or [_axd_glmhmm_summary[_key]])[0]
+        for _key in _label_grid
+    }
+    _row_tops = {
+        _row: max(
+            _label_axes[_key].get_position().y1
+            for _key, (_key_row, _, _) in _label_grid.items()
+            if _key_row == _row
+        )
+        for _row in {0, 1, 2}
+    }
+    _col_lefts = {
+        _col: min(
+            _label_axes[_key].get_position().x0
+            for _key, (_, _key_col, _) in _label_grid.items()
+            if _key_col == _col
+        )
+        for _col in {0, 1}
+    }
+    for _key, (_row, _col, _label) in _label_grid.items():
+        _fig_glmhmm_summary.text(
+            _col_lefts[_col] - 0.01,
+            _row_tops[_row] + 0.01,
+            _label,
+            transform=_fig_glmhmm_summary.transFigure,
+            fontsize=plt.rcParams["axes.titlesize"],
+            fontweight="bold",
+            va="bottom",
+            ha="right",
+        )
+    sns.despine(fig=_fig_glmhmm_summary)
+
+    mo.vstack(
+        [
+            mo.md("#### GLM-HMM summary mosaic"),
+            _fig_glmhmm_summary,
+            save_plot(
+                _fig_glmhmm_summary,
+                "GLM-HMM summary mosaic",
+                stem="glmhmm_summary_mosaic",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(
+    adapter,
+    fig_size,
+    mo,
+    np,
+    pd,
+    plot_df_all,
+    plots,
+    plt,
+    save_plot,
+    selected,
+    views,
+):
+    _views_sel = {s: views[s] for s in selected}
+    _evidence_figsize = fig_size(2, 1)
+
+    def _response_right(_df):
+        _response = pd.to_numeric(_df["response"], errors="coerce")
+        if next(iter(_views_sel.values())).num_classes == 3:
+            return (_response == 2).astype(float)
+        return (_response > 0).astype(float)
+
+    def _plot_pright_by_evidence(_df, *, group_col, legend_title, ax, discrete=False):
+        _df = _df.to_pandas().copy() if hasattr(_df, "to_pandas") else pd.DataFrame(_df).copy()
+        if group_col not in _df.columns or "pR" not in _df.columns:
+            ax.set_axis_off()
+            return None
+        _df["_response_right"] = _response_right(_df)
+        _df["_group"] = pd.to_numeric(_df[group_col], errors="coerce")
+        _df["_p_right"] = pd.to_numeric(_df["pR"], errors="coerce")
+        _df["_right_evidence"] = np.log(np.clip(_df["_p_right"], 1e-6, 1 - 1e-6) / np.clip(1 - _df["_p_right"], 1e-6, 1))
+        _df = _df.dropna(subset=["_response_right", "_group", "_p_right", "_right_evidence"])
+        if _df.empty or _df["_group"].nunique() < 2:
+            ax.set_axis_off()
+            return None
+        _df["_line"] = _df["_group"] if discrete else pd.qcut(_df["_group"], q=4, labels=False, duplicates="drop")
+        _df["_xbin"] = pd.qcut(_df["_right_evidence"], q=10, labels=False, duplicates="drop")
+        _df = _df.dropna(subset=["_line", "_xbin"]).copy()
+        _subject = (
+            _df.groupby(["_line", "subject", "_xbin"], observed=True)
+            .agg(data=("_response_right", "mean"), model=("_p_right", "mean"), x=("_right_evidence", "mean"))
+            .reset_index()
+        )
+        _summary = (
+            _subject.groupby(["_line", "_xbin"], observed=True)
+            .agg(data_mean=("data", "mean"), data_std=("data", "std"), n=("data", "count"), model_mean=("model", "mean"), x=("x", "mean"))
+            .reset_index()
+            .sort_values(["_line", "x"])
+        )
+        _summary["data_sem"] = _summary["data_std"].fillna(0) / np.sqrt(_summary["n"].clip(lower=1))
+        _order = sorted(_summary["_line"].dropna().unique().tolist())
+        _colors = plt.get_cmap("viridis" if discrete else "RdBu")(np.linspace(0.15, 0.85, len(_order)))
+        for _line, _color in zip(_order, _colors, strict=False):
+            _sub = _summary[_summary["_line"] == _line]
+            _label = f"{float(_line):g}" if discrete else f"Q{int(_line) + 1}"
+            ax.plot(_sub["x"], _sub["model_mean"], "-", color=_color, lw=2, label=_label)
+            ax.errorbar(_sub["x"], _sub["data_mean"], yerr=_sub["data_sem"], fmt="o", color=_color, ecolor=_color, ms=4, capsize=3)
+        ax.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.5)
+        ax.axvline(0, color="gray", lw=0.8, ls="--", alpha=0.5)
+        ax.set_xlabel("Right-vs-rest fitted evidence")
+        ax.set_ylabel(r"$p(\mathrm{right})$")
+        ax.set_ylim(0, 1)
+        ax.legend(title=legend_title, frameon=False, fontsize=8)
+        return ax
+
+    _fig_total_evidence, _ax_total_evidence = plt.subplots(
+        1,
+        1,
+        figsize=_evidence_figsize,
+        layout="constrained",
+    )
+    plots.plot_accuracy_by_total_evidence(
+        plot_df_all,
+        adapter=adapter,
+        views=_views_sel,
+        ax=_ax_total_evidence,
+        figsize=_evidence_figsize,
+    )
+    _ax_total_evidence.set_xlabel("Fitted Evidence")
+
+    _stimulus_group_col = "stim_x_delay" if "stim_x_delay" in plot_df_all.columns else "ILD"
+    _pright_evidence_panels = []
+    for _group_col, _legend_title, _stem_label, _discrete in [
+        ("choice_lag_param", r"$A$", "action_trace", False),
+        (_stimulus_group_col, "Stim.", "stimulus", True),
+    ]:
+        _fig_pright_evidence, _ax_pright_evidence = plt.subplots(
+            1,
+            1,
+            figsize=_evidence_figsize,
+            layout="constrained",
+        )
+        _plotted_pright = _plot_pright_by_evidence(
+            plot_df_all,
+            group_col=_group_col,
+            legend_title=_legend_title,
+            ax=_ax_pright_evidence,
+            discrete=_discrete,
+        )
+        if _plotted_pright is None:
+            plt.close(_fig_pright_evidence)
+            continue
+        _pright_evidence_panels.append(
+            mo.vstack(
+                [
+                    _fig_pright_evidence,
+                    save_plot(
+                        _fig_pright_evidence,
+                        f"p(right) by total evidence binned by {_stem_label}",
+                        stem=f"pright_total_evidence_binned_{_stem_label}",
+                    ),
+                ],
+                align="center",
+            )
+        )
+
+    _fig_repeat_evidence, _ax_repeat_evidence = plt.subplots(
+        1,
+        1,
+        figsize=_evidence_figsize,
+        layout="constrained",
+    )
+    plots.plot_repeat_by_repeat_evidence(
         plot_df_all,
         views=_views_sel,
+        ax=_ax_repeat_evidence,
+        figsize=_evidence_figsize,
     )
+    _ax_repeat_evidence.set_xlabel("Rep. Evidence")
     mo.stop(
         _fig_repeat_evidence is None,
         mo.md("No repeat evidence plot available for the selected task/features."),
     )
 
+    mo.hstack(
+        [
+            mo.vstack(
+                [
+                    _fig_total_evidence,
+                    save_plot(
+                        _fig_total_evidence,
+                        "accuracy by fitted total evidence",
+                        stem="accuracy_total_evidence",
+                    ),
+                ],
+                align="center",
+            ),
+            *_pright_evidence_panels,
+            mo.vstack(
+                [
+                    _fig_repeat_evidence,
+                    save_plot(
+                        _fig_repeat_evidence,
+                        "repeat probability by fitted repeat evidence",
+                        stem="repeat_probability_repeat_evidence",
+                    ),
+                ],
+                align="center",
+            ),
+        ],
+    )
+    return
+
+
+@app.cell
+def _(fig_size, mo, np, pd, plot_df_all, plt, save_plot, selected, views):
+    _views_sel = {s: views[s] for s in selected}
+    _stim_col = (
+        "stim_x_delay"
+        if "stim_x_delay" in plot_df_all.columns
+        else "ILD"
+        if "ILD" in plot_df_all.columns
+        else "ild"
+    )
+    mo.stop(
+        _stim_col not in plot_df_all.columns or "choice_lag_param" not in plot_df_all.columns,
+        mo.md("Need `choice_lag_param` and raw `ILD`/`stim_x_delay` columns for conditional p(right) plots."),
+    )
+
+    def _response_right(_df):
+        _response = pd.to_numeric(_df["response"], errors="coerce")
+        if next(iter(_views_sel.values())).num_classes == 3:
+            return (_response == 2).astype(float)
+        return (_response > 0).astype(float)
+
+    def _summary(_df, *, x_col, line_col, x_quantile=False, line_quantile=False):
+        _df = _df.to_pandas().copy() if hasattr(_df, "to_pandas") else pd.DataFrame(_df).copy()
+        _df["_response_right"] = _response_right(_df)
+        _df["_x"] = pd.to_numeric(_df[x_col], errors="coerce")
+        _df["_line_value"] = pd.to_numeric(_df[line_col], errors="coerce")
+        _df["_p_right"] = pd.to_numeric(_df["pR"], errors="coerce")
+        _df = _df.dropna(subset=["subject", "_response_right", "_x", "_line_value", "_p_right"])
+        if _df.empty or _df["_x"].nunique() < 2 or _df["_line_value"].nunique() < 2:
+            return None
+        _df["_line"] = (
+            pd.qcut(_df["_line_value"], q=min(4, _df["_line_value"].nunique()), labels=False, duplicates="drop")
+            if line_quantile
+            else _df["_line_value"]
+        )
+        _df["_xbin"] = (
+            pd.qcut(_df["_x"], q=min(10, _df["_x"].nunique()), labels=False, duplicates="drop")
+            if x_quantile
+            else _df["_x"]
+        )
+        _df = _df.dropna(subset=["_line", "_xbin"])
+        _subject = (
+            _df.groupby(["_line", "subject", "_xbin"], observed=True)
+            .agg(data=("_response_right", "mean"), model=("_p_right", "mean"), x=("_x", "mean"))
+            .reset_index()
+        )
+        _out = (
+            _subject.groupby(["_line", "_xbin"], observed=True)
+            .agg(data_mean=("data", "mean"), data_std=("data", "std"), n=("data", "count"), model_mean=("model", "mean"), x=("x", "mean"))
+            .reset_index()
+            .sort_values(["_line", "x"])
+        )
+        _out["data_sem"] = _out["data_std"].fillna(0) / np.sqrt(_out["n"].clip(lower=1))
+        return _out
+
+    def _plot(_ax, _summary_df, *, legend_title, line_quantile, palette_name):
+        if _summary_df is None or _summary_df.empty:
+            _ax.set_axis_off()
+            return False
+        _order = sorted(_summary_df["_line"].dropna().unique().tolist())
+        _colors = plt.get_cmap(palette_name)(np.linspace(0.15, 0.85, len(_order)))
+        for _line, _color in zip(_order, _colors, strict=False):
+            _sub = _summary_df[_summary_df["_line"] == _line]
+            _label = f"Q{int(_line) + 1}" if line_quantile else f"{float(_line):g}"
+            _ax.plot(_sub["x"], _sub["model_mean"], "-", color=_color, lw=2, label=_label)
+            _ax.errorbar(_sub["x"], _sub["data_mean"], yerr=_sub["data_sem"], fmt="o", color=_color, ecolor=_color, ms=4, capsize=3)
+        _ax.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.5)
+        _ax.set_ylim(0, 1)
+        _ax.set_ylabel(r"$p(\mathrm{right})$")
+        _ax.legend(title=legend_title, frameon=False, fontsize=8)
+        return True
+
+    _fig_conditional, (_ax_stim_by_a, _ax_a_by_stim) = plt.subplots(1, 2, figsize=fig_size(1, 2), layout="constrained")
+    _drawn_1 = _plot(
+        _ax_stim_by_a,
+        _summary(plot_df_all, x_col=_stim_col, line_col="choice_lag_param", line_quantile=True),
+        legend_title=r"$A$",
+        line_quantile=True,
+        palette_name="RdBu",
+    )
+    _ax_stim_by_a.set_xlabel(_stim_col)
+    _drawn_2 = _plot(
+        _ax_a_by_stim,
+        _summary(plot_df_all, x_col="choice_lag_param", line_col=_stim_col, x_quantile=True),
+        legend_title="Stim.",
+        line_quantile=False,
+        palette_name="viridis",
+    )
+    _ax_a_by_stim.set_xlabel(r"$A$")
+    mo.stop(not (_drawn_1 or _drawn_2), mo.md("No conditional p(right) plots could be drawn."))
+
     mo.vstack(
         [
-            _fig_repeat_evidence,
+            _fig_conditional,
             save_plot(
-                _fig_repeat_evidence,
-                "repeat probability by fitted repeat evidence",
-                stem="repeat_probability_repeat_evidence",
+                _fig_conditional,
+                "conditional psychometrics by action and stimulus",
+                stem="pright_conditional_action_stimulus",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(
+    fig_size,
+    mo,
+    np,
+    pd,
+    plot_df_all,
+    plt,
+    save_plot,
+    selected,
+    sns,
+    task_name,
+    views,
+):
+    from glmhmmt.views import get_state_color
+    from src.process.common import attach_repeat_choice_evidence
+
+    _views_sel = {s: views[s] for s in selected}
+    mo.stop(not _views_sel, mo.md("No fitted arrays found -- run the fit first."))
+
+    _repeat_state_df = attach_repeat_choice_evidence(
+        plot_df_all,
+        views=_views_sel,
+        is_mcdr=task_name == "MCDR",
+    )
+    mo.stop(_repeat_state_df.empty, mo.md("No repeat evidence data available."))
+    mo.stop(
+        "subject" not in _repeat_state_df.columns or "_repeat_choice_evidence" not in _repeat_state_df.columns,
+        mo.md("No repeat evidence data available for the selected task/features."),
+    )
+    mo.stop(
+        "state_idx" not in _repeat_state_df.columns and "state_rank" not in _repeat_state_df.columns,
+        mo.md("No state assignment column available for repeat evidence distributions."),
+    )
+
+    _repeat_state_df = _repeat_state_df.copy().reset_index(drop=True)
+    _repeat_state_df["_repeat_choice_evidence"] = pd.to_numeric(
+        _repeat_state_df["_repeat_choice_evidence"],
+        errors="coerce",
+    )
+
+    if "state_rank" in _repeat_state_df.columns:
+        _repeat_state_df["_state_rank"] = pd.to_numeric(_repeat_state_df["state_rank"], errors="coerce")
+    else:
+        _repeat_state_df["_state_rank"] = np.nan
+        for _subject, _idx in _repeat_state_df.groupby("subject", observed=True).groups.items():
+            _view = _views_sel.get(_subject) or _views_sel.get(str(_subject))
+            if _view is None:
+                continue
+            _rank_by_raw = {int(_raw_idx): int(_rank) for _raw_idx, _rank in _view.state_rank_by_idx.items()}
+            _raw_state = pd.to_numeric(_repeat_state_df.loc[_idx, "state_idx"], errors="coerce")
+            _repeat_state_df.loc[_idx, "_state_rank"] = _raw_state.map(_rank_by_raw).to_numpy(dtype=float)
+
+    _repeat_state_df = _repeat_state_df.dropna(subset=["_repeat_choice_evidence", "_state_rank"]).copy()
+    mo.stop(_repeat_state_df.empty, mo.md("No finite repeat evidence values available by state."))
+
+    _repeat_state_df["_state_rank"] = _repeat_state_df["_state_rank"].astype(int)
+    _state_labels = {}
+    for _view in _views_sel.values():
+        for _raw_idx, _label in _view.state_name_by_idx.items():
+            _rank = int(_view.state_rank_by_idx.get(int(_raw_idx), int(_raw_idx)))
+            _state_labels.setdefault(_rank, _label)
+
+    _state_order = sorted(_repeat_state_df["_state_rank"].unique().tolist())
+    _label_by_rank = {_rank: _state_labels.get(_rank, f"State {_rank}") for _rank in _state_order}
+    _repeat_state_df["_state_label"] = _repeat_state_df["_state_rank"].map(_label_by_rank)
+    _label_order = [_label_by_rank[_rank] for _rank in _state_order]
+    _K = int(next(iter(_views_sel.values())).K) if _views_sel else len(_state_order)
+    _palette = {
+        _label_by_rank[_rank]: get_state_color(_label_by_rank[_rank], _rank, K=_K)
+        for _rank in _state_order
+    }
+
+    _fig_repeat_state_dist, _ax_repeat_state_dist = plt.subplots(
+        figsize=fig_size(3, 1),
+        layout="constrained",
+    )
+    _kde_drawn = False
+    for _label in _label_order:
+        _values = _repeat_state_df.loc[
+            _repeat_state_df["_state_label"] == _label,
+            "_repeat_choice_evidence",
+        ].to_numpy(dtype=float)
+        _values = _values[np.isfinite(_values)]
+        if _values.size >= 2 and np.nanstd(_values) > 0:
+            sns.kdeplot(
+                x=_values,
+                ax=_ax_repeat_state_dist,
+                label=_label,
+                color=_palette[_label],
+                fill=False,
+                linewidth=1.8,
+            )
+            _kde_drawn = True
+
+    if not _kde_drawn:
+        sns.stripplot(
+            data=_repeat_state_df,
+            x="_repeat_choice_evidence",
+            y="_state_label",
+            order=_label_order,
+            palette=_palette,
+            ax=_ax_repeat_state_dist,
+            size=2.5,
+            alpha=0.45,
+        )
+        _ax_repeat_state_dist.set_ylabel("")
+    else:
+        _ax_repeat_state_dist.legend(title="State", frameon=False)
+        _ax_repeat_state_dist.set_ylabel("Density")
+
+    _ax_repeat_state_dist.axvline(0, color="black", linestyle="--", linewidth=0.8)
+    _ax_repeat_state_dist.set_xlabel("Rep. Evidence")
+    _ax_repeat_state_dist.set_title("Repeat evidence distribution by state")
+    sns.despine(ax=_ax_repeat_state_dist)
+
+    mo.vstack(
+        [
+            _fig_repeat_state_dist,
+            save_plot(
+                _fig_repeat_state_dist,
+                "repeat evidence distribution by state",
+                stem="repeat_evidence_distribution_by_state",
             ),
         ],
         align="center",
@@ -1095,7 +2003,7 @@ def _(fig_size, mo, plot_df_all, plots, plt, save_plot):
         title=None,
         ax=ax_right,
     )
-
+    _ax_right_regressor.set_xlabel(r"$A$")
     mo.stop(
         _ax_right_regressor is None,
         mo.md("No p(right) by choice-history regressor plot available."),
@@ -1134,7 +2042,7 @@ def _(fig_size, mo, plot_df_all, plots, plt, save_plot):
         ax=_ax_integration_data,
         cbar_ax=_cax_integration_data,
     )
-    _ax_integration_data.set_ylabel(r"$A_t^{\mathrm{choice,param}}$")
+    _ax_integration_data.set_ylabel(r"$A$")
     _fig_integration_data = None if _integration_data_result is None else _integration_data_result[0]
 
     _fig_integration_model_base, (_ax_integration_model, _cax_integration_model) = plt.subplots(
@@ -1225,6 +2133,10 @@ def _(
         ax=_ax_binned,
         legend_ax=_ax_binned_legend,
     )
+    _binned_legend = _ax_binned_legend.get_legend()
+    if _binned_legend is not None:
+        _binned_legend.set_title(r"$A$")
+
     _fig_binned = None if _binned_result is None else _binned_result[0]
     mo.stop(
         _fig_binned is None,
@@ -1313,7 +2225,7 @@ def _(
         _ax.set_ylim(-0.075, 0.2)
         _ax.set_title("")
 
-    _fig_choice_autocorr, _ax_choice_autocorr = plt.subplots(figsize=fig_size(2, 1))
+    _fig_choice_autocorr, _ax_choice_autocorr = plt.subplots(figsize=fig_size(2, 1.5))
     _fig_choice_autocorr, _ = plot_corrected_behavior_autocorrelograms(
         _data_autocorr,
         axes=[_ax_choice_autocorr],
@@ -1323,14 +2235,14 @@ def _(
         figsize=fig_size(2, 1),
     )
     _style_autocorr_axis(_ax_choice_autocorr)
-    _fig_repeat_autocorr, _ax_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1))
+    _fig_repeat_autocorr, _ax_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1.25))
     _fig_repeat_autocorr, _ = plot_corrected_behavior_autocorrelograms(
         _data_autocorr,
         axes=[_ax_repeat_autocorr],
         model_autocorr=_model_autocorr_df,
         model_label="Fitted GLM-HMM",
         signals=("Repetition",),
-        figsize=fig_size(2, 1),
+        figsize=fig_size(2, 1.25),
     )
     _style_autocorr_axis(_ax_repeat_autocorr)
     mo.hstack(
@@ -1869,16 +2781,20 @@ def _(
     mo.stop(not selected, mo.md("No fitted subjects available."))
     _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
 
+    _fig_acc_base, _ax_acc = plt.subplots(figsize=fig_size(3,1))
     _fig_acc = model_plots.state_accuracy(
         build_state_accuracy_payload(
             _trial_df_sel,
             performance_col="correct_bool",
             chance_level=1.0 / adapter.num_classes,
-        )
+        ),
+        ax=_ax_acc,
     )
-    fig, ax = plt.subplots(figsize=(4, 4))
-    _fig_post = model_plots.state_posterior_count_kde(build_state_posterior_count_payload(_trial_df_sel), ax=ax)
+    _fig_acc.set_title("")
+    fig, ax = plt.subplots(figsize=fig_size(3,1))
+    _fig_post = model_plots.state_posterior_count_kde(build_state_posterior_count_payload(_trial_df_sel), ax=ax, figsize=fig_size(3,1))
     ax.spines["right"].set_visible(True)
+    ax.set_title("")
 
     def _pick_column(_df, _candidates):
         for _candidate in _candidates:
@@ -1992,6 +2908,18 @@ def _(
                         ],
                         align="center",
                     ),
+                    mo.vstack(
+                        [
+                            mo.md("#### State-change KDE"),
+                            _fig_switch_kde,
+                            save_plot(
+                                _fig_switch_kde,
+                                "state changes per session kde",
+                                stem="state_switches_kde",
+                            ),
+                        ],
+                        align="center",
+                    ),
                 ],
                 align="center",
             ),
@@ -2014,21 +2942,26 @@ def _(df_all, mo):
 @app.cell
 def _(
     build_session_trajectories_payload,
+    fig_size,
     mo,
     model_plots,
     pl,
+    plt,
     selected,
     trial_df,
 ):
     mo.stop(not selected, mo.md("Select subjects above to view session trajectories."))
     _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-    _fig_traj = model_plots.session_trajectories(
+    _fig_traj, _ax_traj = plt.subplots(figsize=fig_size(2, 1))
+    _ax_traj = model_plots.session_trajectories(
         build_session_trajectories_payload(
             _trial_df_sel,
             session_col="session",
             sort_col="trial_idx",
-        )
+        ),
+        ax=_ax_traj,
     )
+    _fig_traj = _ax_traj.figure
     mo.vstack(
         [
             # mo.md(f"### c. Average state-probability trajectories within a session  (K={K})"),
@@ -2051,11 +2984,13 @@ def _(mo):
 @app.cell
 def _(
     build_state_occupancy_payload,
+    fig_size,
     mo,
     model_plots,
     np,
     pd,
     pl,
+    plt,
     save_plot,
     selected,
     trial_df,
@@ -2067,11 +3002,26 @@ def _(
         session_col="session",
         sort_col="trial_idx",
     )
-    _fig_occ_overall_summary = model_plots.state_occupancy_overall_summary(_occupancy_payload)
+    _fig_occ_overall_summary, _ax_occ_overall_summary = plt.subplots(figsize=fig_size(3,1))
+    ax_occ_overall_summary = model_plots.state_occupancy_overall_summary(
+        _occupancy_payload,
+        ax=_ax_occ_overall_summary,
+    )
+    ax_occ_overall_summary.set_title("")
     _fig_occ_overall_by_subject = model_plots.state_occupancy_overall_by_subject(_occupancy_payload)
-    _fig_occ_sessions_summary = model_plots.state_session_occupancy_summary(_occupancy_payload)
+    _fig_occ_sessions_summary, _ax_occ_sessions_summary = plt.subplots(figsize=fig_size(3,1))
+    ax_occ_sessions_summary = model_plots.state_session_occupancy_summary(
+        _occupancy_payload,
+        ax=_ax_occ_sessions_summary,
+    )
+    ax_occ_sessions_summary.set_title("")
     _fig_occ_sessions_by_subject = model_plots.state_session_occupancy_by_subject(_occupancy_payload)
-    _fig_occ_switches_summary = model_plots.state_switches_summary(_occupancy_payload)
+    _fig_switches_summary, _ax_switches_summary = plt.subplots(figsize=fig_size(3,1))
+    ax_switches_summary = model_plots.state_switches_summary(
+        _occupancy_payload,
+        ax=_ax_switches_summary,
+    )
+    ax_switches_summary.set_title("")
     _fig_occ_switches_by_subject = model_plots.state_switches_by_subject(_occupancy_payload)
     state_switch_sessions_df = _occupancy_payload["switches_df"]
     state_switch_sessions_df = (
@@ -2104,19 +3054,18 @@ def _(
                         "y": float(_y) + 0.5,
                     }
                 )
-    ui_occ_switches_summary = mo.ui.matplotlib(_fig_occ_switches_summary, debounce=True)
+    ui_occ_switches_summary = mo.ui.matplotlib(ax_switches_summary, debounce=True)
     mo.hstack(
         [
             mo.vstack(
                 [
                     mo.vstack(
                         [
-                            _fig_occ_overall_summary.figure,
+                            ax_occ_overall_summary.figure,
                             save_plot(
-                                _fig_occ_overall_summary.figure,
+                                ax_occ_overall_summary.figure,
                                 "fractional occupancy overall summary",
                                 stem="state_occupancy_overall_summary",
-                                location=(0, 0),
                             ),
                         ],
                         align="center",
@@ -2137,12 +3086,11 @@ def _(
                 [
                     mo.vstack(
                         [
-                            _fig_occ_sessions_summary.figure,
+                            ax_occ_sessions_summary.figure,
                             save_plot(
-                                _fig_occ_sessions_summary.figure,
+                                ax_occ_sessions_summary.figure,
                                 "fractional occupancy by session summary",
                                 stem="state_session_occupancy_summary",
-                                location=(0, 0),
                             ),
                         ],
                         align="center",
@@ -2163,12 +3111,11 @@ def _(
                 [
                     mo.vstack(
                         [
-                            ui_occ_switches_summary,
+                            ax_switches_summary,
                             save_plot(
-                                _fig_occ_switches_summary.figure,
+                                ax_switches_summary.figure,
                                 "state switches summary",
                                 stem="state_switches_summary",
-                                location=(0, 0),
                             ),
                         ],
                         align="center",
@@ -2242,9 +3189,11 @@ def _(mo):
 def _(
     THRESH_ui,
     build_change_triggered_posteriors_payload,
+    fig_size,
     mo,
     model_plots,
     pl,
+    plt,
     save_plot,
     selected,
     trial_df,
@@ -2257,12 +3206,49 @@ def _(
         sort_col="trial_idx",
         switch_posterior_threshold=THRESH_ui.amount,
     )
+    _change_directions = list(_change_payload.get("directions") or ["into_engaged", "out_of_engaged"])
+    _fig_change_summary_base, _axes_change_summary = plt.subplots(
+        1,
+        len(_change_directions),
+        figsize=fig_size(1,3),
+        squeeze=False,
+    )
     _fig_change_summary = model_plots.change_triggered_posteriors_summary(
         _change_payload,
+        axes=_axes_change_summary,
     )
     _fig_change_by_subject = model_plots.change_triggered_posteriors_by_subject(
         _change_payload,
     )
+    def _clear_titles(_plot_obj):
+        if isinstance(_plot_obj, (list, tuple)):
+            for _item in _plot_obj:
+                _clear_titles(_item)
+            return
+        _fig = getattr(_plot_obj, "figure", _plot_obj)
+        for _ax in getattr(_fig, "axes", []):
+            _ax.set_title("")
+
+    def _set_change_legend(_fig):
+        for _ax in _fig.axes:
+            if _ax.legend_ is not None:
+                _ax.legend_.remove()
+        _fig.legend(
+            handles=[
+                plt.Line2D([0], [0], color="tab:green", lw=2.2, label="Engaged"),
+                plt.Line2D([0], [0], color="tab:gray", lw=2.0, label="Disengaged"),
+            ],
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.98),
+            ncol=2,
+            frameon=False,
+            fontsize=8,
+        )
+        _fig.subplots_adjust(top=0.86)
+
+    for _plot_obj in (_fig_change_summary, _fig_change_by_subject):
+        _clear_titles(_plot_obj)
+    _set_change_legend(_fig_change_summary[0].figure)
     mo.vstack(
         [
             mo.md(f"> Change events use the same confident MAP switch rule as the histogram above: posterior ≥ {THRESH_ui}. "),
@@ -2341,6 +3327,7 @@ def _(
     build_session_deepdive_payload,
     mo,
     model_plots,
+    put_figure_legend_at_bottom,
     save_plot,
     trial_df,
     ui_engaged_trace_mode,
@@ -2370,9 +3357,11 @@ def _(
     )
     _fig = model_plots.session_deepdive(_deepdive_payload)
     _fig_traces = model_plots.session_deepdive_state_traces(_deepdive_payload)
+    put_figure_legend_at_bottom(_fig, bottom=0.18)
+    put_figure_legend_at_bottom(_fig_traces, bottom=0.28)
     mo.vstack(
         [
-            mo.hstack([ui_session_subj, ui_session_id, ui_engaged_window, ui_engaged_trace_mode]),
+            mo.hstack([ui_session_subj, ui_session_id, ui_engaged_window, ui_engaged_trace_mode], align="center"),
             _fig,
             _fig_traces,
             save_plot(

@@ -1736,6 +1736,136 @@ def _(sns, two_afc_session_transition_accuracy):
 
 
 @app.cell
+def _(pd):
+    def _pick_existing_column(_df, _candidates):
+        for _candidate in _candidates:
+            if _candidate and _candidate in _df.columns:
+                return _candidate
+        return None
+
+    def _as_pandas(_df):
+        return _df.to_pandas() if hasattr(_df, "to_pandas") else _df.copy()
+
+    def _numeric_or_text(_series):
+        _numeric = pd.to_numeric(_series, errors="coerce")
+        if _numeric.notna().any():
+            return _numeric
+        return _series.astype(str)
+
+    def _correct_values(_series):
+        _numeric = pd.to_numeric(_series, errors="coerce")
+        if _numeric.notna().any():
+            return _numeric
+        return (
+            _series.astype(str)
+            .str.lower()
+            .isin(["1", "true", "correct", "hit", "yes"])
+            .astype(float)
+        )
+
+    def two_afc_repeat_alternate_trials(_plot_df):
+        _df = _as_pandas(_plot_df)
+        _subject_col = _pick_existing_column(_df, ["subject"])
+        _session_col = _pick_existing_column(_df, ["session", "Session"])
+        _trial_col = _pick_existing_column(_df, ["trial_idx", "trial", "Trial"])
+        _choice_col = _pick_existing_column(_df, ["response", "choice", "choices", "Choice"])
+        _correct_col = _pick_existing_column(_df, ["correct_bool", "performance", "Hit", "hit"])
+        if any(_col is None for _col in [_subject_col, _session_col, _trial_col, _choice_col, _correct_col]):
+            return pd.DataFrame()
+
+        _out = _df[[_subject_col, _session_col, _trial_col, _choice_col, _correct_col]].copy()
+        _out.columns = ["subject", "session", "trial", "choice", "correct"]
+        _out["choice"] = _numeric_or_text(_out["choice"])
+        _out["correct"] = _correct_values(_out["correct"])
+        _out["trial"] = pd.to_numeric(_out["trial"], errors="coerce")
+        _out = _out.dropna(subset=["subject", "session", "trial", "choice", "correct"])
+        _out = _out.sort_values(["subject", "session", "trial"])
+        _out["previous_choice"] = _out.groupby(["subject", "session"], observed=True)["choice"].shift(1)
+        _out = _out.dropna(subset=["previous_choice"]).copy()
+        _out["transition"] = [
+            "Repeating" if _choice == _previous else "Alternating"
+            for _choice, _previous in zip(_out["choice"], _out["previous_choice"], strict=False)
+        ]
+        return _out
+
+    def two_afc_transition_chunk_lengths(_plot_df):
+        _trials = two_afc_repeat_alternate_trials(_plot_df)
+        if _trials.empty:
+            return _trials
+        _chunks = []
+        for (_subject, _session), _session_df in _trials.groupby(["subject", "session"], observed=True):
+            _session_df = _session_df.copy()
+            _session_df["chunk"] = (_session_df["transition"] != _session_df["transition"].shift()).cumsum()
+            _chunks.append(
+                _session_df.groupby("chunk", as_index=False, observed=True)
+                .agg(
+                    subject=("subject", "first"),
+                    session=("session", "first"),
+                    transition=("transition", "first"),
+                    chunk_length=("transition", "size"),
+                )
+            )
+        return pd.concat(_chunks, ignore_index=True)
+
+    def two_afc_session_repeat_alternate_accuracy(_plot_df):
+        _trials = two_afc_repeat_alternate_trials(_plot_df)
+        if _trials.empty:
+            return _trials
+        _acc = (
+            _trials.groupby(["subject", "session", "transition"], observed=True)["correct"]
+            .mean()
+            .unstack("transition")
+            .reset_index()
+        )
+        if {"Repeating", "Alternating"}.difference(_acc.columns):
+            return pd.DataFrame()
+        return _acc.rename(
+            columns={
+                "Repeating": "repeat_accuracy",
+                "Alternating": "alternate_accuracy",
+            }
+        ).dropna(subset=["repeat_accuracy", "alternate_accuracy"])
+
+    return two_afc_session_repeat_alternate_accuracy, two_afc_transition_chunk_lengths
+
+
+@app.cell
+def _(fig_size, plot_payloads, plt, sns, two_afc_transition_chunk_lengths):
+    _chunk_df = two_afc_transition_chunk_lengths(plot_payloads["2AFC"]["plot_df"])
+    _fig, _ax = plt.subplots(figsize=fig_size(2, 1))
+    sns.histplot(
+        data=_chunk_df,
+        x="chunk_length",
+        hue="transition",
+        palette={"Repeating": "tab:blue", "Alternating": "tab:orange"},
+        ax=_ax,
+    )
+    _ax.set_xlabel("Chunk length")
+    _ax.set_ylabel("Count")
+    sns.despine(ax=_ax)
+    _fig
+    return
+
+
+@app.cell
+def _(fig_size, plot_payloads, plt, sns, two_afc_session_repeat_alternate_accuracy):
+    _acc_df = two_afc_session_repeat_alternate_accuracy(plot_payloads["2AFC"]["plot_df"])
+    _fig, _ax = plt.subplots(figsize=fig_size(2, 1))
+    sns.scatterplot(
+        data=_acc_df,
+        x="repeat_accuracy",
+        y="alternate_accuracy",
+        color="tab:blue",
+        ax=_ax,
+    )
+    _ax.set_xlabel("Repeat accuracy")
+    _ax.set_ylabel("Alternate accuracy")
+    sns.despine(ax=_ax)
+    _fig
+    return
+
+
+@app.cell
 def _(ROOT, fig_size, mpimg, plot_payloads, plt, sns):
     _panel_width, _panel_height = fig_size(n_cols=3)
 
