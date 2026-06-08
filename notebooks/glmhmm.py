@@ -730,6 +730,7 @@ def _(np, pd):
 
 @app.cell
 def _(
+    K,
     annotate_choice_lag_ttests,
     build_emission_weights_df,
     mo,
@@ -2768,6 +2769,7 @@ def _(
     build_state_accuracy_payload,
     build_state_posterior_count_payload,
     df_all,
+    fig_size,
     mo,
     model_plots,
     pd,
