@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import polars as pl
+from src.utils import fig_size
 
 
 # Hardcoded analysis selection.
@@ -350,7 +351,7 @@ def prepare_closed_loop_model_autocorrelograms(
 
 
 def plot_overlay(data_ac: pd.DataFrame, glm_ac: pd.DataFrame, glmhmm_ac: pd.DataFrame) -> plt.Figure:
-    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.8), layout="constrained")
+    fig, axes = plt.subplots(1, 2, figsize=fig_size(1, 2), layout="constrained")
     colors = {
         "data": "#1f77b4",
         "glm": "#333333",
@@ -388,7 +389,7 @@ def plot_overlay(data_ac: pd.DataFrame, glm_ac: pd.DataFrame, glmhmm_ac: pd.Data
     return fig
 
 
-def main() -> None:
+def main():
     configure_paths(config_path=PROJECT_ROOT / "config.toml")
     paths = get_runtime_paths()
     plt.style.use(PROJECT_ROOT / "styles" / "paper.mplstyle")
