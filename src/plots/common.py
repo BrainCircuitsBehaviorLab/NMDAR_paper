@@ -298,7 +298,7 @@ def plot_mean_over_data(
     invert_x: bool = False,
     show_baseline_ttest: bool = False,
     ax: plt.Axes | None = None,
-    figsize=(3.0, 3.0),
+    figsize=fig_size(n_cols=3),
     label: str | None = None,
     **style,
 ):

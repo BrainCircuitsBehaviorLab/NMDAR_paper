@@ -34,7 +34,7 @@ def _():
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
 
     def save_fixed_bbox_pdf(fig, filename):
-        fig.tight_layout()
+        # fig.tight_layout()
         with plt.rc_context({"savefig.bbox": None}):
             fig.savefig(filename)
 
@@ -117,11 +117,11 @@ def _(MCDR, two_afc, two_afc_delay):
 
 
 @app.cell
-def _(np, pd, plot_mean_over_data):
+def _(fig_size, np, pd, plot_mean_over_data):
     def psychometric_repeat(
         plot_df,
         ax=None,
-        figsize=(3.0, 3.0),
+        figsize=fig_size(n_cols=3),
         title="",
         color="tab:blue",
         *,
@@ -174,7 +174,7 @@ def _(np, pd, plot_mean_over_data):
                 * plot_df["previous_choice_sign"]
             )
             x_order = ["neg_0.1", "neg_1", "neg_3", "neg_10", "pos_10", "pos_3", "pos_1", "pos_0.1"]
-            x_tick_labels = ["0", "1", "3", "10", "10", "3", "1", "0"]
+            x_tick_labels = ["-0", "-1", "-3", "-10", "10", "3", "1", "0"]
 
             delay_magnitude = pd.Series(x_values, index=plot_df.index).abs()
             delay_label = np.where(
@@ -184,7 +184,7 @@ def _(np, pd, plot_mean_over_data):
             )
             delay_side = np.where(x_values < 0, "neg", "pos")
             x_values = pd.Series(delay_side, index=plot_df.index) + "_" + pd.Series(delay_label, index=plot_df.index)
-            xlabel = "Delay signed by prev. choice"
+            xlabel = "Delay x choice$_{-1}$"
         elif is_mcdr:
             if difficulty_col is None:
                 raise ValueError("psychometric_repeat requires difficulty_col when is_mcdr=True.")
@@ -205,7 +205,8 @@ def _(np, pd, plot_mean_over_data):
         else:
             x_values = signed_stimulus * plot_df["previous_choice_sign"]
             x_values = pd.Series(x_values, index=plot_df.index).mask(lambda values: np.isclose(values, 0.0), 0.0)
-            xlabel = "Stim. signed by prev. choice"
+            xlabel = "Stim. x choice$_{-1}$"
+            x_tick_labels = [-20, -8, "", "", 0, "", "", 8, 20]
 
         plot_df["_repeat_x"] = x_values
         plot_df = plot_df.dropna(subset=["_repeat_x", "_repeat", "previous_choice"]).copy()
@@ -221,7 +222,7 @@ def _(np, pd, plot_mean_over_data):
             ylabel=r"$p(\mathrm{repeat})$",
             title=title,
             baseline=baseline,
-            baseline_area=True,
+            baseline_area=False,
             color=color,
             ax=ax,
             figsize=figsize,
@@ -239,11 +240,11 @@ def _(
     plot_mean_over_data,
     plt,
     psychometric_repeat,
-    save_fixed_bbox_pdf,
     two_afc_delay_plots,
 ):
     # 2ADC
 
+    # Plot accuracy
     # two_afc_delay_plots.plot_accuracy(df_2AFC_delay, figsize=fig_size(n_cols=2), title='')
     fig_, ax_ = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
     two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'Saline'), ax=ax_, color="tab:gray", title="", label='Saline')
@@ -251,6 +252,7 @@ def _(
     plt.savefig('acc_vs_delay.svg')
     plt.show()
 
+    # Plot P. right vs delay
     signed_delay_order = ["0L", "-1", "-3", "-10", "10", "3", "1", "0R"]
     signed_delay_tick_labels = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
     df_2AFC_delay_signed = attach_signed_delay_columns(df_2AFC_delay.to_pandas())
@@ -261,19 +263,42 @@ def _(
     df_2AFC_delay_signed = df_2AFC_delay_signed[
         df_2AFC_delay_signed["_signed_delay_plot"].isin(signed_delay_order)
     ].copy()
+
+    # PC right
+    fig_pcright, ax_pcright = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
     plot_mean_over_data(
-        df_2AFC_delay_signed,
+        # df_2AFC_delay_signed,
+        df_2AFC_delay_signed[df_2AFC_delay_signed.drug=="Saline"],
         x_col="_signed_delay_plot",
         x_order=signed_delay_order,
         x_tick_labels=signed_delay_tick_labels,
         y_col="p_right",
-        xlabel="Signed delay (s)",
+        xlabel="Delay (s)",
         ylabel=r"$p(\mathrm{right})$",
         title="",
         baseline=0.5,
-        color="tab:blue",
+        baseline_area=False,
+        color="tab:gray",
         figsize=fig_size(n_cols=3),
+        ax=ax_pcright,
     )
+
+    plot_mean_over_data(
+        df_2AFC_delay_signed[df_2AFC_delay_signed.drug=="NR2B"],
+        x_col="_signed_delay_plot",
+        x_order=signed_delay_order,
+        x_tick_labels=signed_delay_tick_labels,
+        y_col="p_right",
+        xlabel="Delay (s)",
+        ylabel=r"$p(\mathrm{right})$",
+        title="",
+        baseline=0.5,
+        baseline_area=False,
+        color="tab:pink",
+        figsize=fig_size(n_cols=3),
+        ax=ax_pcright,
+    )
+
     plt.savefig('p_right_vs_signed_delay.svg')
     plt.show()
 
@@ -282,6 +307,7 @@ def _(
     # plt.savefig('2ADC_rb.svg')
     # plt.show()
 
+    # Plot RB
     fig_2ADC, ax_2ADC = plt.subplots(figsize = fig_size(n_cols=3), constrained_layout=True)
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "NR2B"), ax = ax_2ADC, title='', color = "tab:pink")
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Saline"), ax = ax_2ADC, title='', color = "tab:gray")
@@ -289,11 +315,12 @@ def _(
     plt.savefig('2ADC_rb.svg')
     plt.show()
 
-    fig_2ADC_repeat, ax_2ADC_repeat = plt.subplots(figsize=fig_size(2))
+    # PC repeat
+    fig_2ADC_repeat, ax_2ADC_repeat = plt.subplots(figsize=fig_size(3), constrained_layout=True)
     psychometric_repeat(
         df_2AFC_delay.filter(pl.col("drug") == "NR2B"),
         ax=ax_2ADC_repeat,
-        figsize=fig_size(2, 1.25),
+        figsize=fig_size(n_cols=3),
         title="",
         color="tab:pink",
         session_col="session",
@@ -305,7 +332,7 @@ def _(
     psychometric_repeat(
         df_2AFC_delay.filter(pl.col("drug") == "Saline"),
         ax=ax_2ADC_repeat,
-        figsize=fig_size(2, 1.25),
+        figsize=fig_size(n_cols=3),
         title="",
         color="tab:gray",
         session_col="session",
@@ -314,7 +341,8 @@ def _(
         stimulus_col="stim",
         delay_col="delays",
     )
-    save_fixed_bbox_pdf(fig_2ADC_repeat, "2ADC_psychometric_repeat.pdf")
+    # save_fixed_bbox_pdf(fig_2ADC_repeat, "2ADC_psychometric_repeat.pdf")
+    plt.savefig('2ADC_PC_rep.svg')
     plt.show()
     return
 
@@ -327,31 +355,50 @@ def _(
     plot_mean_over_data,
     plt,
     psychometric_repeat,
-    save_fixed_bbox_pdf,
     two_afc_plots,
 ):
     # 2AFC
 
+    # Plot accuracy
     # two_afc_plots.plot_accuracy(df_2AFC, figsize=fig_size(n_cols=2), title="")
     fig, ax = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
-    two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 0), ax=ax, color="tab:gray", title="")
-    two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 1), ax=ax, color="tab:pink", title="")
+    two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 0), ax=ax, color="tab:gray", title="", label='Saline')
+    two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 1), ax=ax, color="tab:pink", title="", label='Drug')
     plt.savefig("acc_vs_ild.svg")
     plt.show()
 
+    # Plot PC right
     df_2AFC_p_right = df_2AFC.to_pandas().copy()
     df_2AFC_p_right["p_right"] = df_2AFC_p_right["Choice"].astype(float)
+    fig_pcright2, ax_pcright2 = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
     plot_mean_over_data(
-        df_2AFC_p_right,
+        df_2AFC_p_right[df_2AFC_p_right.Drug==0],
         x_col="ILD",
         y_col="p_right",
         xlabel="ILD (dB)",
         ylabel=r"$p(\mathrm{right})$",
         title="",
         baseline=0.5,
-        color="tab:blue",
+        baseline_area=False,
+        color="tab:gray",
         figsize=fig_size(n_cols=3),
+        ax=ax_pcright2
     )
+
+    plot_mean_over_data(
+        df_2AFC_p_right[df_2AFC_p_right.Drug==1],
+        x_col="ILD",
+        y_col="p_right",
+        xlabel="ILD (dB)",
+        ylabel=r"$p(\mathrm{right})$",
+        title="",
+        baseline=0.5,
+        baseline_area=False,
+        color="tab:pink",
+        figsize=fig_size(n_cols=3),
+        ax=ax_pcright2
+    )
+
     plt.gca().set_xticks(
         [-20, -8, -4, -2, 0, 2, 4, 8, 20],
         labels=["-20", "-8", "", "", "0", "", "", "8", "20"],
@@ -359,6 +406,7 @@ def _(
     plt.savefig("p_right_vs_ild.svg")
     plt.show()
 
+    # Plot RB
     print(f"Number of subjects: {df_2AFC['subject'].n_unique()}")
     fig_2AFC, ax_2AFC = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 0), ax=ax_2AFC, title="", color="tab:gray")
@@ -367,7 +415,8 @@ def _(
     plt.savefig("2AFC_rb.svg")
     plt.show()
 
-    fig_2AFC_repeat, ax_2AFC_repeat = plt.subplots(figsize=fig_size(2))
+    # Plot PC repeat
+    fig_2AFC_repeat, ax_2AFC_repeat = plt.subplots(figsize=fig_size(3), constrained_layout=True)
     psychometric_repeat(
         df_2AFC.filter(pl.col("Drug") == 1),
         ax=ax_2AFC_repeat,
@@ -390,7 +439,12 @@ def _(
         choice_col="Choice",
         stimulus_col="ILD",
     )
-    save_fixed_bbox_pdf(fig_2AFC_repeat, "2AFC_psychometric_repeat.pdf")
+    plt.gca().set_xticks(
+        [-20, -8, -4, -2, 0, 2, 4, 8, 20],
+        labels=["-20", "-8", "", "", "0", "", "", "8", "20"],
+    )
+    plt.savefig('2AFC_PC_rep.svg')
+    # save_fixed_bbox_pdf(fig_2AFC_repeat, "2AFC_psychometric_repeat.pdf")
     plt.show()
     return
 
@@ -426,7 +480,7 @@ def _(
     )
     summary["sem"] = summary["std"].fillna(0.0) / summary["n"].clip(lower=1).pow(0.5)
 
-    fig_MCDR_acc, ax_MCDR_acc = plt.subplots(figsize=fig_size(n_cols=2))
+    fig_MCDR_acc, ax_MCDR_acc = plt.subplots(figsize=fig_size(n_cols=3), constrained_layout=True)
     x = list(range(len(order_a)))
     ax_MCDR_acc.plot(x, summary["mean"], color="tab:purple", linewidth=1.5, zorder=1)
     for xi, mean, sem, color in zip(x, summary["mean"], summary["sem"], palette_a, strict=False):
@@ -451,7 +505,7 @@ def _(
     plt.savefig('performance-3CDR.pdf')
     plt.show()
 
-    fig_MCDR, ax_MCDR = plt.subplots(figsize = fig_size(2))
+    fig_MCDR, ax_MCDR = plt.subplots(figsize = fig_size(3), constrained_layout=True)
     MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "saline", pl.col("batch") == "11B"), ax = ax_MCDR, figsize=fig_size(n_cols=3), title='', color = "tab:gray")
     MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "drug", pl.col("batch") == "11B"), ax = ax_MCDR, figsize=fig_size(n_cols=3), title='',  color = "tab:pink")
     # MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "rest", pl.col("batch") == "11B"), ax = ax_MCDR, figsize=fig_size(n_cols=3), title='',  color = "tab:red")
@@ -467,11 +521,11 @@ def _(
     save_fixed_bbox_pdf(fig_MCDR, 'MCDR_rb.pdf')
     plt.show()
 
-    fig_MCDR_repeat, ax_MCDR_repeat = plt.subplots(figsize=fig_size(2))
+    fig_MCDR_repeat, ax_MCDR_repeat = plt.subplots(figsize=fig_size(3), constrained_layout=True)
     psychometric_repeat(
         df_MCDR.filter(pl.col("drug") == "saline", pl.col("batch") == "11B"),
         ax=ax_MCDR_repeat,
-        figsize=fig_size(2, 1.25),
+        figsize=fig_size(3),
         title="",
         color="tab:gray",
         session_col="session",
@@ -484,7 +538,7 @@ def _(
     psychometric_repeat(
         df_MCDR.filter(pl.col("drug") == "drug", pl.col("batch") == "11B"),
         ax=ax_MCDR_repeat,
-        figsize=fig_size(2, 1.25),
+        figsize=fig_size(3),
         title="",
         color="tab:pink",
         session_col="session",
@@ -494,7 +548,7 @@ def _(
         difficulty_col="ttype_c",
         is_mcdr=True,
     )
-    save_fixed_bbox_pdf(fig_MCDR_repeat, "MCDR_psychometric_repeat.pdf")
+    # save_fixed_bbox_pdf(fig_MCDR_repeat, "MCDR_psychometric_repeat.pdf")
     plt.show()
     return
 
@@ -1042,11 +1096,6 @@ def _(df_2AFC, mo, np, pd, pick_random_2afc_session, pl, plt, sns):
         _session_repeat_summary,
     )
     _fig
-    return
-
-
-@app.cell
-def _():
     return
 
 

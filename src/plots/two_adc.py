@@ -1539,7 +1539,7 @@ SIGNED_DELAY_ORDER = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
 SIGNED_DELAY_LABELS = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
 
 
-def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
+def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay", color=None, label=None):
     df_pd = to_pandas_df(plot_df)
     
     return plot_mean_over_data(
@@ -1550,7 +1550,8 @@ def plot_accuracy(plot_df, ax=None, figsize=(3.0, 3.0), title="2AFC delay"):
         xlabel="Delay (s)",
         title=title,
         baseline=0.5,
-        color="tab:blue",
+        color=color if color is not None else "tab:blue",
+        label= label,
         ax=ax,
         figsize=figsize,
     )
