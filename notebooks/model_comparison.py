@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -83,6 +83,9 @@ def _(load_metrics_dir_raw, model_aliases_for_kind, paths, pl):
         )
         if df is None:
             return None
+        if "test_ll_per_trial_mean" not in df.columns:
+            df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias("test_ll_per_trial_mean"))
+        df = df.with_columns(pl.col("test_ll_per_trial_mean").alias("test_ll_per_trial"))
         df = df.with_columns(pl.lit(expected_model_kind).alias("model_kind"))
         keep = [
             "subject",
@@ -91,6 +94,8 @@ def _(load_metrics_dir_raw, model_aliases_for_kind, paths, pl):
             "model_alias",
             "model_label",
             "ll_per_trial",
+            "test_ll_per_trial",
+            "test_ll_per_trial_mean",
             "bic",
             "acc",
             "n_trials",
@@ -227,7 +232,8 @@ def _(
             schema={
                 "subject": pl.Utf8, "K": pl.Int64, "model_kind": pl.Utf8,
                 "model_alias": pl.Utf8, "model_label": pl.Utf8,
-                "ll_per_trial": pl.Float64, "bic": pl.Float64, "acc": pl.Float64,
+                "ll_per_trial": pl.Float64, "test_ll_per_trial": pl.Float64,
+                "bic": pl.Float64, "acc": pl.Float64,
             }
         )
 
@@ -493,14 +499,13 @@ def _(pl, results_filtered):
         results_filtered.group_by(["model_kind", "model_alias", "model_label", "K"])
         .agg([
             pl.len().alias("n_subjects"),
-            pl.mean("ll_per_trial").alias("ll_mean"),
-            pl.std("ll_per_trial").alias("ll_std"),
+            pl.mean("test_ll_per_trial").alias("test_ll_mean"),
+            pl.std("test_ll_per_trial").alias("test_ll_std"),
             pl.mean("bic").alias("bic_mean"),
             pl.std("bic").alias("bic_std"),
-            pl.mean("acc").alias("acc_mean"),
         ])
         .with_columns([
-            (pl.col("ll_std")  / pl.col("n_subjects").sqrt()).alias("ll_sem"),
+            (pl.col("test_ll_std")  / pl.col("n_subjects").sqrt()).alias("test_ll_sem"),
             (pl.col("bic_std") / pl.col("n_subjects").sqrt()).alias("bic_sem"),
         ])
         .sort(["model_kind", "model_alias", "K"])
@@ -529,14 +534,14 @@ def _(Line2D, mo, np, pl, plt, results_filtered, sns, ui_highlight_subject):
         .filter(pl.col("model_kind") == "glm")
         .sort(["subject", "K", "model_alias"])
         .group_by("subject")
-        .agg(pl.first("ll_per_trial").alias("glm_ll_per_trial"))
+        .agg(pl.first("test_ll_per_trial").alias("glm_test_ll_per_trial"))
     )
 
     _plot_df = (
         results_filtered
         .join(_glm_baseline, on="subject", how="inner")
         .with_columns(
-            ((pl.col("ll_per_trial") - pl.col("glm_ll_per_trial")) / np.log(2)).alias("test_ll_increment_bits")
+            ((pl.col("test_ll_per_trial") - pl.col("glm_test_ll_per_trial")) / np.log(2)).alias("test_ll_increment_bits")
         )
         .sort(["model_kind", "subject", "K"])
         .to_pandas()
@@ -666,7 +671,7 @@ def _():
                 current_y += y_range * 0.075
 
 
-    return add_sig_bars, ttest_1samp, ttest_rel
+    return add_sig_bars, pd, ttest_1samp, ttest_rel
 
 
 @app.cell
@@ -742,7 +747,7 @@ def _(
                 zorder=1,
             )
 
-    for ax, ycol in [(ax_ll, "ll_per_trial"), (ax_bic, "bic_delta")]:
+    for ax, ycol in [(ax_ll, "test_ll_per_trial"), (ax_bic, "bic_delta")]:
         _grouped_custom_boxplot(ax, ycol)
 
         sns.stripplot(
@@ -763,7 +768,7 @@ def _(
 
     add_sig_bars(
         ax_ll, raw,
-        x_col="K", y_col="ll_per_trial", hue_col="model_label",
+        x_col="K", y_col="test_ll_per_trial", hue_col="model_label",
         order=K_order, hue_order=hue_order, pair_col="subject",
     )
 
@@ -773,8 +778,8 @@ def _(
         order=K_order, hue_order=hue_order, pair_col="subject",
     )
 
-    ax_ll.set_ylabel("Log-likelihood / trial")
-    ax_ll.set_title("LL / trial (higher = better)")
+    ax_ll.set_ylabel("CV test log-likelihood / trial")
+    ax_ll.set_title("CV test LL / trial (higher = better)")
 
     ax_bic.axhline(0, color="grey", lw=0.9, linestyle="--", alpha=0.7)
     ax_bic.set_ylabel("ΔBIC vs baseline")
@@ -821,7 +826,7 @@ def _(plt, results_plot, sns, ui_bic_baseline):
     _cov_mean = (
         _raw.assign(cov_group=_raw["model_label"].map(_cov_group))
         .dropna(subset=["cov_group"])
-        .groupby(["cov_group", "K"], as_index=False)[["ll_per_trial", "bic_delta"]]
+        .groupby(["cov_group", "K"], as_index=False)[["test_ll_per_trial", "bic_delta"]]
         .mean()
         .sort_values(["cov_group", "K"])
     )
@@ -840,7 +845,7 @@ def _(plt, results_plot, sns, ui_bic_baseline):
         _group_df = _cov_mean[_cov_mean["cov_group"] == _group]
         ax_cov_ll.plot(
             _group_df["K"],
-            _group_df["ll_per_trial"],
+            _group_df["test_ll_per_trial"],
             marker="o",
             linewidth=2,
             color=_palette[_group],
@@ -856,8 +861,8 @@ def _(plt, results_plot, sns, ui_bic_baseline):
         )
 
     ax_cov_ll.set_xlabel("Number of states K")
-    ax_cov_ll.set_ylabel("Mean log-likelihood / trial")
-    ax_cov_ll.set_title("Mean LL / trial by covariate count")
+    ax_cov_ll.set_ylabel("Mean CV test LL / trial")
+    ax_cov_ll.set_title("Mean CV test LL / trial by covariate count")
 
     ax_cov_bic.axhline(0, color="grey", lw=0.9, linestyle="--", alpha=0.7)
     ax_cov_bic.set_xlabel("Number of states K")
@@ -1088,7 +1093,7 @@ def _(mo, pl, plt, results_filtered, sns):
         .with_columns(
             (pl.col("model_label") + "_K" + pl.col("K").cast(pl.Utf8)).alias("model_K")
         )
-        .pivot(index="subject", on="model_K", values="ll_per_trial")
+        .pivot(index="subject", on="model_K", values="test_ll_per_trial")
         .to_pandas()
         .set_index("subject")
     )
@@ -1101,50 +1106,12 @@ def _(mo, pl, plt, results_filtered, sns):
     sns.heatmap(
         _pivot_df, ax=_ax_h, cmap="RdYlGn",
         annot=True, fmt=".3f", linewidths=0.3,
-        cbar_kws={"label": "LL / trial"},
+        cbar_kws={"label": "CV test LL / trial"},
     )
-    _ax_h.set_title("Log-likelihood per trial — subject × model/K")
+    _ax_h.set_title("CV test log-likelihood per trial - subject x model/K")
     _ax_h.set_xlabel("")
     _fig_heat.tight_layout()
     _fig_heat
-    return
-
-
-@app.cell
-def _(agg, plt, sns):
-    _MODEL_STYLES = {
-        "glm": {"marker": "s", "label": "GLM"},
-        "glmhmm": {"marker": "o", "label": "GLMHMM"},
-        "glmhmmt": {"marker": "^", "label": "GLMHMM-T"},
-    }
-
-    fig_acc, _ax_acc = plt.subplots(figsize=(6, 4))
-    _labels = agg["model_label"].unique().to_list()
-    _colors = sns.color_palette("tab20", n_colors=max(1, len(_labels)))
-    _palette = {_label: _colors[_i] for _i, _label in enumerate(_labels)}
-    for _label_tup, _group in agg.group_by("model_label"):
-        _label = _label_tup[0]
-        _g = _group.sort("K").to_pandas()
-        _kind = _g["model_kind"].iloc[0]
-        _st = _MODEL_STYLES.get(_kind, {"marker": "o", "label": _label})
-        _ax_acc.plot(
-            _g["K"], _g["acc_mean"],
-            color=_palette[_label], marker=_st["marker"],
-            label=_label, linewidth=1.5,
-        )
-
-    _ax_acc.set_xlabel("Number of states K")
-    _ax_acc.set_ylabel("Accuracy (mean over subjects)")
-    _ax_acc.set_title("Model accuracy vs K")
-    _ax_acc.legend(
-        frameon=False,
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.18),
-        ncol=min(3, max(1, len(_labels))),
-    )
-    sns.despine(ax=_ax_acc)
-    fig_acc.tight_layout(rect=(0, 0.08, 1, 1))
-    fig_acc
     return
 
 
@@ -1197,7 +1164,7 @@ def _(mo, results_long):
             mo.md("### Pairwise model comparison"),
             mo.md(
                 "Compare any two loaded model fits. `K` is selected independently for each side, "
-                "so paired test LL, BIC, and accuracy do not require a shared state count."
+                "so paired test LL and BIC do not require a shared state count."
             ),
             mo.hstack([ui_pairwise_model_a, ui_pairwise_model_b]),
             mo.md(
@@ -1291,6 +1258,7 @@ def _(
         "model_alias": pl.Utf8,
         "model_label": pl.Utf8,
         "ll_per_trial": pl.Float64,
+        "test_ll_per_trial": pl.Float64,
         "bic": pl.Float64,
         "acc": pl.Float64,
     }
@@ -1437,6 +1405,7 @@ def _(
                 "model_alias": pl.Utf8,
                 "model_label": pl.Utf8,
                 "ll_per_trial": pl.Float64,
+                "test_ll_per_trial": pl.Float64,
                 "bic": pl.Float64,
                 "acc": pl.Float64,
                 "model_slot": pl.Utf8,
@@ -1449,7 +1418,7 @@ def _(
         .agg(
             [
                 pl.len().alias("n_subjects"),
-                pl.mean("ll_per_trial").alias("ll_mean"),
+                pl.mean("test_ll_per_trial").alias("test_ll_mean"),
                 pl.mean("bic").alias("bic_mean"),
                 pl.mean("acc").alias("acc_mean"),
             ]
@@ -1461,7 +1430,7 @@ def _(
         pairwise_metrics_a.select(
             [
                 "subject",
-                pl.col("ll_per_trial").alias("ll_a"),
+                pl.col("test_ll_per_trial").alias("ll_a"),
                 pl.col("bic").alias("bic_a"),
                 pl.col("acc").alias("acc_a"),
             ]
@@ -1470,7 +1439,7 @@ def _(
             pairwise_metrics_b.select(
                 [
                     "subject",
-                    pl.col("ll_per_trial").alias("ll_b"),
+                    pl.col("test_ll_per_trial").alias("ll_b"),
                     pl.col("bic").alias("bic_b"),
                     pl.col("acc").alias("acc_b"),
                 ]
@@ -1488,7 +1457,6 @@ def _(
                 pl.lit(pairwise_K_b).alias("K_b"),
                 (pl.col("ll_b") - pl.col("ll_a")).alias("delta_ll_per_trial"),
                 (pl.col("bic_b") - pl.col("bic_a")).alias("delta_bic"),
-                (pl.col("acc_b") - pl.col("acc_a")).alias("delta_acc"),
             ]
         )
         .sort("subject")
@@ -1496,7 +1464,7 @@ def _(
 
     pairwise_metric_delta_summary = (
         pairwise_metric_deltas
-        .select(["delta_ll_per_trial", "delta_bic", "delta_acc"])
+        .select(["delta_ll_per_trial", "delta_bic"])
         .mean()
         .with_columns(
             [
@@ -1517,7 +1485,6 @@ def _(
             "K_a",
             "delta_ll_per_trial",
             "delta_bic",
-            "delta_acc",
         ])
     )
     return (
@@ -1576,14 +1543,16 @@ def _(
     pretty_names = {
         "one hot2 lapses":  "lapse model",
         "param frozen": "pure GLM-HMM",
-        "one hot": "GLM"
+        "one hot": "GLM",
+        "param2": "GLM-HMM",
+        "mohammadi at 2states dif" : "GLM-HMMt",
+        "mohammadi at 2states dif frozen" : "GLM-HMMt pure"
     }
 
     _pd = pairwise_metric_deltas.to_pandas()
     _panels = [
         ("delta_ll_per_trial", "Δ test LL / trial", (-0.05, 0.05)),
         ("delta_bic", "Δ BIC", (-800, 800)),
-        ("delta_acc", "Δ accuracy", (-0.025, 0.025)),
     ]
 
     def _p_label(_values):
@@ -1608,12 +1577,12 @@ def _(
     from src.utils import fig_size
 
     _fig_pair_metrics, _axd = plt.subplot_mosaic(
-        [["ll", "bic", "acc"]],
-        figsize=fig_size(1,4),
+        [["ll", "bic"]],
+        figsize=fig_size(1,3),
         constrained_layout=True,
-        gridspec_kw={"width_ratios": [1, 1, 1]},
+        gridspec_kw={"width_ratios": [1, 1]},
     )
-    _axes = [_axd["ll"], _axd["bic"], _axd["acc"]]
+    _axes = [_axd["ll"], _axd["bic"]]
     for _ax, (_delta_col, _ylabel, _ylim) in zip(_axes, _panels, strict=False):
         _delta = _pd[_delta_col].to_numpy(dtype=float)
         _finite = _delta[np.isfinite(_delta)]
@@ -1644,13 +1613,15 @@ def _(
         if _p_txt:
             _ax.text(0.5, 0.88, _p_txt, ha="center", va="bottom", transform=_ax.transAxes)
         _ax.set_xticks([0])
-        _ax.set_xticklabels([f"{pretty_names[pairwise_alias_b]}-{pretty_names[pairwise_alias_a]}"])
+        _ax.set_xticklabels([
+            f"{pretty_names.get(pairwise_alias_b, pairwise_alias_b)} $-$ {pretty_names.get(pairwise_alias_a, pairwise_alias_a)}"
+        ])
         _ax.set_ylabel(_ylabel)
         _ax.set_xlim(-0.45, 0.45)
         sns.despine(ax=_ax)
 
     mo.vstack([_fig_pair_metrics, save_plot(_fig_pair_metrics, "Metric comparisom", stem=f"metric_comparison_{pairwise_alias_a}_{pairwise_alias_b}"),])
-    return
+    return fig_size, pretty_names
 
 
 @app.cell
@@ -1892,6 +1863,62 @@ def _(pl):
         return df_sub
 
     return (subject_behavior_df,)
+
+
+@app.cell
+def _(df_all, pd):
+    RT_METRIC_CANDIDATES = (
+        "RT",
+        "RT2",
+        "response_time_first",
+        "reaction_time",
+        "ReactionTime",
+        "timepoint_4",
+    )
+    BEHAVIOR_METRIC_CANDIDATES = ("nLicks", *RT_METRIC_CANDIDATES)
+
+    def augment_behavior_metrics(trial_df, adapter):
+        if trial_df.is_empty():
+            return pd.DataFrame()
+
+        out = trial_df.to_pandas()
+        missing_cols = [
+            col
+            for col in BEHAVIOR_METRIC_CANDIDATES
+            if col not in out.columns and col in df_all.columns
+        ]
+        if adapter is None or not missing_cols:
+            return out
+
+        behavioral_cols = getattr(adapter, "behavioral_cols", {}) or {}
+        session_col = next(
+            (
+                col
+                for col in [getattr(adapter, "session_col", None), behavioral_cols.get("session"), "session", "Session"]
+                if col and col in df_all.columns
+            ),
+            None,
+        )
+        trial_col = next(
+            (
+                col
+                for col in [getattr(adapter, "sort_col", None), behavioral_cols.get("trial_idx"), "trial_idx", "trial", "Trial"]
+                if col and col in df_all.columns
+            ),
+            None,
+        )
+        if session_col is None or trial_col is None or not {"subject", "session", "trial_idx"}.issubset(out.columns):
+            return out
+
+        behavior_df = (
+            df_all
+            .select(["subject", session_col, trial_col, *missing_cols])
+            .rename({session_col: "session", trial_col: "trial_idx"})
+            .to_pandas()
+        )
+        return out.merge(behavior_df, on=["subject", "session", "trial_idx"], how="left")
+
+    return RT_METRIC_CANDIDATES, augment_behavior_metrics
 
 
 @app.cell
@@ -2340,6 +2367,153 @@ def _(
         )
         _fig.tight_layout(rect=(0, 0.08, 1, 1))
     mo.vstack([fig_occ, fig_acc2,],)
+    return
+
+
+@app.cell
+def _(
+    RT_METRIC_CANDIDATES,
+    augment_behavior_metrics,
+    fig_size,
+    mo,
+    np,
+    pairwise_adapter_a,
+    pairwise_adapter_b,
+    pairwise_alias_a,
+    pairwise_alias_b,
+    pairwise_trial_df_a,
+    pairwise_trial_df_b,
+    pd,
+    plt,
+    pretty_names,
+    save_plot,
+    sns,
+):
+    sns.set_context("paper")
+    _df_a = augment_behavior_metrics(pairwise_trial_df_a, pairwise_adapter_a)
+    _df_b = augment_behavior_metrics(pairwise_trial_df_b, pairwise_adapter_b)
+    if not _df_a.empty:
+        _df_a = _df_a.assign(
+            model_slot="A", 
+            model_name=f"{pretty_names.get(pairwise_alias_a,pairwise_alias_a)}",
+        )
+    if not _df_b.empty:
+        _df_b = _df_b.assign(
+            model_slot="B",
+            model_name=f"{pretty_names.get(pairwise_alias_b,pairwise_alias_b)}",
+        )
+    _frames = [_df for _df in [_df_a, _df_b] if not _df.empty]
+    mo.stop(not _frames, mo.md("No pairwise trial data were available for behavioral ROC curves."))
+    _roc_df = pd.concat(_frames, ignore_index=True)
+
+    _state_col = next(
+        (_col for _col in ["state_label", "state_label_pred"] if _col in _roc_df.columns),
+        None,
+    )
+    mo.stop(_state_col is None, mo.md("State labels are not available for pairwise behavioral ROC curves."))
+
+    _rt_col = next(
+        (_col for _col in RT_METRIC_CANDIDATES if _col in _roc_df.columns),
+        None,
+    )
+    _metric_specs = [("nLicks", "Licking", "Higher lick count")]
+    if _rt_col is not None:
+        _metric_specs.append((_rt_col, "RT", "Faster RT"))
+    _metric_specs = [_spec for _spec in _metric_specs if _spec[0] in _roc_df.columns]
+    mo.stop(not _metric_specs, mo.md("No `nLicks` or RT column was found for pairwise behavioral ROC curves."))
+
+    def _binary_engaged_target(_labels):
+        _label_text = pd.Series(_labels, copy=False).astype(str).str.strip().str.lower()
+        _positive = _label_text.eq("engaged") | _label_text.str.startswith("engaged ")
+        _negative = _label_text.eq("disengaged") | _label_text.str.startswith("disengaged ")
+        return _positive.to_numpy(dtype=bool), (_positive | _negative).to_numpy(dtype=bool)
+
+    def _roc_curve(_target, _score):
+        _target = np.asarray(_target, dtype=bool)
+        _score = np.asarray(_score, dtype=float)
+        _valid = np.isfinite(_score)
+        _target = _target[_valid]
+        _score = _score[_valid]
+        _n_pos = int(_target.sum())
+        _n_neg = int((~_target).sum())
+        if _target.size == 0 or _n_pos == 0 or _n_neg == 0:
+            return None
+        _order = np.argsort(-_score, kind="mergesort")
+        _target_sorted = _target[_order]
+        _score_sorted = _score[_order]
+        _threshold_idxs = np.r_[np.where(np.diff(_score_sorted))[0], _target_sorted.size - 1]
+        _tps = np.cumsum(_target_sorted)[_threshold_idxs]
+        _fps = (1 + _threshold_idxs) - _tps
+        _tpr = np.r_[0.0, _tps / _n_pos]
+        _fpr = np.r_[0.0, _fps / _n_neg]
+        _auc = float(np.sum(np.diff(_fpr) * (_tpr[:-1] + _tpr[1:]) / 2.0))
+        return _fpr, _tpr, _auc
+
+    def _shuffled_auc(_target, _score, _rng, n_shuffles=200):
+        _aucs = []
+        for _ in range(n_shuffles):
+            _result = _roc_curve(_rng.permutation(_target), _score)
+            if _result is not None:
+                _aucs.append(_result[2])
+        return float(np.mean(_aucs)) if _aucs else np.nan
+
+    _palette = {
+        "A": "tab:blue",
+        "B": "tab:orange",
+    }
+    _rng = np.random.default_rng(0)
+    _fig_roc, _axes = plt.subplots(
+        1,
+        len(_metric_specs),
+        figsize=fig_size(1,2),
+        squeeze=False,
+        layout="constrained",
+    )
+    _plotted = False
+    for _ax, (_metric_col, _title, _direction_label) in zip(_axes.ravel(), _metric_specs, strict=False):
+        for _slot, _slot_df in _roc_df.groupby("model_slot", sort=True):
+            _target, _valid_labels = _binary_engaged_target(_slot_df[_state_col])
+            _score = pd.to_numeric(_slot_df[_metric_col], errors="coerce").to_numpy(dtype=float)
+            if _metric_col != "nLicks":
+                _score = -_score
+            _target = _target[_valid_labels]
+            _score = _score[_valid_labels]
+            _result = _roc_curve(_target, _score)
+            if _result is None:
+                continue
+            _fpr, _tpr, _auc = _result
+            _shuffle_auc = _shuffled_auc(_target, _score, _rng)
+            _name = str(_slot_df["model_name"].iloc[0])
+            _ax.plot(
+                _fpr,
+                _tpr,
+                color=_palette.get(_slot, "tab:gray"),
+                lw=2,
+                label=f"{_name} (AUC={_auc:.3f}; shuffled={_shuffle_auc:.3f})",
+            )
+            _plotted = True
+        _ax.plot([0, 1], [0, 1], color="tab:gray", lw=1, ls="--")
+        _ax.set_title(_title)
+        _ax.set_xlabel("False positive rate")
+        _ax.set_ylabel("True positive rate")
+        _ax.set_xlim(0, 1)
+        _ax.set_ylim(0, 1)
+        _ax.legend(frameon=False, loc="lower right")
+        sns.despine(ax=_ax)
+
+    mo.stop(not _plotted, mo.md("Pairwise behavioral ROC curves require Engaged and Disengaged trials."))
+    mo.vstack(
+        [
+            mo.md("#### Pairwise behavioral ROC by state"),
+            _fig_roc,
+            save_plot(
+                _fig_roc,
+                "pairwise behavioral ROC by state",
+                stem="pairwise_state_behavioral_roc",
+            ),
+        ],
+        align="center",
+    )
     return
 
 
