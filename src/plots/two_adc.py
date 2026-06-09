@@ -38,6 +38,130 @@ def _state_colors(K: int) -> List[str]:
     return get_state_palette(K)[:K]
 
 
+_FOUR_STATE_LABELS = {"Engaged L", "Engaged R", "Disengaged L", "Disengaged R"}
+
+
+def _two_adc_state_color(label: str, rank: int, K: int) -> str:
+    if K == 4 and label in _FOUR_STATE_LABELS:
+        palette = get_state_palette(K)
+        return palette[int(rank) % len(palette)]
+    return get_state_color(label, rank, K=K)
+
+
+def _local_state_order(view) -> list[int]:
+    order = [int(k) for k in (getattr(view, "state_idx_order", []) or [])]
+    K = int(getattr(view, "K", len(order)))
+    if len(order) == K and len(set(order)) == K:
+        return order
+    return list(range(K))
+
+
+def _two_adc_ranked_state_labels(views: dict) -> dict[int, str]:
+    labels: dict[int, str] = {}
+    for view in views.values():
+        for rank, raw_idx in enumerate(_local_state_order(view)):
+            labels.setdefault(rank, getattr(view, "state_name_by_idx", {}).get(raw_idx, f"State {rank}"))
+    return labels
+
+
+def _two_adc_rank_ordered_arrays_store(views: dict) -> dict:
+    out = {}
+    for subject, view in views.items():
+        order = _local_state_order(view)
+        payload = {
+            "emission_weights": np.asarray(view.emission_weights)[order],
+            "X_cols": view.feat_names,
+            "X": view.X,
+            "smoothed_probs": np.asarray(view.smoothed_probs)[:, order],
+        }
+        payload["lapse_rates"] = getattr(view, "lapse_rates", None)
+        out[subject] = payload
+    return out
+
+
+def _two_adc_raw_by_rank_maps(views: dict) -> tuple[int, dict, dict]:
+    if not views:
+        return 0, {}, {}
+    K = int(next(iter(views.values())).K)
+    raw_by_rank_by_subj = {}
+    rank_by_raw_by_subj = {}
+    for subject, view in views.items():
+        raw_by_rank = {rank: raw_idx for rank, raw_idx in enumerate(_local_state_order(view))}
+        rank_by_raw = {raw_idx: rank for rank, raw_idx in raw_by_rank.items()}
+        raw_by_rank_by_subj[subject] = raw_by_rank
+        raw_by_rank_by_subj[str(subject)] = raw_by_rank
+        rank_by_raw_by_subj[subject] = rank_by_raw
+        rank_by_raw_by_subj[str(subject)] = rank_by_raw
+    return K, raw_by_rank_by_subj, rank_by_raw_by_subj
+
+
+def _attach_two_adc_ranked_cols(
+    df: pd.DataFrame,
+    views: dict,
+    *,
+    subj_col: str,
+    base_col: str = "pR_state",
+) -> pd.DataFrame:
+    """Attach rank-local posterior/model columns using each view's local state order."""
+    if df.empty or subj_col not in df.columns or not views:
+        return df
+
+    K, raw_by_rank_by_subj, rank_by_raw_by_subj = _two_adc_raw_by_rank_maps(views)
+    out = df.copy()
+
+    if "state_idx" in out.columns:
+        local_state = np.full(len(out), np.nan, dtype=float)
+        for subject, idx in out.groupby(subj_col, observed=True).groups.items():
+            rank_by_raw = rank_by_raw_by_subj.get(subject) or rank_by_raw_by_subj.get(str(subject))
+            if rank_by_raw is None:
+                continue
+            row_idx = np.asarray(idx, dtype=int)
+            raw_values = pd.to_numeric(out.iloc[row_idx]["state_idx"], errors="coerce")
+            local_state[row_idx] = raw_values.map(rank_by_raw).to_numpy(dtype=float)
+        if np.isfinite(local_state).any():
+            out["_state_k"] = local_state
+    elif "state_rank" in out.columns:
+        out["_state_k"] = pd.to_numeric(out["state_rank"], errors="coerce")
+
+    for rank in range(K):
+        posterior_dst = f"_p_state_rank_{rank}"
+        model_dst = f"_{base_col}_rank_{rank}"
+        posterior_vals = np.full(len(out), np.nan, dtype=float)
+        model_vals = np.full(len(out), np.nan, dtype=float)
+        wrote_posterior = False
+        wrote_model = False
+
+        for subject, idx in out.groupby(subj_col, observed=True).groups.items():
+            raw_by_rank = raw_by_rank_by_subj.get(subject) or raw_by_rank_by_subj.get(str(subject))
+            if raw_by_rank is None or rank not in raw_by_rank:
+                continue
+            raw_idx = raw_by_rank[rank]
+            row_idx = np.asarray(idx, dtype=int)
+
+            posterior_src = f"p_state_pred_{raw_idx}"
+            if posterior_src in out.columns:
+                posterior_vals[row_idx] = pd.to_numeric(
+                    out.iloc[row_idx][posterior_src],
+                    errors="coerce",
+                ).to_numpy(dtype=float)
+                wrote_posterior = True
+
+            model_src = f"{base_col}_{raw_idx}"
+            if model_src in out.columns:
+                model_vals[row_idx] = pd.to_numeric(
+                    out.iloc[row_idx][model_src],
+                    errors="coerce",
+                ).to_numpy(dtype=float)
+                wrote_model = True
+
+        if wrote_posterior:
+            out[posterior_dst] = posterior_vals
+        if wrote_model:
+            out[model_dst] = model_vals
+
+    return out
+
+
 def _default_labels(K: int, C: int = 2) -> List[str]:
     """Auto-generate state labels like ['Disengaged','Engaged'] for K=2."""
     if K == 1:
@@ -317,30 +441,24 @@ def _apply_ild_axis_ticks(ax: plt.Axes, xticks: Sequence[float]) -> None:
         top=False,
         direction="out",
         length=7,
-        width=1.1,
         color="#111827",
         labelcolor="#111827",
         pad=4,
     )
     ax.spines["bottom"].set_visible(True)
-    ax.spines["bottom"].set_linewidth(1.1)
     ax.spines["bottom"].set_color("#111827")
 
 
 def _style_legacy_psych_axis(ax: plt.Axes, xticks: Sequence[float]) -> None:
     """Match the legacy categorical psychometric axis styling."""
     _apply_ild_axis_ticks(ax, xticks)
-    ax.axhline(0.5, color="tab:gray", ls="--", lw=1.6)
-    ax.axvline(0.0, color="tab:gray", ls="--", lw=1.6)
+    ax.axhline(0.5, color="tab:gray", ls="--")
+    ax.axvline(0.0, color="tab:gray", ls="--")
     ticks = np.asarray(xticks, dtype=float)
     if ticks.size >= 2:
         ax.set_xlim(float(ticks[0]), float(ticks[-1]))
     ax.set_ylim([0, 1])
     ax.set_yticks([0, 0.5, 1], [0, 0.5, 1])
-    ax.tick_params(axis="both", labelsize=11)
-    ax.xaxis.label.set_size(12)
-    ax.yaxis.label.set_size(12)
-    ax.title.set_size(13)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.set_ylabel(r"$p(\mathrm{right})$")
@@ -360,13 +478,11 @@ def _apply_signed_delay_axis_ticks(
         top=False,
         direction="out",
         length=7,
-        width=1.1,
         color="#111827",
         labelcolor="#111827",
         pad=4,
     )
     ax.spines["bottom"].set_visible(True)
-    ax.spines["bottom"].set_linewidth(1.1)
     ax.spines["bottom"].set_color("#111827")
 
 
@@ -379,10 +495,6 @@ def _style_signed_delay_psych_axis(
     ax.set_xlim(-0.5, len(labels) - 0.5)
     ax.set_ylim([0, 1])
     ax.set_yticks([0, 0.5, 1], [0, 0.5, 1])
-    ax.tick_params(axis="both", labelsize=11)
-    ax.xaxis.label.set_size(12)
-    ax.yaxis.label.set_size(12)
-    ax.title.set_size(13)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
@@ -514,17 +626,17 @@ def _psych_state_panel(
             grp_ilds = [i for i in payload["x"] if i in grp[ild_col].values]
             xi = np.array(grp_ilds, dtype=float)
             yi = grp.set_index(ild_col).reindex(grp_ilds)["data_mean"].values
-            ax.plot(xi, yi, "-o", color=color, alpha=0.14, lw=1.1, ms=4.0, zorder=2)
+            ax.plot(xi, yi, "-o", color=color, alpha=0.14, ms=4.0, zorder=2)
     elif show_subject_traces and background_style == "model" and subject_curves is not None:
         for curve in subject_curves.values():
             if curve is None:
                 continue
             xi, yi = curve
-            ax.plot(xi, yi, "-", color=color, alpha=0.14, lw=1.2, zorder=2)
+            ax.plot(xi, yi, "-", color=color, alpha=0.14, zorder=2)
 
     if show_data_smooth and payload["empirical_smooth"] is not None:
         x_emp, y_emp = payload["empirical_smooth"]
-        ax.plot(x_emp, y_emp, "--", color=color, lw=1.9, alpha=0.95, zorder=4, label="_nolegend_")
+        ax.plot(x_emp, y_emp, "--", color=color, alpha=0.95, zorder=4, label="_nolegend_")
 
     data_h = None
     if show_weighted_points:
@@ -535,7 +647,6 @@ def _psych_state_panel(
             fmt="o",
             color=color,
             ecolor=color,
-            elinewidth=1.5,
             capsize=0,
             ms=5.8,
             zorder=5,
@@ -546,9 +657,9 @@ def _psych_state_panel(
         ild_g, p_g = smooth_curve
         x0, x1 = float(payload["ticks"][0]), float(payload["ticks"][-1])
         clip = (ild_g >= x0) & (ild_g <= x1)
-        (model_h,) = ax.plot(ild_g[clip], p_g[clip], "-", color=color, lw=2.3, zorder=6, label="_nolegend_")
+        (model_h,) = ax.plot(ild_g[clip], p_g[clip], "-", color=color, zorder=6, label="_nolegend_")
     elif show_model_smooth:
-        (model_h,) = ax.plot(payload["x"], payload["model_mean"], "-", color=color, lw=2.3, zorder=6, label="_nolegend_")
+        (model_h,) = ax.plot(payload["x"], payload["model_mean"], "-", color=color, zorder=6, label="_nolegend_")
     else:
         model_h = None
 
@@ -649,8 +760,20 @@ def _regressor_state_panel(
     ax.axvline(0.0, color="tab:gray", ls="--", lw=1.6)
     ax.set_ylim(0, 1)
     ax.set_yticks([0, 0.5, 1], [0, 0.5, 1])
-    ax.set_xlim([-1, 1])
-    ax.set_xticks([-1, -0.5, 0, 0.5, 1], labels=["-1", "0.5", "0", "0.5", "1"])
+    _x_values = [np.asarray(payload["x"], dtype=float)]
+    if smooth_curve is not None:
+        _x_values.append(np.asarray(smooth_curve[0], dtype=float))
+    _finite_x = np.concatenate([_x[np.isfinite(_x)] for _x in _x_values if _x.size])
+    if _finite_x.size:
+        _x_min = float(np.nanmin(_finite_x))
+        _x_max = float(np.nanmax(_finite_x))
+        if _x_min == _x_max:
+            _x_min -= 0.5
+            _x_max += 0.5
+        _pad = 0.05 * (_x_max - _x_min)
+        ax.set_xlim(_x_min - _pad, _x_max + _pad)
+        if _x_min >= -1.0 and _x_max <= 1.0:
+            ax.set_xticks([-1, -0.5, 0, 0.5, 1], labels=["-1", "-0.5", "0", "0.5", "1"])
     ax.xaxis.set_ticks_position("bottom")
     ax.tick_params(
         axis="x",
@@ -816,6 +939,8 @@ def _plot_signed_delay_psych_panel(
     weight_col: str | None = None,
     legend: bool = False,
     show_subject_lines: bool = True,
+    show_weighted_points: bool = True,
+    show_model_line: bool = True,
 ) -> None:
     summary, subject_summary, order, labels = _signed_delay_psych_summary(
         df_pd,
@@ -838,45 +963,43 @@ def _plot_signed_delay_psych_panel(
                 "-",
                 color=color,
                 alpha=0.12,
-                lw=1.0,
                 zorder=2,
             )
 
-    ax.plot(
-        x,
-        summary["model_mean"].to_numpy(dtype=float),
-        color=model_color or "black",
-        lw=2.3,
-        label="Model",
-        zorder=6,
-    )
-    ax.errorbar(
-        x,
-        summary["data_mean"].to_numpy(dtype=float),
-        yerr=summary["data_sem"].fillna(0.0).to_numpy(dtype=float),
-        fmt="o",
-        color=color,
-        ecolor=color,
-        elinewidth=1.5,
-        capsize=0,
-        ms=5.8,
-        label=label,
-        zorder=5,
-    )
-    ax.axhline(0.5, color="tab:gray", ls="--", lw=1.6, zorder=0)
+    if show_model_line:
+        ax.plot(
+            x,
+            summary["model_mean"].to_numpy(dtype=float),
+            color=model_color or color,
+            label="_nolegend_",
+            zorder=6,
+        )
+    if show_weighted_points:
+        ax.errorbar(
+            x,
+            summary["data_mean"].to_numpy(dtype=float),
+            yerr=summary["data_sem"].fillna(0.0).to_numpy(dtype=float),
+            fmt="o",
+            color=color,
+            ecolor=color,
+            capsize=0,
+            ms=5.8,
+            label=label,
+            zorder=5,
+        )
+    ax.axhline(0.5, color="tab:gray", ls="--", zorder=0)
     if "-10" in order and "10" in order:
         ax.axvline(
             (order.index("-10") + order.index("10")) / 2.0,
             color="tab:gray",
             ls="--",
-            lw=1.6,
             zorder=0,
         )
     _style_signed_delay_psych_axis(ax, range(len(order)), labels)
     ax.set_xlabel("Signed delay")
     ax.set_ylabel(r"$P(\mathrm{right})$")
     if legend:
-        ax.legend(frameon=False, fontsize=8)
+        ax.legend(frameon=False)
 
 
 def plot_categorical_performance_all(
@@ -985,8 +1108,7 @@ def plot_categorical_performance_all_by_state(
         if not overlay_only:
             raise ValueError("ax can only be used when overlay_only=True.")
         axes_arg = [ax]
-    del ild_col, X_cols, ild_max, background_style
-    del show_weighted_points, show_data_smooth, show_model_smooth, model_line_mode
+    del ild_col, X_cols, ild_max, show_data_smooth, model_line_mode
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas().reset_index(drop=True)
     else:
@@ -995,20 +1117,30 @@ def plot_categorical_performance_all_by_state(
     K = next(iter(views.values())).K if views else 2
 
     # State assignment from trial_df (state_rank: 0=Engaged, 1=Disengaged, …)
-    if "state_rank" in df_pd.columns:
-        _arr = df_pd["state_rank"].to_numpy().astype(int)
+    if "state_idx" in df_pd.columns:
+        _arr = pd.to_numeric(df_pd["state_idx"], errors="coerce").to_numpy(dtype=float)
     elif "_state_k" in df_pd.columns:
         _arr = df_pd["_state_k"].to_numpy().astype(int)
+    elif "state_rank" in df_pd.columns:
+        _arr = df_pd["state_rank"].to_numpy().astype(int)
     else:
-        raise ValueError("df must contain a 'state_rank' column (output of build_trial_df)")
+        raise ValueError("df must contain a 'state_idx' or 'state_rank' column (output of build_trial_df)")
 
     df_pd = df_pd.copy()
     df_pd["_state_k"] = _arr
-    df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
+    df_pd = _attach_two_adc_ranked_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
     if state_assignment_mode == "weighted":
-        df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
+        missing_cols = [
+            col
+            for k in range(K)
+            for col in (f"_p_state_rank_{k}", f"_pR_state_rank_{k}")
+            if col not in df_pd.columns
+        ]
+        if missing_cols:
+            df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
+            df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
 
-    slbls = ranked_state_labels(views)
+    slbls = _two_adc_ranked_state_labels(views)
 
     panel_w = 4
 
@@ -1029,7 +1161,7 @@ def plot_categorical_performance_all_by_state(
         _ax_overlay = axes[0]
         for k in range(K):
             lbl = slbls.get(k, f"State {k}")
-            color = get_state_color(lbl, k, K=K)
+            color = _two_adc_state_color(lbl, k, K)
             _weight_col = (
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
@@ -1046,13 +1178,15 @@ def plot_categorical_performance_all_by_state(
                 subj_col=subj_col,
                 legend=False,
                 show_subject_lines=False,
+                show_weighted_points=show_weighted_points,
+                show_model_line=show_model_smooth,
             )
-        _ax_overlay.legend(frameon=False, fontsize=8)
+        _ax_overlay.legend(frameon=False)
 
     if not overlay_only:
         for k, ax in enumerate(axes[int(_include_overlay) :]):
             lbl = slbls.get(k, f"State {k}")
-            color = get_state_color(lbl, k, K=K)
+            color = _two_adc_state_color(lbl, k, K)
             _weight_col = (
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
@@ -1068,6 +1202,8 @@ def plot_categorical_performance_all_by_state(
                 pred_col=f"_pR_state_rank_{k}" if f"_pR_state_rank_{k}" in _df_state.columns else pred_col,
                 subj_col=subj_col,
                 show_subject_lines=False,
+                show_weighted_points=show_weighted_points,
+                show_model_line=show_model_smooth,
             )
             if k == 0:
                 ax.set_ylabel(r"$P(\mathrm{right})$")
@@ -1171,6 +1307,10 @@ def plot_regressor_psychometric_by_state(
         raise ValueError(f"df must contain the regressor column {feature_col!r}.")
 
     df_pd = df_pd.copy()
+    if choice_col != "response" and choice_col in df_pd.columns:
+        df_pd["response"] = df_pd[choice_col]
+    df_pd = attach_response_right_column(df_pd, response_mode=process.RESPONSE_MODE)
+    choice_col = "_response_right"
     df_pd[feature_col] = pd.to_numeric(df_pd[feature_col], errors="coerce")
     df_pd = df_pd.dropna(subset=[feature_col])
     if df_pd.empty:
@@ -1183,16 +1323,27 @@ def plot_regressor_psychometric_by_state(
         apply_axis_style(ax, **style)
         return ax
 
-    if "state_rank" in df_pd.columns:
-        _arr = df_pd["state_rank"].to_numpy().astype(int)
+    if "state_idx" in df_pd.columns:
+        _arr = pd.to_numeric(df_pd["state_idx"], errors="coerce").to_numpy(dtype=float)
     elif "_state_k" in df_pd.columns:
         _arr = df_pd["_state_k"].to_numpy().astype(int)
+    elif "state_rank" in df_pd.columns:
+        _arr = df_pd["state_rank"].to_numpy().astype(int)
     else:
-        raise ValueError("df must contain a 'state_rank' column (output of build_trial_df)")
+        raise ValueError("df must contain a 'state_idx' or 'state_rank' column (output of build_trial_df)")
     df_pd["_state_k"] = _arr
+    df_pd = _attach_two_adc_ranked_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
     if state_assignment_mode == "weighted":
-        df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
-        df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
+        K = next(iter(views.values())).K if views else int(df_pd["_state_k"].max()) + 1
+        missing_cols = [
+            col
+            for k in range(K)
+            for col in (f"_p_state_rank_{k}", f"_pR_state_rank_{k}")
+            if col not in df_pd.columns
+        ]
+        if missing_cols:
+            df_pd = _attach_rank_posterior_cols(df_pd, views, subj_col=subj_col)
+            df_pd = _attach_rank_state_model_cols(df_pd, views, subj_col=subj_col, base_col="pR_state")
     _global_bin_edges, _global_bin_centers = _quantile_bin_spec(
         df_pd[feature_col].to_numpy(dtype=float),
         n_bins=n_bins,
@@ -1210,8 +1361,8 @@ def plot_regressor_psychometric_by_state(
 
     K = next(iter(views.values())).K if views else int(df_pd["_state_k"].max()) + 1
 
-    slbls = ranked_state_labels(views)
-    _as = rank_ordered_arrays_store(views)
+    slbls = _two_adc_ranked_state_labels(views)
+    _as = _two_adc_rank_ordered_arrays_store(views)
     _all_subjects = list(df_pd[subj_col].unique()) if subj_col in df_pd.columns else list(_as.keys())
 
     _smooth_by_k: dict[int, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
@@ -1278,7 +1429,7 @@ def plot_regressor_psychometric_by_state(
         _ax_overlay = axes[0]
         for k in range(K):
             lbl = slbls.get(k, f"State {k}")
-            color = get_state_color(lbl, k, K=K)
+            color = _two_adc_state_color(lbl, k, K)
             _weight_col = (
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )
@@ -1312,7 +1463,7 @@ def plot_regressor_psychometric_by_state(
     if not overlay_only:
         for k, ax in enumerate(axes[int(_include_overlay) :]):
             lbl = slbls.get(k, f"State {k}")
-            color = get_state_color(lbl, k, K=K)
+            color = _two_adc_state_color(lbl, k, K)
             _weight_col = (
                 f"_p_state_rank_{k}" if state_assignment_mode == "weighted" and f"_p_state_rank_{k}" in df_pd.columns else None
             )

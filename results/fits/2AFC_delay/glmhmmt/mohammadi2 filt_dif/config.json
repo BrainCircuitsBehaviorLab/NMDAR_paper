@@ -19,8 +19,7 @@
         "choice_lag_param"
     ],
     "transition_cols": [
-        "filtered_reward",
-        "filtered_difficulty"
+        "filtered_reward"
     ],
     "frozen_emissions": {},
     "baseline_class_idx": 1,

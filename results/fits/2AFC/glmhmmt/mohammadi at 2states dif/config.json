@@ -3,7 +3,6 @@
     "tau": 50,
     "subjects": [
         "325",
-        "326",
         "327",
         "329",
         "330",
@@ -35,7 +34,8 @@
     ],
     "transition_cols": [
         "filtered_reward",
-        "filtered_difficulty"
+        "trial_index",
+        "prev_difficulty"
     ],
     "frozen_emissions": {},
     "baseline_class_idx": 0,
@@ -43,6 +43,6 @@
         2
     ],
     "model_id": "mohammadi at 2states dif",
-    "cv_mode": "none",
+    "cv_mode": "balanced_session_holdout",
     "cv_repeats": 0
 }

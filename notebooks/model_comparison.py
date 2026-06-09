@@ -24,7 +24,7 @@ def _():
     from glmhmmt.views import build_views
     from matplotlib.lines import Line2D
     from glmhmmt.plots_common import custom_boxplot
-
+    from plot_saver import make_plot_saver
     sns.set_style("white")
     return (
         Line2D,
@@ -36,6 +36,7 @@ def _():
         get_task_options,
         load_fit_bundle_raw,
         load_metrics_dir_raw,
+        make_plot_saver,
         mo,
         model_aliases_for_kind,
         np,
@@ -108,7 +109,19 @@ def _(load_metrics_dir_raw, model_aliases_for_kind, paths, pl):
         )
 
     load_metrics_dir = load_metrics_dir_for_notebook
-    return load_metrics_dir, model_aliases, model_k_options
+    return load_metrics_dir, model_aliases
+
+
+@app.cell
+def _(make_plot_saver, mo, paths, ui_task):
+    save_plot = make_plot_saver(
+        mo,
+        results_dir=paths.RESULTS,
+        config_path=paths.CONFIG,
+        task_name=ui_task.value,
+        model_id=f"model_comparison",
+    )
+    return (save_plot,)
 
 
 @app.cell
@@ -597,7 +610,7 @@ def _(agg):
 def _():
     import itertools
     import pandas as pd
-    from scipy.stats import ttest_rel, ttest_ind
+    from scipy.stats import ttest_1samp, ttest_rel, ttest_ind
 
     def _sig_label(p):
         if p < 0.001: return "***"
@@ -653,7 +666,7 @@ def _():
                 current_y += y_range * 0.075
 
 
-    return add_sig_bars, ttest_rel
+    return add_sig_bars, ttest_1samp, ttest_rel
 
 
 @app.cell
@@ -1136,48 +1149,63 @@ def _(agg, plt, sns):
 
 
 @app.cell
-def _(mo, model_aliases, ui_task):
-    _pair_aliases = model_aliases(ui_task.value, "glmhmm")
-    _default_a = _pair_aliases[0] if _pair_aliases else None
-    _default_b = _pair_aliases[1] if len(_pair_aliases) > 1 else _default_a
-    ui_pairwise_alias_a = mo.ui.dropdown(
-        options=_pair_aliases,
+def _(mo, results_long):
+    _MODEL_KIND_LABELS = {
+        "glm": "GLM",
+        "glmhmm": "GLMHMM",
+        "glmhmmt": "GLMHMM-T",
+    }
+
+    def _pairwise_model_key(kind: str, K: int, alias: str) -> str:
+        return f"{kind}\t{int(K)}\t{alias}"
+
+    def parse_pairwise_model_key(key: str) -> tuple[str, int, str]:
+        _kind, _K, _alias = key.split("\t", 2)
+        return _kind, int(_K), _alias
+
+    _spec_rows = (
+        results_long
+        .select(["model_kind", "model_alias", "model_label", "K"])
+        .unique()
+        .sort(["model_kind", "model_alias", "K"])
+        .iter_rows(named=True)
+    )
+    _pair_options = {}
+    for _row in _spec_rows:
+        _kind = _row["model_kind"]
+        _K = int(_row["K"])
+        _alias = _row["model_alias"]
+        _kind_label = _MODEL_KIND_LABELS.get(_kind, str(_kind).upper())
+        _label = f"{_kind_label} K={_K}: {_alias}"
+        _pair_options[_label] = _pairwise_model_key(_kind, _K, _alias)
+
+    _labels = list(_pair_options.keys())
+    _default_a = _labels[0] if _labels else None
+    _default_b = _labels[1] if len(_labels) > 1 else _default_a
+    ui_pairwise_model_a = mo.ui.dropdown(
+        options=_pair_options,
         value=_default_a,
         label="Model A",
     )
-    ui_pairwise_alias_b = mo.ui.dropdown(
-        options=_pair_aliases,
+    ui_pairwise_model_b = mo.ui.dropdown(
+        options=_pair_options,
         value=_default_b,
         label="Model B",
     )
-    return ui_pairwise_alias_a, ui_pairwise_alias_b
-
-
-@app.cell
-def _(mo, model_k_options, ui_pairwise_alias_a, ui_pairwise_alias_b, ui_task):
-    _k_opts_a = set(model_k_options(ui_task.value, "glmhmm", ui_pairwise_alias_a.value))
-    _k_opts_b = set(model_k_options(ui_task.value, "glmhmm", ui_pairwise_alias_b.value))
-    _pair_k_options = sorted(_k_opts_a & _k_opts_b)
-    ui_pairwise_K = mo.ui.dropdown(
-        options=_pair_k_options,
-        value=_pair_k_options[0] if _pair_k_options else None,
-        label="Shared K",
-    )
     mo.vstack(
         [
-            mo.md("### Pairwise GLMHMM comparison"),
+            mo.md("### Pairwise model comparison"),
             mo.md(
-                "Compare two GLMHMM aliases at the same `K`. "
-                "This section focuses on paired metrics, semantic state alignment, "
-                "transition matrices, emission weights, and occupancy."
+                "Compare any two loaded model fits. `K` is selected independently for each side, "
+                "so paired test LL, BIC, and accuracy do not require a shared state count."
             ),
-            mo.hstack([ui_pairwise_alias_a, ui_pairwise_alias_b, ui_pairwise_K]),
+            mo.hstack([ui_pairwise_model_a, ui_pairwise_model_b]),
             mo.md(
                 "Uses the subjects selected above. Pick a smaller subset there if you want a tighter visual comparison."
             ),
         ]
     )
-    return (ui_pairwise_K,)
+    return parse_pairwise_model_key, ui_pairwise_model_a, ui_pairwise_model_b
 
 
 @app.cell
@@ -1206,62 +1234,55 @@ def _(
     load_fit_bundle,
     load_metrics_dir,
     mo,
+    parse_pairwise_model_key,
     pl,
-    ui_pairwise_K,
-    ui_pairwise_alias_a,
-    ui_pairwise_alias_b,
+    ui_pairwise_model_a,
+    ui_pairwise_model_b,
     ui_pairwise_scoring_key_a,
     ui_pairwise_scoring_key_b,
     ui_subjects,
     ui_task,
 ):
     mo.stop(
-        not ui_pairwise_alias_a.value or not ui_pairwise_alias_b.value,
-        mo.md("Select two GLMHMM aliases above."),
+        not ui_pairwise_model_a.value or not ui_pairwise_model_b.value,
+        mo.md("Select two model fits above."),
     )
     mo.stop(
-        ui_pairwise_alias_a.value == ui_pairwise_alias_b.value,
-        mo.md("Choose two different GLMHMM aliases for a pairwise comparison."),
-    )
-    mo.stop(
-        ui_pairwise_K.value is None,
-        mo.md("No shared `K` values were found for the selected aliases."),
+        ui_pairwise_model_a.value == ui_pairwise_model_b.value,
+        mo.md("Choose two different model fits for a pairwise comparison."),
     )
 
-    pairwise_alias_a = ui_pairwise_alias_a.value
-    pairwise_alias_b = ui_pairwise_alias_b.value
-    pairwise_K = int(ui_pairwise_K.value)
+    pairwise_kind_a, pairwise_K_a, pairwise_alias_a = parse_pairwise_model_key(ui_pairwise_model_a.value)
+    pairwise_kind_b, pairwise_K_b, pairwise_alias_b = parse_pairwise_model_key(ui_pairwise_model_b.value)
     requested_subjects = list(ui_subjects.value)
 
-    pairwise_adapter_a, pairwise_arrays_a, pairwise_names_a, pairwise_views_a = load_fit_bundle(
-        ui_task.value,
-        "glmhmm",
-        pairwise_alias_a,
-        pairwise_K,
-        requested_subjects,
-        scoring_key=ui_pairwise_scoring_key_a.value,
-    )
-    pairwise_adapter_b, pairwise_arrays_b, pairwise_names_b, pairwise_views_b = load_fit_bundle(
-        ui_task.value,
-        "glmhmm",
-        pairwise_alias_b,
-        pairwise_K,
-        requested_subjects,
-        scoring_key=ui_pairwise_scoring_key_b.value,
-    )
+    pairwise_fit_error_a = None
+    pairwise_fit_error_b = None
+    try:
+        pairwise_adapter_a, pairwise_arrays_a, pairwise_names_a, pairwise_views_a = load_fit_bundle(
+            ui_task.value,
+            pairwise_kind_a,
+            pairwise_alias_a,
+            pairwise_K_a,
+            requested_subjects,
+            scoring_key=ui_pairwise_scoring_key_a.value,
+        )
+    except Exception as _e:
+        pairwise_fit_error_a = str(_e)
+        pairwise_adapter_a, pairwise_arrays_a, pairwise_names_a, pairwise_views_a = None, {}, {}, {}
 
-    pairwise_common_subjects = [
-        _subject
-        for _subject in requested_subjects
-        if _subject in pairwise_views_a and _subject in pairwise_views_b
-    ]
-    mo.stop(
-        not pairwise_common_subjects,
-        mo.md(
-            "No common cached subjects were found for the selected aliases and `K`. "
-            "Check the subject subset or the cached fits."
-        ),
-    )
+    try:
+        pairwise_adapter_b, pairwise_arrays_b, pairwise_names_b, pairwise_views_b = load_fit_bundle(
+            ui_task.value,
+            pairwise_kind_b,
+            pairwise_alias_b,
+            pairwise_K_b,
+            requested_subjects,
+            scoring_key=ui_pairwise_scoring_key_b.value,
+        )
+    except Exception as _e:
+        pairwise_fit_error_b = str(_e)
+        pairwise_adapter_b, pairwise_arrays_b, pairwise_names_b, pairwise_views_b = None, {}, {}, {}
 
     _metric_schema = {
         "subject": pl.Utf8,
@@ -1274,28 +1295,58 @@ def _(
         "acc": pl.Float64,
     }
 
-    def _pair_metrics(alias: str):
-        _df = load_metrics_dir(ui_task.value, alias, "glmhmm")
+    def _pair_metrics(kind: str, alias: str, K: int):
+        _df = load_metrics_dir(ui_task.value, alias, kind)
         if _df is None:
             return pl.DataFrame(schema=_metric_schema)
         return _df.filter(
-            pl.col("subject").is_in(pairwise_common_subjects)
-            & (pl.col("K") == pairwise_K)
+            pl.col("subject").is_in(requested_subjects)
+            & (pl.col("K") == K)
         )
 
-    pairwise_metrics_a = _pair_metrics(pairwise_alias_a)
-    pairwise_metrics_b = _pair_metrics(pairwise_alias_b)
+    pairwise_metrics_a = _pair_metrics(pairwise_kind_a, pairwise_alias_a, pairwise_K_a)
+    pairwise_metrics_b = _pair_metrics(pairwise_kind_b, pairwise_alias_b, pairwise_K_b)
+    _metric_subjects_a = set(pairwise_metrics_a["subject"].to_list()) if not pairwise_metrics_a.is_empty() else set()
+    _metric_subjects_b = set(pairwise_metrics_b["subject"].to_list()) if not pairwise_metrics_b.is_empty() else set()
+    _cached_subjects_a = set(pairwise_views_a)
+    _cached_subjects_b = set(pairwise_views_b)
+    pairwise_common_subjects = [
+        _subject
+        for _subject in requested_subjects
+        if _subject in _metric_subjects_a and _subject in _metric_subjects_b
+    ]
+    pairwise_cached_common_subjects = [
+        _subject
+        for _subject in requested_subjects
+        if _subject in _cached_subjects_a and _subject in _cached_subjects_b
+    ]
+    if pairwise_common_subjects:
+        pairwise_metrics_a = pairwise_metrics_a.filter(pl.col("subject").is_in(pairwise_common_subjects))
+        pairwise_metrics_b = pairwise_metrics_b.filter(pl.col("subject").is_in(pairwise_common_subjects))
+    mo.stop(
+        not pairwise_common_subjects and not pairwise_cached_common_subjects,
+        mo.md(
+            "No common subjects were found for the selected model fits. "
+            "Check the subject subset or the cached metrics."
+        ),
+    )
     pairwise_missing_a = [s for s in requested_subjects if s not in pairwise_views_a]
     pairwise_missing_b = [s for s in requested_subjects if s not in pairwise_views_b]
     return (
-        pairwise_K,
+        pairwise_K_a,
+        pairwise_K_b,
         pairwise_adapter_a,
         pairwise_adapter_b,
         pairwise_alias_a,
         pairwise_alias_b,
         pairwise_arrays_a,
         pairwise_arrays_b,
+        pairwise_cached_common_subjects,
         pairwise_common_subjects,
+        pairwise_fit_error_a,
+        pairwise_fit_error_b,
+        pairwise_kind_a,
+        pairwise_kind_b,
         pairwise_metrics_a,
         pairwise_metrics_b,
         pairwise_missing_a,
@@ -1311,10 +1362,16 @@ def _(
 @app.cell
 def _(
     mo,
-    pairwise_K,
+    pairwise_K_a,
+    pairwise_K_b,
     pairwise_alias_a,
     pairwise_alias_b,
+    pairwise_cached_common_subjects,
     pairwise_common_subjects,
+    pairwise_fit_error_a,
+    pairwise_fit_error_b,
+    pairwise_kind_a,
+    pairwise_kind_b,
     pairwise_missing_a,
     pairwise_missing_b,
     requested_subjects,
@@ -1322,8 +1379,9 @@ def _(
     ui_pairwise_scoring_key_b,
 ):
     _notes = [
-        f"- Comparing `{pairwise_alias_a}` vs `{pairwise_alias_b}` at `K={pairwise_K}`.",
-        f"- Common cached subjects: **{len(pairwise_common_subjects)} / {len(requested_subjects)}**.",
+        f"- Comparing A `{pairwise_kind_a}` / `{pairwise_alias_a}` / `K={pairwise_K_a}` vs B `{pairwise_kind_b}` / `{pairwise_alias_b}` / `K={pairwise_K_b}`.",
+        f"- Common metric subjects: **{len(pairwise_common_subjects)} / {len(requested_subjects)}**.",
+        f"- Common cached fit subjects for state-level plots: **{len(pairwise_cached_common_subjects)} / {len(requested_subjects)}**.",
         f"- `{pairwise_alias_a}` scoring key: `{ui_pairwise_scoring_key_a.value}`.",
         f"- `{pairwise_alias_b}` scoring key: `{ui_pairwise_scoring_key_b.value}`.",
         "- Transition deltas are aligned by semantic state label.",
@@ -1338,14 +1396,22 @@ def _(
             f"- Missing in `{pairwise_alias_b}`: {', '.join(map(str, pairwise_missing_b[:8]))}"
             + (" ..." if len(pairwise_missing_b) > 8 else "")
         )
+    if pairwise_fit_error_a:
+        _notes.append(f"- State-level cache for A could not be loaded: `{pairwise_fit_error_a}`")
+    if pairwise_fit_error_b:
+        _notes.append(f"- State-level cache for B could not be loaded: `{pairwise_fit_error_b}`")
     mo.md("\n".join(_notes))
     return
 
 
 @app.cell
 def _(
+    pairwise_K_a,
+    pairwise_K_b,
     pairwise_alias_a,
     pairwise_alias_b,
+    pairwise_kind_a,
+    pairwise_kind_b,
     pairwise_metrics_a,
     pairwise_metrics_b,
     pl,
@@ -1379,7 +1445,7 @@ def _(
 
     pairwise_metric_summary = (
         pairwise_metrics
-        .group_by(["model_slot", "model_alias"])
+        .group_by(["model_slot", "model_kind", "model_alias", "K"])
         .agg(
             [
                 pl.len().alias("n_subjects"),
@@ -1414,8 +1480,12 @@ def _(
         )
         .with_columns(
             [
+                pl.lit(pairwise_kind_a).alias("model_kind_a"),
+                pl.lit(pairwise_kind_b).alias("model_kind_b"),
                 pl.lit(pairwise_alias_a).alias("model_a"),
                 pl.lit(pairwise_alias_b).alias("model_b"),
+                pl.lit(pairwise_K_a).alias("K_a"),
+                pl.lit(pairwise_K_b).alias("K_b"),
                 (pl.col("ll_b") - pl.col("ll_a")).alias("delta_ll_per_trial"),
                 (pl.col("bic_b") - pl.col("bic_a")).alias("delta_bic"),
                 (pl.col("acc_b") - pl.col("acc_a")).alias("delta_acc"),
@@ -1430,11 +1500,25 @@ def _(
         .mean()
         .with_columns(
             [
+                pl.lit(pairwise_kind_b).alias("model_kind_b"),
                 pl.lit(pairwise_alias_b).alias("model_b"),
+                pl.lit(pairwise_K_b).alias("K_b"),
+                pl.lit(pairwise_kind_a).alias("model_kind_a"),
                 pl.lit(pairwise_alias_a).alias("model_a"),
+                pl.lit(pairwise_K_a).alias("K_a"),
             ]
         )
-        .select(["model_b", "model_a", "delta_ll_per_trial", "delta_bic", "delta_acc"])
+        .select([
+            "model_kind_b",
+            "model_b",
+            "K_b",
+            "model_kind_a",
+            "model_a",
+            "K_a",
+            "delta_ll_per_trial",
+            "delta_bic",
+            "delta_acc",
+        ])
     )
     return (
         pairwise_metric_delta_summary,
@@ -1468,6 +1552,104 @@ def _(
             pairwise_metric_deltas,
         ]
     )
+    return
+
+
+@app.cell
+def _(
+    custom_boxplot,
+    mo,
+    np,
+    pairwise_alias_a,
+    pairwise_alias_b,
+    pairwise_metric_deltas,
+    plt,
+    save_plot,
+    sns,
+    ttest_1samp,
+):
+    mo.stop(
+        pairwise_metric_deltas.is_empty(),
+        mo.md("No common subject metrics were found for the selected model fits."),
+    )
+
+    pretty_names = {
+        "one hot2 lapses":  "lapse model",
+        "param frozen": "pure GLM-HMM",
+        "one hot": "GLM"
+    }
+
+    _pd = pairwise_metric_deltas.to_pandas()
+    _panels = [
+        ("delta_ll_per_trial", "Δ test LL / trial", (-0.05, 0.05)),
+        ("delta_bic", "Δ BIC", (-800, 800)),
+        ("delta_acc", "Δ accuracy", (-0.025, 0.025)),
+    ]
+
+    def _p_label(_values):
+        _values = _values[np.isfinite(_values)]
+        if len(_values) < 2:
+            return ""
+        if np.allclose(_values, 0):
+            return "ns"
+        _, _pval = ttest_1samp(_values, popmean=0.0, nan_policy="omit")
+        if not np.isfinite(_pval):
+            return ""
+        if _pval < 0.0001:
+            return "****"
+        if _pval < 0.001:
+            return "***"
+        if _pval < 0.01:
+            return "**"
+        if _pval < 0.05:
+            return "*"
+        return "ns"
+
+    from src.utils import fig_size
+
+    _fig_pair_metrics, _axd = plt.subplot_mosaic(
+        [["ll", "bic", "acc"]],
+        figsize=fig_size(1,4),
+        constrained_layout=True,
+        gridspec_kw={"width_ratios": [1, 1, 1]},
+    )
+    _axes = [_axd["ll"], _axd["bic"], _axd["acc"]]
+    for _ax, (_delta_col, _ylabel, _ylim) in zip(_axes, _panels, strict=False):
+        _delta = _pd[_delta_col].to_numpy(dtype=float)
+        _finite = _delta[np.isfinite(_delta)]
+        _ax.axhline(0, color="0.35", linewidth=1.0, linestyle="--", alpha=0.75, zorder=0)
+        if len(_finite) > 0:
+            custom_boxplot(
+                _ax,
+                _finite,
+                positions=[0],
+                widths=0.36,
+                median_colors=["tab:orange"],
+                showfliers=False,
+                showcaps=False,
+                zorder=1,
+                median_linewidth=2.2,
+            )
+            # _jitter = _rng.uniform(-0.06, 0.06, size=len(_finite))
+            # _ax.scatter(
+            #     _jitter,
+            #     _finite,
+            #     color="#4C78A8",
+            #     alpha=0.72,
+            #     s=30,
+            #     zorder=2,
+            # )
+        _p_txt = _p_label(_finite)
+        _ax.set_ylim(*_ylim)
+        if _p_txt:
+            _ax.text(0.5, 0.88, _p_txt, ha="center", va="bottom", transform=_ax.transAxes)
+        _ax.set_xticks([0])
+        _ax.set_xticklabels([f"{pretty_names[pairwise_alias_b]}-{pretty_names[pairwise_alias_a]}"])
+        _ax.set_ylabel(_ylabel)
+        _ax.set_xlim(-0.45, 0.45)
+        sns.despine(ax=_ax)
+
+    mo.vstack([_fig_pair_metrics, save_plot(_fig_pair_metrics, "Metric comparisom", stem=f"metric_comparison_{pairwise_alias_a}_{pairwise_alias_b}"),])
     return
 
 
@@ -1618,7 +1800,7 @@ def _(
     pairwise_alias_b,
     pairwise_arrays_a,
     pairwise_arrays_b,
-    pairwise_common_subjects,
+    pairwise_cached_common_subjects,
     pairwise_views_a,
     pairwise_views_b,
     plot_pairwise_transition_matrices,
@@ -1629,7 +1811,7 @@ def _(
             arrays_b=pairwise_arrays_b,
             views_a=pairwise_views_a,
             views_b=pairwise_views_b,
-            subjects=pairwise_common_subjects,
+            subjects=pairwise_cached_common_subjects,
             alias_a=pairwise_alias_a,
             alias_b=pairwise_alias_b,
         )
@@ -1644,7 +1826,8 @@ def _(
 def _(
     build_emission_weights_df,
     mo,
-    pairwise_K,
+    pairwise_K_a,
+    pairwise_K_b,
     pairwise_adapter_a,
     pairwise_adapter_b,
     pairwise_alias_a,
@@ -1656,11 +1839,13 @@ def _(
     pairwise_views_a,
     pairwise_views_b,
 ):
-    def _emission_summary(_adapter, _views, _arrays_store, _names):
+    def _emission_summary(_adapter, _views, _arrays_store, _names, _K):
+        if _adapter is None:
+            raise ValueError("fit bundle was not loaded")
         _plots = _adapter.get_plots()
         return _plots.plot_emission_weights_summary(
             build_emission_weights_df(_views),
-            K=pairwise_K,
+            K=_K,
         )
 
     try:
@@ -1669,12 +1854,14 @@ def _(
             pairwise_views_a,
             pairwise_arrays_a,
             pairwise_names_a,
+            pairwise_K_a,
         )
         _fig_emission_b = _emission_summary(
             pairwise_adapter_b,
             pairwise_views_b,
             pairwise_arrays_b,
             pairwise_names_b,
+            pairwise_K_b,
         )
         _emission_output = mo.vstack(
             [
@@ -1713,15 +1900,17 @@ def _(
     df_all,
     pairwise_adapter_a,
     pairwise_adapter_b,
-    pairwise_common_subjects,
+    pairwise_cached_common_subjects,
     pairwise_views_a,
     pairwise_views_b,
     pl,
     subject_behavior_df,
 ):
     def _pairwise_trial_df(adapter, views):
+        if adapter is None:
+            return pl.DataFrame()
         _frames = []
-        for _subject in pairwise_common_subjects:
+        for _subject in pairwise_cached_common_subjects:
             if _subject not in views:
                 continue
             _df_sub = subject_behavior_df(
@@ -1757,31 +1946,34 @@ def _(
     df_all,
     np,
     pairwise_adapter_a,
+    pairwise_adapter_b,
     pairwise_alias_a,
     pairwise_alias_b,
-    pairwise_common_subjects,
+    pairwise_cached_common_subjects,
     pairwise_views_a,
     pairwise_views_b,
     pl,
     subject_behavior_df,
 ):
-    def _session_occupancy_records(*, alias: str, views: dict):
+    def _session_occupancy_records(*, alias: str, adapter, views: dict):
+        if adapter is None:
+            return []
         _records = []
-        for _subject in pairwise_common_subjects:
+        for _subject in pairwise_cached_common_subjects:
             if _subject not in views:
                 continue
             _view = views[_subject]
             _df_sub = subject_behavior_df(
                 df_all,
                 subject=_subject,
-                sort_col=pairwise_adapter_a.sort_col,
-                session_col=pairwise_adapter_a.session_col,
+                sort_col=adapter.sort_col,
+                session_col=adapter.session_col,
             )
             if _df_sub.height != _view.T:
                 continue
-            if pairwise_adapter_a.session_col not in _df_sub.columns:
+            if adapter.session_col not in _df_sub.columns:
                 continue
-            _session_col = pairwise_adapter_a.session_col
+            _session_col = adapter.session_col
             _sessions = np.asarray(_df_sub[_session_col])
             _probs = np.asarray(_view.smoothed_probs, dtype=float)
             for _session in np.unique(_sessions):
@@ -1802,8 +1994,16 @@ def _(
                     )
         return _records
 
-    _records = _session_occupancy_records(alias=pairwise_alias_a, views=pairwise_views_a)
-    _records += _session_occupancy_records(alias=pairwise_alias_b, views=pairwise_views_b)
+    _records = _session_occupancy_records(
+        alias=pairwise_alias_a,
+        adapter=pairwise_adapter_a,
+        views=pairwise_views_a,
+    )
+    _records += _session_occupancy_records(
+        alias=pairwise_alias_b,
+        adapter=pairwise_adapter_b,
+        views=pairwise_views_b,
+    )
 
     if _records:
         pairwise_session_occupancy = pl.DataFrame(_records)
@@ -1849,7 +2049,8 @@ def _(
     custom_boxplot,
     mo,
     np,
-    pairwise_K,
+    pairwise_K_a,
+    pairwise_K_b,
     pairwise_adapter_a,
     pairwise_alias_a,
     pairwise_alias_b,
@@ -2105,9 +2306,14 @@ def _(
         "Mean session occupancy by state",
         "Fractional occupancy",
         ylim=(0, 1),
-        chance=1.0 / max(1, pairwise_K),
+        chance=1.0 / max(1, pairwise_K_a) if pairwise_K_a == pairwise_K_b else None,
     )
     fig_acc2, ax_acc = plt.subplots(figsize=(4, 4), constrained_layout=False)
+    _chance_acc = (
+        100.0 / max(1, pairwise_adapter_a.num_classes)
+        if pairwise_adapter_a is not None
+        else None
+    )
     _draw(
         ax_acc,
         _acc_pd,
@@ -2115,7 +2321,7 @@ def _(
         "Mean accuracy by state",
         "Accuracy (%)",
         ylim=(0, 100),
-        chance=100.0 / max(1, pairwise_adapter_a.num_classes),
+        chance=_chance_acc,
     )
 
     _handles = [

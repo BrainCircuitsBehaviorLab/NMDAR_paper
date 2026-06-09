@@ -6,7 +6,7 @@
 
 import marimo
 
-__generated_with = "0.23.5"
+__generated_with = "0.23.8"
 app = marimo.App(width="full")
 
 
@@ -51,9 +51,10 @@ def _():
 
     configure_paths(config_path=ROOT / "config.toml")
     paths = get_runtime_paths()
-    sns.set_style("ticks")
-    sns.set_context("paper", font_scale=0.8)
+    sns.set_theme(style='ticks', context='notebook')
+    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
     return (
+        Path,
         ROOT,
         add_choice_lag_summary_regressor,
         build_trial_and_weights_df,
@@ -515,6 +516,1351 @@ def _(
     sns.despine(ax=_ax, left=True)
     _fig.tight_layout()
     _fig.savefig("Error_trials_2AFC.pdf")
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Example session repetition
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    ui_repetition_window = mo.ui.dropdown(
+        options=[10, 20, 50, 100],
+        value=20,
+        label="Repetition window (N trials)",
+    )
+    ui_repetition_window
+    return (ui_repetition_window,)
+
+
+@app.cell
+def _(
+    mo,
+    np,
+    pl,
+    plot_payloads,
+    ui_repetition_window,
+    ui_trial_session,
+    ui_trial_subject,
+    ui_trial_task,
+):
+    def _pick_existing_column(_df, _candidates):
+        for _candidate in _candidates:
+            if _candidate and _candidate in _df.columns:
+                return _candidate
+        return None
+
+    _payload = plot_payloads[ui_trial_task.value]
+    _adapter = _payload["adapter"]
+    _plot_df = _payload["plot_df"]
+    _behavioral_cols = getattr(_adapter, "behavioral_cols", {}) or {}
+    _session_col = _pick_existing_column(
+        _plot_df,
+        ["session", getattr(_adapter, "session_col", None), _behavioral_cols.get("session"), "Session"],
+    )
+    _trial_col = _pick_existing_column(
+        _plot_df,
+        ["trial_idx", "trial", _behavioral_cols.get("trial_idx"), _behavioral_cols.get("trial"), "Trial"],
+    )
+    _response_col = _pick_existing_column(
+        _plot_df,
+        ["response", _behavioral_cols.get("response"), "Choice", "choices"],
+    )
+    _stimulus_col = _pick_existing_column(
+        _plot_df,
+        ["stimulus", _behavioral_cols.get("stimulus"), "Side", "stim"],
+    )
+    mo.stop(
+        _session_col is None or _trial_col is None or _response_col is None or _stimulus_col is None,
+        mo.md("Example repetition plot needs session, trial, response, and stimulus columns."),
+    )
+
+    _session_df = _plot_df.filter(
+        (pl.col("subject").cast(pl.Utf8) == str(ui_trial_subject.value))
+        & (pl.col(_session_col).cast(pl.Utf8) == str(ui_trial_session.value))
+    ).sort(_trial_col)
+    mo.stop(_session_df.height == 0, mo.md("No trials for the selected subject/session."))
+
+    session_repetition_data = (
+        _session_df
+        .select([_trial_col, _response_col, _stimulus_col])
+        .to_pandas()
+        .rename(
+            columns={
+                _trial_col: "trial",
+                _response_col: "response",
+                _stimulus_col: "stimulus",
+            }
+        )
+        .reset_index(drop=True)
+    )
+    session_repetition_data["trial_x"] = np.arange(len(session_repetition_data))
+    session_repetition_data["previous_response"] = session_repetition_data["response"].shift(1)
+    session_repetition_data["previous_stimulus"] = session_repetition_data["stimulus"].shift(1)
+    session_repetition_data["response_repeat"] = (
+        session_repetition_data["response"].eq(session_repetition_data["previous_response"]).fillna(False)
+    )
+    session_repetition_data["stimulus_repeat"] = (
+        session_repetition_data["stimulus"].eq(session_repetition_data["previous_stimulus"]).fillna(False)
+    )
+    _window = int(ui_repetition_window.value)
+    session_repetition_data["response_repeat_window_count"] = (
+        session_repetition_data["response_repeat"].astype(float).rolling(_window, min_periods=1).sum()
+    )
+    session_repetition_data["stimulus_repeat_window_count"] = (
+        session_repetition_data["stimulus_repeat"].astype(float).rolling(_window, min_periods=1).sum()
+    )
+    return (session_repetition_data,)
+
+
+@app.cell
+def _(plt, session_repetition_data, sns):
+    _response_labels = sorted(
+        session_repetition_data["response"].dropna().unique(),
+        key=lambda value: str(value),
+    )
+    _response_y = {value: index for index, value in enumerate(_response_labels)}
+    _colors = sns.color_palette("tab10", n_colors=max(len(_response_labels), 1))
+
+    fig_response_raster, ax_response_raster = plt.subplots(figsize=(6, 1.6), dpi=150)
+    for _idx, _response in enumerate(_response_labels):
+        _mask = session_repetition_data["response"].eq(_response)
+        ax_response_raster.scatter(
+            session_repetition_data.loc[_mask, "trial_x"],
+            [_response_y[_response]] * int(_mask.sum()),
+            s=10,
+            color=_colors[_idx],
+            label=str(_response),
+        )
+
+    ax_response_raster.set_xlabel("Trial number (within session)")
+    ax_response_raster.set_ylabel("Response")
+    ax_response_raster.set_yticks(list(_response_y.values()))
+    ax_response_raster.set_yticklabels([str(label) for label in _response_labels])
+    ax_response_raster.set_xlim(-0.5, len(session_repetition_data) - 0.5)
+    if len(_response_labels) > 1:
+        ax_response_raster.legend(title="Response", frameon=False, loc="upper right")
+    sns.despine(ax=ax_response_raster)
+    fig_response_raster.tight_layout()
+    fig_response_raster
+    return
+
+
+@app.cell
+def _(fig_size, plt, session_repetition_data, sns, ui_repetition_window):
+    sns.set_context("paper")
+    _window = int(ui_repetition_window.value)
+    fig_session_repetition_running_count, ax_session_repetition_running_count = plt.subplots(
+        figsize=fig_size(1,3),
+        dpi=150,
+    )
+    ax_session_repetition_running_count.plot(
+        session_repetition_data["trial_x"],
+        session_repetition_data["response_repeat_window_count"],
+        color="tab:brown",
+        linewidth=1.5,
+        label="Response repetition",
+    )
+    ax_session_repetition_running_count.plot(
+        session_repetition_data["trial_x"],
+        session_repetition_data["stimulus_repeat_window_count"],
+        color="tab:blue",
+        linewidth=1.5,
+        label="Stimulus repetition",
+    )
+    ax_session_repetition_running_count.set_xlabel("Trial number (within session)")
+    ax_session_repetition_running_count.set_ylabel(f"Repetitions / {_window} trials")
+    ax_session_repetition_running_count.set_ylim(0, _window)
+    ax_session_repetition_running_count.set_xlim(-0.5, len(session_repetition_data) - 0.5)
+    ax_session_repetition_running_count.legend(frameon=False, loc="lower right")
+    sns.despine(ax=ax_session_repetition_running_count)
+    fig_session_repetition_running_count.tight_layout()
+    fig_session_repetition_running_count
+    return
+
+
+@app.cell
+def _(Path, get_adapter, pl, ui_repetition_window):
+    _window = int(ui_repetition_window.value)
+    _data_path = Path(__file__).parents[1] / "data/processed/"
+    _two_afc = get_adapter("2AFC")
+    two_afc_drug_repetition_trials = (
+        _two_afc
+        .subject_filter(pl.read_parquet(_data_path / "alexis_drug_combined.parquet"))
+        .select(["subject", "Session", "Trial", "Side", "Choice", "Drug"])
+        .to_pandas()
+        .sort_values(["subject", "Drug", "Session", "Trial"])
+    )
+    two_afc_drug_repetition_trials["drug_label"] = (
+        two_afc_drug_repetition_trials["Drug"]
+        .map({0: "Saline", 1: "Drug"})
+        .fillna(two_afc_drug_repetition_trials["Drug"])
+    )
+    two_afc_drug_repetition_trials["previous_response"] = (
+        two_afc_drug_repetition_trials
+        .groupby(["subject", "Drug", "Session"], observed=True)["Choice"]
+        .shift(1)
+    )
+    two_afc_drug_repetition_trials["previous_stimulus"] = (
+        two_afc_drug_repetition_trials
+        .groupby(["subject", "Drug", "Session"], observed=True)["Side"]
+        .shift(1)
+    )
+    two_afc_drug_repetition_trials["response_repeat"] = (
+        two_afc_drug_repetition_trials["Choice"]
+        .eq(two_afc_drug_repetition_trials["previous_response"])
+    )
+    two_afc_drug_repetition_trials["stimulus_repeat"] = (
+        two_afc_drug_repetition_trials["Side"]
+        .eq(two_afc_drug_repetition_trials["previous_stimulus"])
+    )
+
+    def _rolling_repeat_fraction(_series):
+        return _series.astype(float).rolling(_window, min_periods=_window).mean()
+
+    two_afc_drug_repetition_trials["response_repeat_window_fraction"] = (
+        two_afc_drug_repetition_trials
+        .groupby(["subject", "Drug", "Session"], observed=True)["response_repeat"]
+        .transform(_rolling_repeat_fraction)
+    )
+    two_afc_drug_repetition_trials["stimulus_repeat_window_fraction"] = (
+        two_afc_drug_repetition_trials
+        .groupby(["subject", "Drug", "Session"], observed=True)["stimulus_repeat"]
+        .transform(_rolling_repeat_fraction)
+    )
+    two_afc_drug_repetition_variance = (
+        two_afc_drug_repetition_trials
+        .groupby(["subject", "Drug", "drug_label", "Session"], observed=True)
+        .agg(
+            response_repeat_variance=("response_repeat_window_fraction", "var"),
+            stimulus_repeat_variance=("stimulus_repeat_window_fraction", "var"),
+        )
+        .reset_index()
+    )
+    two_afc_drug_repetition_variance_long = two_afc_drug_repetition_variance.melt(
+        id_vars=["subject", "Drug", "drug_label", "Session"],
+        value_vars=["response_repeat_variance", "stimulus_repeat_variance"],
+        var_name="signal",
+        value_name="variance",
+    )
+    two_afc_drug_repetition_variance_long["signal"] = (
+        two_afc_drug_repetition_variance_long["signal"]
+        .map(
+            {
+                "response_repeat_variance": "Response repetition",
+                "stimulus_repeat_variance": "Stimulus repetition",
+            }
+        )
+    )
+    two_afc_drug_repetition_variance_long = two_afc_drug_repetition_variance_long.dropna(
+        subset=["variance"]
+    )
+    stimulus_repeat_binomial_variance = 0.5 * (1 - 0.5) / _window
+    return (
+        stimulus_repeat_binomial_variance,
+        two_afc_drug_repetition_variance_long,
+    )
+
+
+@app.cell
+def _(
+    fig_size,
+    plt,
+    sns,
+    stimulus_repeat_binomial_variance,
+    two_afc_drug_repetition_variance_long,
+):
+    fig_2afc_drug_repetition_variance, ax_2afc_drug_repetition_variance = plt.subplots(
+        figsize=fig_size(2,1),
+        dpi=150,
+    )
+    sns.boxplot(
+        data=two_afc_drug_repetition_variance_long,
+        x="signal",
+        y="variance",
+        hue="drug_label",
+        palette={"Saline": "tab:gray", "Drug": "tab:pink"},
+        showfliers=False,
+        ax=ax_2afc_drug_repetition_variance,
+        fill=False,
+        whiskerprops = {"color": "gray"},
+        boxprops = {"color": "gray"},
+        medianprops = {"linewidth": 2},
+        showcaps = False
+    )
+    # sns.stripplot(
+    #     data=two_afc_drug_repetition_variance_long,
+    #     x="signal",
+    #     y="variance",
+    #     hue="drug_label",
+    #     palette={"Saline": "tab:gray", "Drug": "tab:pink"},
+    #     dodge=True,
+    #     alpha=0.35,
+    #     size=2,
+    #     ax=ax_2afc_drug_repetition_variance,
+    # )
+    ax_2afc_drug_repetition_variance.axhline(
+        stimulus_repeat_binomial_variance,
+        color="tab:blue",
+        linestyle="--",
+        label="Stim binomial",
+    )
+    ax_2afc_drug_repetition_variance.set_xlabel("")
+    ax_2afc_drug_repetition_variance.set_ylabel("Variance of running fraction")
+    _handles, _labels = ax_2afc_drug_repetition_variance.get_legend_handles_labels()
+    _legend = dict(zip(_labels, _handles, strict=False))
+    ax_2afc_drug_repetition_variance.legend(
+        _legend.values(),
+        _legend.keys(),
+        frameon=False,
+        loc="upper right",
+    )
+    sns.despine(ax=ax_2afc_drug_repetition_variance)
+    fig_2afc_drug_repetition_variance.tight_layout()
+    fig_2afc_drug_repetition_variance
+    return
+
+
+@app.cell
+def _(pd, plot_payloads):
+    two_afc_repeat_alternate_trials = (
+        plot_payloads["2AFC"]["plot_df"]
+        .select(["subject", "session", "trial_idx", "stimulus", "response", "performance"])
+        .to_pandas()
+        .sort_values(["subject", "session", "trial_idx"])
+    )
+    two_afc_repeat_alternate_trials["previous_response"] = (
+        two_afc_repeat_alternate_trials
+        .groupby(["subject", "session"], observed=True)["response"]
+        .shift(1)
+    )
+    two_afc_repeat_alternate_trials = two_afc_repeat_alternate_trials.dropna(
+        subset=["previous_response"]
+    )
+    two_afc_repeat_alternate_trials["transition"] = (
+        two_afc_repeat_alternate_trials["response"]
+        .eq(two_afc_repeat_alternate_trials["previous_response"])
+        .map({True: "repeating", False: "alternating"})
+    )
+    two_afc_repeat_alternate_trials["transition_chunk"] = (
+        two_afc_repeat_alternate_trials
+        .groupby(["subject", "session"], observed=True)["transition"]
+        .transform(lambda transition: transition.ne(transition.shift()).cumsum())
+    )
+
+    two_afc_transition_chunk_lengths = (
+        two_afc_repeat_alternate_trials
+        .groupby(["subject", "session", "transition", "transition_chunk"], observed=True)
+        .size()
+        .rename("chunk_length")
+        .reset_index()
+    )
+    two_afc_transition_chunk_counts = (
+        two_afc_transition_chunk_lengths
+        .groupby(["subject", "transition", "chunk_length"], observed=True)
+        .size()
+        .rename("count")
+        .reindex(
+            pd.MultiIndex.from_product(
+                [
+                    two_afc_transition_chunk_lengths["subject"].unique(),
+                    ["repeating", "alternating"],
+                    range(1, int(two_afc_transition_chunk_lengths["chunk_length"].max()) + 1),
+                ],
+                names=["subject", "transition", "chunk_length"],
+            ),
+            fill_value=0,
+        )
+        .reset_index()
+    )
+    two_afc_transition_chunk_counts["frequency"] = (
+        two_afc_transition_chunk_counts["count"]
+        / two_afc_transition_chunk_counts.groupby(["subject", "transition"], observed=True)["count"].transform("sum")
+    )
+    two_afc_transition_chunk_frequency = (
+        two_afc_transition_chunk_counts
+        .groupby(["transition", "chunk_length"], observed=True)["frequency"]
+        .mean()
+        .reset_index()
+    )
+    two_afc_session_transition_accuracy = (
+        two_afc_repeat_alternate_trials
+        .groupby(["subject", "session", "transition"], observed=True)["performance"]
+        .mean()
+        .unstack("transition")
+        .reset_index()
+        .rename(
+            columns={
+                "alternating": "alternating_accuracy",
+                "repeating": "repeating_accuracy",
+            }
+        )
+    )
+
+    two_afc_stimulus_repeat_alternate_trials = (
+        plot_payloads["2AFC"]["plot_df"]
+        .select(["subject", "session", "trial_idx", "stimulus"])
+        .to_pandas()
+        .sort_values(["subject", "session", "trial_idx"])
+    )
+    two_afc_stimulus_repeat_alternate_trials["previous_stimulus"] = (
+        two_afc_stimulus_repeat_alternate_trials
+        .groupby(["subject", "session"], observed=True)["stimulus"]
+        .shift(1)
+    )
+    two_afc_stimulus_repeat_alternate_trials = two_afc_stimulus_repeat_alternate_trials.dropna(
+        subset=["previous_stimulus"]
+    )
+    two_afc_stimulus_repeat_alternate_trials["transition"] = (
+        two_afc_stimulus_repeat_alternate_trials["stimulus"]
+        .eq(two_afc_stimulus_repeat_alternate_trials["previous_stimulus"])
+        .map({True: "repeating", False: "alternating"})
+    )
+    two_afc_stimulus_repeat_alternate_trials["transition_chunk"] = (
+        two_afc_stimulus_repeat_alternate_trials
+        .groupby(["subject", "session"], observed=True)["transition"]
+        .transform(lambda transition: transition.ne(transition.shift()).cumsum())
+    )
+    two_afc_stimulus_transition_chunk_lengths = (
+        two_afc_stimulus_repeat_alternate_trials
+        .groupby(["subject", "session", "transition", "transition_chunk"], observed=True)
+        .size()
+        .rename("chunk_length")
+        .reset_index()
+    )
+    two_afc_stimulus_transition_chunk_counts = (
+        two_afc_stimulus_transition_chunk_lengths
+        .groupby(["subject", "transition", "chunk_length"], observed=True)
+        .size()
+        .rename("count")
+        .reindex(
+            pd.MultiIndex.from_product(
+                [
+                    two_afc_stimulus_transition_chunk_lengths["subject"].unique(),
+                    ["repeating", "alternating"],
+                    range(1, int(two_afc_stimulus_transition_chunk_lengths["chunk_length"].max()) + 1),
+                ],
+                names=["subject", "transition", "chunk_length"],
+            ),
+            fill_value=0,
+        )
+        .reset_index()
+    )
+    two_afc_stimulus_transition_chunk_counts["frequency"] = (
+        two_afc_stimulus_transition_chunk_counts["count"]
+        / two_afc_stimulus_transition_chunk_counts.groupby(["subject", "transition"], observed=True)["count"].transform("sum")
+    )
+    two_afc_stimulus_transition_chunk_frequency = (
+        two_afc_stimulus_transition_chunk_counts
+        .groupby(["transition", "chunk_length"], observed=True)["frequency"]
+        .mean()
+        .reset_index()
+    )
+    return (
+        two_afc_repeat_alternate_trials,
+        two_afc_session_transition_accuracy,
+        two_afc_stimulus_transition_chunk_lengths,
+        two_afc_transition_chunk_lengths,
+    )
+
+
+@app.cell
+def _(two_afc_repeat_alternate_trials):
+    two_afc_repeat_alternate_trials
+    return
+
+
+@app.cell
+def _(two_afc_transition_chunk_lengths):
+    two_afc_transition_chunk_lengths[two_afc_transition_chunk_lengths["transition"] == "alternating"]["chunk_length"].median()
+    return
+
+
+@app.cell
+def _(two_afc_transition_chunk_lengths):
+    two_afc_transition_chunk_lengths[two_afc_transition_chunk_lengths["transition"] == "repeating"]["chunk_length"].median()
+    return
+
+
+@app.cell
+def _():
+    chunk_hist_stat = "count"  # Use "probability" for relative frequencies.
+    chunk_hist_ylabel = {"count": "Count", "probability": "Frequency"}[chunk_hist_stat]
+    return chunk_hist_stat, chunk_hist_ylabel
+
+
+@app.cell
+def _(pd, plot_payloads, task_names):
+    _task_labels = {"2AFC": "2AFC", "2AFC_delay": "2ADC", "MCDR": "MCDR"}
+
+    def _transition_chunks_for_sequence(_plot_df, _task_name, _sequence_col, _sequence_label):
+        _trials = (
+            _plot_df
+            .select(["subject", "session", "trial_idx", _sequence_col])
+            .to_pandas()
+            .dropna(subset=[_sequence_col])
+            .sort_values(["subject", "session", "trial_idx"])
+        )
+        _trials["previous_value"] = (
+            _trials.groupby(["subject", "session"], observed=True)[_sequence_col].shift(1)
+        )
+        _trials = _trials.dropna(subset=["previous_value"])
+        _trials["transition"] = (
+            _trials[_sequence_col]
+            .eq(_trials["previous_value"])
+            .map({True: "repeating", False: "alternating"})
+        )
+        _trials["transition_chunk"] = (
+            _trials
+            .groupby(["subject", "session"], observed=True)["transition"]
+            .transform(lambda transition: transition.ne(transition.shift()).cumsum())
+        )
+        _chunks = (
+            _trials
+            .groupby(["subject", "session", "transition", "transition_chunk"], observed=True)
+            .size()
+            .rename("chunk_length")
+            .reset_index()
+        )
+        _chunks["task"] = _task_name
+        _chunks["task_label"] = _task_labels.get(_task_name, _task_name)
+        _chunks["sequence"] = _sequence_label
+        _p_repeat = (_trials["transition"] == "repeating").mean()
+        return _chunks, {
+            "task": _task_name,
+            "task_label": _task_labels.get(_task_name, _task_name),
+            "sequence": _sequence_label,
+            "p_repeat": _p_repeat,
+        }
+
+    _chunk_frames = []
+    _repeat_probability_rows = []
+    for _task_name in task_names:
+        _plot_df = plot_payloads[_task_name]["plot_df"]
+        _available_columns = set(_plot_df.columns)
+        for _sequence_col, _sequence_label in [
+            ("response", "Choices"),
+            ("stimulus", "Stimulus"),
+        ]:
+            if {"subject", "session", "trial_idx", _sequence_col}.issubset(_available_columns):
+                _chunks, _repeat_probability = _transition_chunks_for_sequence(
+                    _plot_df,
+                    _task_name,
+                    _sequence_col,
+                    _sequence_label,
+                )
+                _chunk_frames.append(_chunks)
+                _repeat_probability_rows.append(_repeat_probability)
+
+    transition_chunk_lengths_by_task = pd.concat(_chunk_frames, ignore_index=True)
+    transition_repeat_probabilities = pd.DataFrame(_repeat_probability_rows)
+    return transition_chunk_lengths_by_task, transition_repeat_probabilities
+
+
+@app.cell
+def _(
+    chunk_hist_stat,
+    chunk_hist_ylabel,
+    np,
+    plt,
+    transition_chunk_lengths_by_task,
+    transition_repeat_probabilities,
+):
+    from matplotlib.lines import Line2D
+
+    _task_order = ["2ADC", "2AFC", "MCDR"]
+    _transition_palette = {"repeating": "tab:brown", "alternating": "tab:purple"}
+    _max_chunk_length = 100
+
+    fig_transition_chunks_by_task, axes_transition_chunks_by_task = plt.subplots(
+        1,
+        len(_task_order),
+        figsize=(12,4),
+        sharex=True,
+        sharey=False,
+    )
+
+    def _geometric_chunk_probability(_chunk_lengths, _repeat_probability, _transition):
+        _continue_probability = (
+            _repeat_probability
+            if _transition == "repeating"
+            else 1.0 - _repeat_probability
+        )
+        return (1.0 - _continue_probability) * (_continue_probability ** (_chunk_lengths - 1))
+
+    def _repeat_probability_for(_task_label, _sequence):
+        _matches = transition_repeat_probabilities.loc[
+            (transition_repeat_probabilities["task_label"] == _task_label)
+            & (transition_repeat_probabilities["sequence"] == _sequence),
+            "p_repeat",
+        ]
+        if _matches.empty:
+            return None
+        return float(_matches.iloc[0])
+
+    for _ax, _task_label in zip(axes_transition_chunks_by_task, _task_order, strict=False):
+        _data = transition_chunk_lengths_by_task[
+            (transition_chunk_lengths_by_task["task_label"] == _task_label)
+            & (transition_chunk_lengths_by_task["sequence"] == "Choices")
+        ]
+        if _data.empty:
+            _ax.axis("off")
+            continue
+
+        _x = np.arange(1, _max_chunk_length + 1)
+        _choice_probability = _repeat_probability_for(_task_label, "Choices")
+
+        for _transition, _color in _transition_palette.items():
+            _transition_data = _data[_data["transition"] == _transition]
+            _transition_total = len(_transition_data)
+            _animal_y = (
+                _transition_data["chunk_length"]
+                .value_counts()
+                .reindex(_x, fill_value=0)
+                .sort_index()
+                .to_numpy(dtype=float)
+            )
+            if chunk_hist_stat == "probability" and _animal_y.sum() > 0:
+                _animal_y = _animal_y / _animal_y.sum()
+            _ax.plot(
+                _x,
+                _animal_y,
+                color=_color,
+                linestyle="-",
+                linewidth=1.5,
+                alpha=0.9,
+                zorder=3,
+            )
+
+            if _choice_probability is not None:
+                _generated_y = _geometric_chunk_probability(
+                    _x,
+                    _choice_probability,
+                    _transition,
+                )
+                if chunk_hist_stat == "count":
+                    _generated_y = _generated_y * _transition_total
+                _ax.plot(
+                    _x,
+                    _generated_y,
+                    color=_color,
+                    linestyle="--",
+                    linewidth=1.2,
+                    alpha=0.85,
+                    zorder=2,
+                )
+
+        _ax.set_xlim(0, 30)
+        _ax.set_ylim(1,1e6)
+        _ax.set_title(_task_label)
+        _ax.set_xlabel("Chunk length")
+        _ax.set_ylabel(chunk_hist_ylabel)
+        _ax.set_yscale('log')
+        if _ax.get_legend() is not None:
+            _ax.get_legend().set_frame_on(False)
+            _ax.get_legend().set_title("")
+
+    _legend_handles = [
+        Line2D([0], [0], color="black", linestyle="-", linewidth=1.5, label="Animals"),
+        Line2D([0], [0], color="black", linestyle="--", linewidth=1.5, label="Choice independent generated"),
+        Line2D([0], [0], color="tab:brown", linestyle="-", linewidth=1.5, label="Repeating"),
+        Line2D([0], [0], color="tab:purple", linestyle="-", linewidth=1.5, label="Alternating"),
+    ]
+    fig_transition_chunks_by_task.legend(
+        handles=_legend_handles,
+        frameon=False,
+        loc="upper center",
+        ncol=4,
+        bbox_to_anchor=(0.5, 1.05),
+    )
+    fig_transition_chunks_by_task.tight_layout()
+    fig_transition_chunks_by_task
+    return
+
+
+@app.cell
+def _(
+    chunk_hist_stat,
+    chunk_hist_ylabel,
+    fig_size,
+    plt,
+    sns,
+    two_afc_transition_chunk_lengths,
+):
+    fig_2afc_transition_chunk_lengths, ax_2afc_transition_chunk_lengths = plt.subplots(
+        figsize=fig_size(2, 1)
+    )
+    sns.histplot(
+        data=two_afc_transition_chunk_lengths,
+        x="chunk_length",
+        hue="transition",
+        stat=chunk_hist_stat,
+        discrete=True,
+        common_norm=False,
+        palette={"repeating": "tab:brown", "alternating": "tab:purple"},
+        alpha=0.75,
+        element="step",
+        fill=False,
+        ax=ax_2afc_transition_chunk_lengths,
+    )
+
+    ax_2afc_transition_chunk_lengths.set_xlim(0, 50)
+    ax_2afc_transition_chunk_lengths.set_title("Choices")
+    ax_2afc_transition_chunk_lengths.set_xlabel("Chunk length")
+    ax_2afc_transition_chunk_lengths.set_ylabel(chunk_hist_ylabel)
+    return
+
+
+@app.cell
+def _(Path, get_adapter, pl):
+    data_path = Path(__file__).parents[1] / "data/processed/"
+    print(data_path)
+    two_afc = get_adapter("2AFC")
+    df_2AFC = two_afc.subject_filter(pl.read_parquet(data_path / "df_alexis_drug_combined.parquet"))  # With drug
+    df_2AFC_licks = two_afc.subject_filter(pl.read_parquet(data_path / "alexis_drug_combined.parquet"))
+    df_2AFC
+    return df_2AFC, df_2AFC_licks
+
+
+@app.cell
+def _(df_2AFC_licks, pd):
+    two_afc_repeat_run_trial_metrics = (
+        df_2AFC_licks
+        .select(["subject", "Session", "Trial", "Choice", "Hit", "ILI", "RT", "nLicks"])
+        .to_pandas()
+        .sort_values(["subject", "Session", "Trial"])
+    )
+    two_afc_repeat_run_trial_metrics["previous_response"] = (
+        two_afc_repeat_run_trial_metrics
+        .groupby(["subject", "Session"], observed=True)["Choice"]
+        .shift(1)
+    )
+    _repeat = (
+        two_afc_repeat_run_trial_metrics["Choice"]
+        .eq(two_afc_repeat_run_trial_metrics["previous_response"])
+        .fillna(False)
+    )
+    _alternating = (
+        two_afc_repeat_run_trial_metrics["previous_response"].notna()
+        & ~_repeat
+    )
+
+    def _run_length(_mask):
+        _block_id = (~_mask).groupby(
+            [
+                two_afc_repeat_run_trial_metrics["subject"],
+                two_afc_repeat_run_trial_metrics["Session"],
+            ],
+            observed=True,
+        ).cumsum()
+        return _mask.astype(int).groupby(
+            [
+                two_afc_repeat_run_trial_metrics["subject"],
+                two_afc_repeat_run_trial_metrics["Session"],
+                _block_id,
+            ],
+            observed=True,
+        ).cumsum()
+
+    two_afc_repeat_run_trial_metrics["current_repeat_length"] = _run_length(_repeat)
+    two_afc_repeat_run_trial_metrics["current_alternating_length"] = _run_length(_alternating)
+
+    def _metrics_for_transition(_transition, _length_col):
+        _metrics = two_afc_repeat_run_trial_metrics[
+            two_afc_repeat_run_trial_metrics[_length_col] > 0
+        ].melt(
+            id_vars=["subject", "Session", "Trial", "Hit", _length_col],
+            value_vars=["ILI", "RT", "nLicks"],
+            var_name="metric",
+            value_name="value",
+        )
+        _metrics = _metrics.rename(columns={_length_col: "current_chunk_length"})
+        _metrics["transition"] = _transition
+        return _metrics
+
+    two_afc_repeat_run_trial_metrics_long = pd.concat(
+        [
+            _metrics_for_transition("Repeating", "current_repeat_length"),
+            _metrics_for_transition("Alternating", "current_alternating_length"),
+        ],
+        ignore_index=True,
+    )
+    two_afc_repeat_run_trial_metrics_long["value"] = pd.to_numeric(
+        two_afc_repeat_run_trial_metrics_long["value"],
+        errors="coerce",
+    )
+    two_afc_repeat_run_trial_metrics_long = two_afc_repeat_run_trial_metrics_long.dropna(
+        subset=["value"]
+    )
+    two_afc_repeat_run_trial_metrics_long["outcome"] = (
+        pd.to_numeric(two_afc_repeat_run_trial_metrics_long["Hit"], errors="coerce")
+        .map({1.0: "Correct", 0.0: "Incorrect"})
+    )
+    return (two_afc_repeat_run_trial_metrics_long,)
+
+
+@app.cell
+def _(plt, sns, two_afc_repeat_run_trial_metrics_long):
+    _metric_order = ["ILI", "RT", "nLicks"]
+    _metric_labels = {
+        "ILI": "ILI",
+        "RT": "RT",
+        "nLicks": "nLicks",
+    }
+    fig_2afc_repeat_run_trial_metrics, axes_2afc_repeat_run_trial_metrics = plt.subplots(
+        2,
+        len(_metric_order),
+        figsize=(10, 5),
+        sharex=True,
+    )
+    _max_chunk_length = min(
+        10,
+        int(two_afc_repeat_run_trial_metrics_long["current_chunk_length"].max()),
+    )
+    for _ax, _metric in zip(axes_2afc_repeat_run_trial_metrics[0], _metric_order, strict=False):
+        _data = two_afc_repeat_run_trial_metrics_long[
+            two_afc_repeat_run_trial_metrics_long["metric"] == _metric
+        ]
+        sns.lineplot(
+            data=_data,
+            x="current_chunk_length",
+            y="value",
+            hue="transition",
+            estimator="mean",
+            errorbar="se",
+            palette={"Repeating": "tab:brown", "Alternating": "tab:purple"},
+            ax=_ax,
+        )
+        _ax.set_xlim(1, _max_chunk_length)
+        _ax.set_title(_metric_labels[_metric])
+        _ax.set_xlabel("")
+        _ax.set_ylabel(_metric_labels[_metric])
+        if _ax.get_legend() is not None:
+            _ax.get_legend().set_frame_on(False)
+            _ax.get_legend().set_title("")
+
+    for _ax, _metric in zip(axes_2afc_repeat_run_trial_metrics[1], _metric_order, strict=False):
+        _data = two_afc_repeat_run_trial_metrics_long[
+            (two_afc_repeat_run_trial_metrics_long["metric"] == _metric)
+            & (two_afc_repeat_run_trial_metrics_long["transition"] == "Repeating")
+            & two_afc_repeat_run_trial_metrics_long["outcome"].notna()
+        ]
+        sns.lineplot(
+            data=_data,
+            x="current_chunk_length",
+            y="value",
+            hue="outcome",
+            estimator="mean",
+            errorbar="se",
+            palette={"Correct": "tab:green", "Incorrect": "tab:red"},
+            ax=_ax,
+        )
+        _ax.set_xlim(1, 30)
+        _ax.set_ylim(1, 10)
+        _ax.set_title(f"{_metric_labels[_metric]} - repeating")
+        _ax.set_xlabel("Block length")
+        _ax.set_ylabel(_metric_labels[_metric])
+        if _ax.get_legend() is not None:
+            _ax.get_legend().set_frame_on(False)
+            _ax.get_legend().set_title("")
+    fig_2afc_repeat_run_trial_metrics.tight_layout()
+    fig_2afc_repeat_run_trial_metrics
+    return
+
+
+@app.cell
+def _(pd, plot_payloads, plt, sns, task_names):
+    _task_labels = {"2AFC": "2AFC", "2AFC_delay": "2ADC", "MCDR": "MCDR"}
+
+    def _repeat_outcome_proportions_for_task(_task_name):
+        _trials = (
+            plot_payloads[_task_name]["plot_df"]
+            .select(["subject", "session", "trial_idx", "response", "performance"])
+            .to_pandas()
+            .sort_values(["subject", "session", "trial_idx"])
+        )
+        _trials["previous_response"] = (
+            _trials.groupby(["subject", "session"], observed=True)["response"].shift(1)
+        )
+        _repeat = _trials["response"].eq(_trials["previous_response"]).fillna(False)
+        _block_id = (~_repeat).groupby(
+            [_trials["subject"], _trials["session"]],
+            observed=True,
+        ).cumsum()
+        _trials["current_repeat_length"] = _repeat.astype(int).groupby(
+            [_trials["subject"], _trials["session"], _block_id],
+            observed=True,
+        ).cumsum()
+        _trials["outcome"] = (
+            pd.to_numeric(_trials["performance"], errors="coerce")
+            .map({1.0: "Correct", 0.0: "Incorrect"})
+        )
+        _trials = _trials[
+            (_trials["current_repeat_length"] > 0)
+            & _trials["outcome"].notna()
+        ]
+        _proportions = (
+            _trials
+            .groupby(["current_repeat_length", "outcome"], observed=True)
+            .size()
+            .rename("count")
+            .reset_index()
+        )
+        _proportions["proportion"] = (
+            _proportions["count"]
+            / _proportions.groupby("current_repeat_length", observed=True)["count"].transform("sum")
+        )
+        _proportions["task"] = _task_name
+        _proportions["task_label"] = _task_labels.get(_task_name, _task_name)
+        return _proportions
+
+    repeat_run_outcome_proportions_by_task = pd.concat(
+        [
+            _repeat_outcome_proportions_for_task(_task_name)
+            for _task_name in task_names
+        ],
+        ignore_index=True,
+    )
+
+    _task_order = ["2AFC", "2ADC", "MCDR"]
+    fig_repeat_run_outcome_proportions_by_task, axes_repeat_run_outcome_proportions_by_task = plt.subplots(
+        1,
+        len(_task_order),
+        figsize=(10, 3),
+        sharex=True,
+        sharey=True,
+    )
+    for _ax, _task_label in zip(axes_repeat_run_outcome_proportions_by_task, _task_order, strict=False):
+        _data = repeat_run_outcome_proportions_by_task[
+            repeat_run_outcome_proportions_by_task["task_label"] == _task_label
+        ]
+        sns.lineplot(
+            data=_data,
+            x="current_repeat_length",
+            y="proportion",
+            hue="outcome",
+            marker="o",
+            palette={"Correct": "tab:green", "Incorrect": "tab:red"},
+            ax=_ax,
+        )
+        _ax.set_xlim(
+            1,
+            min(10, int(repeat_run_outcome_proportions_by_task["current_repeat_length"].max())),
+        )
+        _ax.set_ylim(0, 1)
+        _ax.set_title(_task_label)
+        _ax.set_xlabel("Block length")
+        _ax.set_ylabel("Proportion")
+        if _ax.get_legend() is not None:
+            _ax.get_legend().set_frame_on(False)
+            _ax.get_legend().set_title("")
+    fig_repeat_run_outcome_proportions_by_task.tight_layout()
+    fig_repeat_run_outcome_proportions_by_task
+    return
+
+
+@app.cell
+def _(df_2AFC, pd):
+    two_afc_repeat_alternate_trials_drug = (
+        df_2AFC
+        .select(["subject", "Session", "Trial", "Side", "Choice", "Drug", "Hit"])
+        .to_pandas()
+        .sort_values(["subject", "Session", "Trial"])
+    )
+    two_afc_repeat_alternate_trials_drug["previous_response"] = (
+        two_afc_repeat_alternate_trials_drug
+        .groupby(["subject", "Drug", "Session"], observed=True)["Choice"]
+        .shift(1)
+    )
+    two_afc_repeat_alternate_trials_drug = two_afc_repeat_alternate_trials_drug.dropna(
+        subset=["previous_response"]
+    )
+    two_afc_repeat_alternate_trials_drug["transition"] = (
+        two_afc_repeat_alternate_trials_drug["Choice"]
+        .eq(two_afc_repeat_alternate_trials_drug["previous_response"])
+        .map({True: "repeating", False: "alternating"})
+    )
+    two_afc_repeat_alternate_trials_drug["transition_chunk"] = (
+        two_afc_repeat_alternate_trials_drug
+        .groupby(["subject", "Drug", "Session"], observed=True)["transition"]
+        .transform(lambda transition: transition.ne(transition.shift()).cumsum())
+    )
+
+    two_afc_transition_chunk_lengths_drug = (
+        two_afc_repeat_alternate_trials_drug
+        .groupby(["subject", "Drug", "Session", "transition", "transition_chunk"], observed=True)
+        .size()
+        .rename("chunk_length")
+        .reset_index()
+    )
+    two_afc_transition_chunk_counts_drug = (
+        two_afc_transition_chunk_lengths_drug
+        .groupby(["subject", "Drug", "transition", "chunk_length"], observed=True)
+        .size()
+        .rename("count")
+        .reindex(
+            pd.MultiIndex.from_product(
+                [
+                    two_afc_transition_chunk_lengths_drug["subject"].unique(),
+                    two_afc_transition_chunk_lengths_drug["Drug"].unique(),
+                    ["repeating", "alternating"],
+                    range(1, int(two_afc_transition_chunk_lengths_drug["chunk_length"].max()) + 1),
+                ],
+                names=["subject", "Drug", "transition", "chunk_length"],
+            ),
+            fill_value=0,
+        )
+        .reset_index()
+    )
+    two_afc_transition_chunk_counts_drug["frequency"] = (
+        two_afc_transition_chunk_counts_drug["count"]
+        / two_afc_transition_chunk_counts_drug.groupby(["subject", "Drug", "transition"], observed=True)["count"].transform("sum")
+    )
+    two_afc_transition_chunk_frequency_drug = (
+        two_afc_transition_chunk_counts_drug
+        .groupby(["transition", "Drug", "chunk_length"], observed=True)["frequency"]
+        .mean()
+        .reset_index()
+    )
+    two_afc_session_transition_accuracy_drug = (
+        two_afc_repeat_alternate_trials_drug
+        .groupby(["subject", "Drug", "Session", "transition"], observed=True)["Hit"]
+        .mean()
+        .unstack("transition")
+        .reset_index()
+        .rename(
+            columns={
+                "alternating": "alternating_accuracy",
+                "repeating": "repeating_accuracy",
+            }
+        )
+    )
+    two_afc_transition_chunk_lengths_drug["drug_label"] = (
+        two_afc_transition_chunk_lengths_drug["Drug"]
+        .map({0: "Saline", 1: "Drug"})
+        .fillna(two_afc_transition_chunk_lengths_drug["Drug"])
+    )
+    return (two_afc_transition_chunk_lengths_drug,)
+
+
+@app.cell
+def _(
+    chunk_hist_stat,
+    chunk_hist_ylabel,
+    fig_size,
+    plt,
+    sns,
+    two_afc_transition_chunk_lengths_drug,
+):
+    fig_2afc_repeating_chunk_lengths_drug, ax_2afc_repeating_chunk_lengths_drug = plt.subplots(
+        figsize=fig_size(2, 1)
+    )
+    sns.histplot(
+        data=two_afc_transition_chunk_lengths_drug[
+            two_afc_transition_chunk_lengths_drug["transition"] == "repeating"
+        ],
+        x="chunk_length",
+        hue="drug_label",
+        stat=chunk_hist_stat,
+        common_norm=False,
+        element="step",
+        bins=range(1, int(two_afc_transition_chunk_lengths_drug["chunk_length"].max()) + 2),
+        palette={"Saline": "tab:gray", "Drug": "tab:pink"},
+        ax=ax_2afc_repeating_chunk_lengths_drug,
+    )
+    ax_2afc_repeating_chunk_lengths_drug.set_xlim(0, 100)
+    # ax_2afc_repeating_chunk_lengths_drug.set_yscale("log")
+    ax_2afc_repeating_chunk_lengths_drug.set_title("Repeating")
+    ax_2afc_repeating_chunk_lengths_drug.set_xlabel("Chunk length")
+    ax_2afc_repeating_chunk_lengths_drug.set_ylabel(chunk_hist_ylabel)
+    ax_2afc_repeating_chunk_lengths_drug
+    return
+
+
+@app.cell
+def _(
+    chunk_hist_stat,
+    chunk_hist_ylabel,
+    fig_size,
+    np,
+    plt,
+    two_afc_transition_chunk_lengths_drug,
+):
+    _drug_palette = {"Saline": "tab:gray", "Drug": "tab:pink"}
+    _max_chunk_length = 50
+    _x = np.arange(1, _max_chunk_length + 1)
+    _data = two_afc_transition_chunk_lengths_drug[
+        two_afc_transition_chunk_lengths_drug["transition"] == "repeating"
+    ]
+
+    fig_2afc_repeating_chunk_lengths_drug_lines, ax_2afc_repeating_chunk_lengths_drug_lines = plt.subplots(
+        figsize=fig_size(2, 1)
+    )
+    for _drug_label, _color in _drug_palette.items():
+        _drug_data = _data[_data["drug_label"] == _drug_label]
+        if _drug_data.empty:
+            continue
+        _counts = (
+            _drug_data["chunk_length"]
+            .value_counts()
+            .reindex(_x, fill_value=0)
+            .sort_index()
+            .astype(float)
+        )
+        _y = _counts.to_numpy()
+        if chunk_hist_stat == "probability" and _y.sum() > 0:
+            _y = _y / _y.sum()
+        ax_2afc_repeating_chunk_lengths_drug_lines.plot(
+            _x,
+            _y,
+            color=_color,
+            linewidth=1.5,
+            label=_drug_label,
+        )
+
+    ax_2afc_repeating_chunk_lengths_drug_lines.set_xlim(0, 20)
+    ax_2afc_repeating_chunk_lengths_drug_lines.set_title("Repeating choices")
+    ax_2afc_repeating_chunk_lengths_drug_lines.set_xlabel("Chunk length")
+    ax_2afc_repeating_chunk_lengths_drug_lines.set_ylabel(chunk_hist_ylabel)
+    ax_2afc_repeating_chunk_lengths_drug_lines.legend(frameon=False)
+    ax_2afc_repeating_chunk_lengths_drug_lines
+    return
+
+
+@app.cell
+def _(
+    chunk_hist_stat,
+    chunk_hist_ylabel,
+    fig_size,
+    plt,
+    sns,
+    two_afc_transition_chunk_lengths_drug,
+):
+    fig_2afc_alternating_chunk_lengths_drug, ax_2afc_alternating_chunk_lengths_drug = plt.subplots(
+        figsize=fig_size(2, 1)
+    )
+    sns.histplot(
+        data=two_afc_transition_chunk_lengths_drug[
+            two_afc_transition_chunk_lengths_drug["transition"] == "alternating"
+        ],
+        x="chunk_length",
+        hue="drug_label",
+        stat=chunk_hist_stat,
+        common_norm=False,
+        element="step",
+        bins=range(1, int(two_afc_transition_chunk_lengths_drug["chunk_length"].max()) + 2),
+        palette={"Saline": "tab:gray", "Drug": "tab:pink"},
+        ax=ax_2afc_alternating_chunk_lengths_drug,
+    )
+    ax_2afc_alternating_chunk_lengths_drug.set_xlim(0, 20)
+    # ax_2afc_alternating_chunk_lengths_drug.set_yscale("log")
+    ax_2afc_alternating_chunk_lengths_drug.set_title("Alternating")
+    ax_2afc_alternating_chunk_lengths_drug.set_xlabel("Chunk length")
+    ax_2afc_alternating_chunk_lengths_drug.set_ylabel(chunk_hist_ylabel)
+    ax_2afc_alternating_chunk_lengths_drug
+    return
+
+
+@app.cell
+def _(
+    chunk_hist_stat,
+    chunk_hist_ylabel,
+    fig_size,
+    plt,
+    sns,
+    two_afc_stimulus_transition_chunk_lengths,
+):
+    fig_2afc_stimulus_transition_chunk_lengths, ax_2afc_stimulus_transition_chunk_lengths = plt.subplots(
+        figsize=fig_size(2, 1)
+    )
+    sns.histplot(
+        data=two_afc_stimulus_transition_chunk_lengths,
+        x="chunk_length",
+        hue="transition",
+        stat=chunk_hist_stat,
+        discrete=True,
+        common_norm=False,
+        palette={"repeating": "tab:brown", "alternating": "tab:purple"},
+        alpha=0.75,
+        element="step",
+        fill=False,
+        ax=ax_2afc_stimulus_transition_chunk_lengths,
+    )
+
+    ax_2afc_stimulus_transition_chunk_lengths.set_xlim(0, 50)
+    ax_2afc_stimulus_transition_chunk_lengths.set_ylabel(chunk_hist_ylabel)
+    ax_2afc_stimulus_transition_chunk_lengths.set_title("Stimulus")
+    ax_2afc_stimulus_transition_chunk_lengths.set_xlabel("Chunk length")
+    ax_2afc_stimulus_transition_chunk_lengths.get_legend().set_title(None)
+    ax_2afc_stimulus_transition_chunk_lengths.get_legend().set_frame_on(False)
+    ax_2afc_stimulus_transition_chunk_lengths.get_legend().set_loc("lower right")
+    ax_2afc_stimulus_transition_chunk_lengths
+    return
+
+
+@app.cell
+def _(sns, two_afc_session_transition_accuracy):
+    joint_2afc_repeating_vs_alternating_accuracy = sns.jointplot(
+        data=two_afc_session_transition_accuracy,
+        x="repeating_accuracy",
+        y="alternating_accuracy",
+        color="tab:blue",
+        kind="hist",
+        xlim=(0, 1),
+        ylim=(0, 1),
+    )
+    fig_2afc_repeating_vs_alternating_accuracy = joint_2afc_repeating_vs_alternating_accuracy.fig
+    ax_2afc_repeating_vs_alternating_accuracy = joint_2afc_repeating_vs_alternating_accuracy.ax_joint
+    ax_2afc_repeating_vs_alternating_accuracy.plot([0, 1], [0, 1], color="tab:gray")
+    ax_2afc_repeating_vs_alternating_accuracy.set_xlabel("Repeating accuracy")
+    ax_2afc_repeating_vs_alternating_accuracy.set_ylabel("Alternating accuracy")
+    fig_2afc_repeating_vs_alternating_accuracy.canvas.draw()
+    _joint_position = ax_2afc_repeating_vs_alternating_accuracy.get_position()
+    _marg_y_position = joint_2afc_repeating_vs_alternating_accuracy.ax_marg_y.get_position()
+    _colorbar_ax = fig_2afc_repeating_vs_alternating_accuracy.add_axes(
+        [_marg_y_position.x1 + 0.02, _joint_position.y0, 0.03, _joint_position.height]
+    )
+    fig_2afc_repeating_vs_alternating_accuracy.colorbar(
+        joint_2afc_repeating_vs_alternating_accuracy.ax_joint.collections[0],
+        cax=_colorbar_ax,
+        label="Count",
+    )
+    fig_2afc_repeating_vs_alternating_accuracy
+    return
+
+
+@app.cell
+def _(pd):
+    def _pick_existing_column(_df, _candidates):
+        for _candidate in _candidates:
+            if _candidate and _candidate in _df.columns:
+                return _candidate
+        return None
+
+    def _as_pandas(_df):
+        return _df.to_pandas() if hasattr(_df, "to_pandas") else _df.copy()
+
+    def _numeric_or_text(_series):
+        _numeric = pd.to_numeric(_series, errors="coerce")
+        if _numeric.notna().any():
+            return _numeric
+        return _series.astype(str)
+
+    def _correct_values(_series):
+        _numeric = pd.to_numeric(_series, errors="coerce")
+        if _numeric.notna().any():
+            return _numeric
+        return (
+            _series.astype(str)
+            .str.lower()
+            .isin(["1", "true", "correct", "hit", "yes"])
+            .astype(float)
+        )
+
+    def two_afc_repeat_alternate_trials(_plot_df):
+        _df = _as_pandas(_plot_df)
+        _subject_col = _pick_existing_column(_df, ["subject"])
+        _session_col = _pick_existing_column(_df, ["session", "Session"])
+        _trial_col = _pick_existing_column(_df, ["trial_idx", "trial", "Trial"])
+        _choice_col = _pick_existing_column(_df, ["response", "choice", "choices", "Choice"])
+        _correct_col = _pick_existing_column(_df, ["correct_bool", "performance", "Hit", "hit"])
+        if any(_col is None for _col in [_subject_col, _session_col, _trial_col, _choice_col, _correct_col]):
+            return pd.DataFrame()
+
+        _out = _df[[_subject_col, _session_col, _trial_col, _choice_col, _correct_col]].copy()
+        _out.columns = ["subject", "session", "trial", "choice", "correct"]
+        _out["choice"] = _numeric_or_text(_out["choice"])
+        _out["correct"] = _correct_values(_out["correct"])
+        _out["trial"] = pd.to_numeric(_out["trial"], errors="coerce")
+        _out = _out.dropna(subset=["subject", "session", "trial", "choice", "correct"])
+        _out = _out.sort_values(["subject", "session", "trial"])
+        _out["previous_choice"] = _out.groupby(["subject", "session"], observed=True)["choice"].shift(1)
+        _out = _out.dropna(subset=["previous_choice"]).copy()
+        _out["transition"] = [
+            "Repeating" if _choice == _previous else "Alternating"
+            for _choice, _previous in zip(_out["choice"], _out["previous_choice"], strict=False)
+        ]
+        return _out
+
+    def two_afc_transition_chunk_lengths(_plot_df):
+        _trials = two_afc_repeat_alternate_trials(_plot_df)
+        if _trials.empty:
+            return _trials
+        _chunks = []
+        for (_subject, _session), _session_df in _trials.groupby(["subject", "session"], observed=True):
+            _session_df = _session_df.copy()
+            _session_df["chunk"] = (_session_df["transition"] != _session_df["transition"].shift()).cumsum()
+            _chunks.append(
+                _session_df.groupby("chunk", as_index=False, observed=True)
+                .agg(
+                    subject=("subject", "first"),
+                    session=("session", "first"),
+                    transition=("transition", "first"),
+                    chunk_length=("transition", "size"),
+                )
+            )
+        return pd.concat(_chunks, ignore_index=True)
+
+    def two_afc_session_repeat_alternate_accuracy(_plot_df):
+        _trials = two_afc_repeat_alternate_trials(_plot_df)
+        if _trials.empty:
+            return _trials
+        _acc = (
+            _trials.groupby(["subject", "session", "transition"], observed=True)["correct"]
+            .mean()
+            .unstack("transition")
+            .reset_index()
+        )
+        if {"Repeating", "Alternating"}.difference(_acc.columns):
+            return pd.DataFrame()
+        return _acc.rename(
+            columns={
+                "Repeating": "repeat_accuracy",
+                "Alternating": "alternate_accuracy",
+            }
+        ).dropna(subset=["repeat_accuracy", "alternate_accuracy"])
+
+    return two_afc_session_repeat_alternate_accuracy, two_afc_transition_chunk_lengths
+
+
+@app.cell
+def _(fig_size, plot_payloads, plt, sns, two_afc_transition_chunk_lengths):
+    _chunk_df = two_afc_transition_chunk_lengths(plot_payloads["2AFC"]["plot_df"])
+    _fig, _ax = plt.subplots(figsize=fig_size(2, 1))
+    sns.histplot(
+        data=_chunk_df,
+        x="chunk_length",
+        hue="transition",
+        palette={"Repeating": "tab:blue", "Alternating": "tab:orange"},
+        ax=_ax,
+    )
+    _ax.set_xlabel("Chunk length")
+    _ax.set_ylabel("Count")
+    sns.despine(ax=_ax)
+    _fig
+    return
+
+
+@app.cell
+def _(fig_size, plot_payloads, plt, sns, two_afc_session_repeat_alternate_accuracy):
+    _acc_df = two_afc_session_repeat_alternate_accuracy(plot_payloads["2AFC"]["plot_df"])
+    _fig, _ax = plt.subplots(figsize=fig_size(2, 1))
+    sns.scatterplot(
+        data=_acc_df,
+        x="repeat_accuracy",
+        y="alternate_accuracy",
+        color="tab:blue",
+        ax=_ax,
+    )
+    _ax.set_xlabel("Repeat accuracy")
+    _ax.set_ylabel("Alternate accuracy")
+    sns.despine(ax=_ax)
     _fig
     return
 

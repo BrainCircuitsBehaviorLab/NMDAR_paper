@@ -417,30 +417,24 @@ def _apply_ild_axis_ticks(ax: plt.Axes, xticks: Sequence[float]) -> None:
         top=False,
         direction="out",
         length=7,
-        width=1.1,
         color="#111827",
         labelcolor="#111827",
         pad=4,
     )
     ax.spines["bottom"].set_visible(True)
-    ax.spines["bottom"].set_linewidth(1.1)
     ax.spines["bottom"].set_color("#111827")
 
 
 def _style_legacy_psych_axis(ax: plt.Axes, xticks: Sequence[float]) -> None:
     """Match the legacy categorical psychometric axis styling."""
     _apply_ild_axis_ticks(ax, xticks)
-    ax.axhline(0.5, color="tab:gray", ls="--", lw=1.6)
-    ax.axvline(0.0, color="tab:gray", ls="--", lw=1.6)
+    ax.axhline(0.5, color="tab:gray", ls="--")
+    ax.axvline(0.0, color="tab:gray", ls="--")
     ticks = np.asarray(xticks, dtype=float)
     if ticks.size >= 2:
         ax.set_xlim(float(ticks[0]), float(ticks[-1]))
     ax.set_ylim([0, 1])
     ax.set_yticks([0, 0.5, 1], [0, 0.5, 1])
-    ax.tick_params(axis="both", labelsize=11)
-    ax.xaxis.label.set_size(12)
-    ax.yaxis.label.set_size(12)
-    ax.title.set_size(13)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.set_ylabel(r"$p(\mathrm{right})$")
@@ -573,17 +567,17 @@ def _psych_state_panel(
             grp_ilds = [i for i in payload["x"] if i in grp[ild_col].values]
             xi = np.array(grp_ilds, dtype=float)
             yi = grp.set_index(ild_col).reindex(grp_ilds)["data_mean"].values
-            ax.plot(xi, yi, "-o", color=color, alpha=0.14, lw=1.1, ms=4.0, zorder=2)
+            ax.plot(xi, yi, "-o", color=color, alpha=0.14, ms=4.0, zorder=2)
     elif show_subject_traces and background_style == "model" and subject_curves is not None:
         for curve in subject_curves.values():
             if curve is None:
                 continue
             xi, yi = curve
-            ax.plot(xi, yi, "-", color=color, alpha=0.14, lw=1.2, zorder=2)
+            ax.plot(xi, yi, "-", color=color, alpha=0.14, zorder=2)
 
     if show_data_smooth and payload["empirical_smooth"] is not None:
         x_emp, y_emp = payload["empirical_smooth"]
-        ax.plot(x_emp, y_emp, "--", color=color, lw=1.9, alpha=0.95, zorder=4, label="_nolegend_")
+        ax.plot(x_emp, y_emp, "--", color=color, alpha=0.95, zorder=4, label="_nolegend_")
 
     data_h = None
     if show_weighted_points:
@@ -594,7 +588,6 @@ def _psych_state_panel(
             fmt="o",
             color=color,
             ecolor=color,
-            elinewidth=1.5,
             capsize=0,
             ms=5.8,
             zorder=5,
@@ -605,9 +598,9 @@ def _psych_state_panel(
         ild_g, p_g = smooth_curve
         x0, x1 = float(payload["ticks"][0]), float(payload["ticks"][-1])
         clip = (ild_g >= x0) & (ild_g <= x1)
-        (model_h,) = ax.plot(ild_g[clip], p_g[clip], "-", color=color, lw=2.3, zorder=6, label="_nolegend_")
+        (model_h,) = ax.plot(ild_g[clip], p_g[clip], "-", color=color, zorder=6, label="_nolegend_")
     elif show_model_smooth:
-        (model_h,) = ax.plot(payload["x"], payload["model_mean"], "-", color=color, lw=2.3, zorder=6, label="_nolegend_")
+        (model_h,) = ax.plot(payload["x"], payload["model_mean"], "-", color=color, zorder=6, label="_nolegend_")
     else:
         model_h = None
 
@@ -1043,12 +1036,12 @@ def plot_categorical_performance_all_by_state(
                 show_model_smooth=show_model_smooth,
                 model_line_mode=model_line_mode,
             )
-        _ax_overlay.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.5)
-        _ax_overlay.axvline(0.0, color="gray", lw=0.8, ls="--", alpha=0.5)
+        _ax_overlay.axhline(0.5, color="gray", ls="--", alpha=0.5)
+        _ax_overlay.axvline(0.0, color="gray", ls="--", alpha=0.5)
         _ax_overlay.set_ylim(0, 1)
         _ax_overlay.set_yticks([0, 0.5, 1])
         _ax_overlay.set_xlabel("Stimulus ILD (dB)")
-        _ax_overlay.legend(frameon=False, fontsize=8)
+        _ax_overlay.legend(frameon=False)
 
     if not overlay_only:
         for k, ax in enumerate(axes[int(_include_overlay) :]):
@@ -1077,7 +1070,7 @@ def plot_categorical_performance_all_by_state(
                 show_model_smooth=show_model_smooth,
                 model_line_mode=model_line_mode,
             )
-            ax.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.5)
+            ax.axhline(0.5, color="gray", ls="--", alpha=0.5)
             ax.set_ylim(0, 1)
             ax.set_yticks([0, 0.5, 1])
             ax.set_xlabel("ILD (dB)")

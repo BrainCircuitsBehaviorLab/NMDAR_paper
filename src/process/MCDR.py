@@ -43,7 +43,7 @@ _CHOICE_LAG_SIDES = ("L", "C", "R")
 _CHOICE_LAG_REFERENCE_SIDE = "C"
 _CHOICE_SIDE_TO_CLASS = {"L": 0, "C": 1, "R": 2}
 _NUM_CHOICE_LAGS = 15
-_STIM_PARAM_MODEL_ID = "One-hot"
+_STIM_PARAM_MODEL_ID = "one hot"
 _RAW_PARAM_MODEL_ID = "one hot"
 _STIM_HOT_COLS = tuple(
     f"stim{stim_idx}{side}"
@@ -93,6 +93,7 @@ EMISSION_COLS: list[str] = [
     "D", "DL", "DC", "DR",
     "A_L", "A_C", "A_R",
     "choice_lag_param",
+    "choice_lag_param_2",
     "stim_param",
     "speed1", "speed2", "speed3",
     "stim1L", "stim1C", "stim1R",
@@ -121,6 +122,19 @@ _CHOICE_LAG_PARAM_SPEC = FittedWeightRegressorSpec(
     source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
     class_idx=0,
 )
+_CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
+    target_name="choice_lag_param_2",
+    fit_task="MCDR",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
+    exclude_features=(
+        f"{_CHOICE_LAG_COL_PREFIX}01",
+        *(f"{_CHOICE_LAG_COL_PREFIX}01{side}" for side in _CHOICE_LAG_SIDES),
+    ),
+    class_idx=0,
+)
 _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     target_name="stim_param",
     fit_task="MCDR",
@@ -144,6 +158,7 @@ _EMISSION_GROUPS: list[dict] = [
     {"key": "D_side", "label": "D side", "members": {"L": "DL", "C": "DC", "R": "DR"}},
     {"key": "A", "label": "A (action)", "members": {"L": "A_L", "C": "A_C", "R": "A_R"}},
     {"key": "choice_lag_param", "label": "choice lag param", "members": {"N": "choice_lag_param"}},
+    {"key": "choice_lag_param_2", "label": "choice lag param 2+", "members": {"N": "choice_lag_param_2"}},
     {"key": "stim_param", "label": "stim param", "members": {"N": "stim_param"}},
     {"key": "speed1", "label": "speed 1", "members": {"N": "speed1"}},
     {"key": "speed2", "label": "speed 2", "members": {"N": "speed2"}},
@@ -448,7 +463,7 @@ def _max_subject_sessions() -> int:
 def _config_has_choice_lag_family(cfg: dict[str, Any]) -> bool:
     emission_cols = [str(col) for col in (cfg.get("emission_cols") or [])]
     return any(
-        col.startswith(_CHOICE_LAG_COL_PREFIX) or col == "choice_lag_param"
+        col.startswith(_CHOICE_LAG_COL_PREFIX) or col in {"choice_lag_param", "choice_lag_param_2"}
         for col in emission_cols
     )
 
@@ -1406,6 +1421,7 @@ class MCDRAdapter(TaskAdapter):
         ).drop("_session_idx")
         bias_param = _safe_weighted_sum_regressor(df_sub, _BIAS_PARAM_SPEC)
         choice_lag_param = _safe_weighted_sum_regressor(df_sub, _CHOICE_LAG_PARAM_SPEC)
+        choice_lag_param_2 = _safe_weighted_sum_regressor(df_sub, _CHOICE_LAG_PARAM_2_SPEC)
         stim_param = _safe_weighted_sum_regressor(df_sub, _STIM_PARAM_SPEC)
         return df_sub.with_columns(
             [
@@ -1418,6 +1434,11 @@ class MCDRAdapter(TaskAdapter):
                     pl.Series("choice_lag_param", choice_lag_param)
                     if choice_lag_param is not None
                     else pl.lit(0.0).cast(pl.Float32).alias("choice_lag_param")
+                ),
+                (
+                    pl.Series("choice_lag_param_2", choice_lag_param_2)
+                    if choice_lag_param_2 is not None
+                    else pl.lit(0.0).cast(pl.Float32).alias("choice_lag_param_2")
                 ),
                 (
                     pl.Series("stim_param", stim_param)
@@ -1784,6 +1805,8 @@ class MCDRAdapter(TaskAdapter):
             names,
             K,
             subjects,
+            scoring_key=getattr(self, "scoring_key", None),
+            scoring_options=getattr(self, "_SCORING_OPTIONS", None),
             primary_feature=getattr(self, "state_scoring_feature", None),
             primary_rule=getattr(self, "state_scoring_rule", "+"),
             split_feature=getattr(self, "state_split_feature", None),

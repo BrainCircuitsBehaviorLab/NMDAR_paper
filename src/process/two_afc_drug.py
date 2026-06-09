@@ -18,6 +18,8 @@ from .two_afc import (
     _AT_CHOICE_PARAM_SPEC as BASE_AT_CHOICE_PARAM_SPEC,
     _BIAS_PARAM_SPEC as BASE_BIAS_PARAM_SPEC,
     _CHOICE_LAG_PARAM_COL,
+    _CHOICE_LAG_PARAM_2_COL,
+    _CHOICE_LAG_PARAM_2_SPEC as BASE_CHOICE_LAG_PARAM_2_SPEC,
     _CHOICE_LAG_PARAM_SPEC as BASE_CHOICE_LAG_PARAM_SPEC,
     _KEEP_EXPERIMENTS,
     _SF_COL_PREFIX,
@@ -33,10 +35,17 @@ _DRUG_INTERACTION_SOURCES: tuple[str, ...] = (
     "filtered_stim_side",
     "trial_index",
 )
+_DRUG_EMISSION_INTERACTION_SOURCES: tuple[str, ...] = (
+    "stim_param",
+    "choice_lag_param",
+)
 DRUG_INTERACTION_COLS: list[str] = [
     f"drug_x_{source_col}" for source_col in _DRUG_INTERACTION_SOURCES
 ]
-EMISSION_COLS: list[str] = [*BASE_EMISSION_COLS, "Drug"]
+DRUG_EMISSION_INTERACTION_COLS: list[str] = [
+    f"drug_x_{source_col}" for source_col in _DRUG_EMISSION_INTERACTION_SOURCES
+]
+EMISSION_COLS: list[str] = [*BASE_EMISSION_COLS, "Drug", *DRUG_EMISSION_INTERACTION_COLS]
 TRANSITION_COLS: list[str] = [*BASE_TRANSITION_COLS, "Drug", *DRUG_INTERACTION_COLS]
 
 
@@ -51,7 +60,7 @@ def _add_drug_interactions(feature_df: pl.DataFrame | pd.DataFrame) -> pl.DataFr
                 drug_expr
                 * pl.col(source_col).cast(pl.Float32, strict=False).fill_null(0.0)
             ).alias(f"drug_x_{source_col}")
-            for source_col in _DRUG_INTERACTION_SOURCES
+            for source_col in (*_DRUG_INTERACTION_SOURCES, *_DRUG_EMISSION_INTERACTION_SOURCES)
             if source_col in feature_df.columns
         ]
         exprs = [drug_expr.alias("Drug"), *interaction_exprs]
@@ -60,7 +69,7 @@ def _add_drug_interactions(feature_df: pl.DataFrame | pd.DataFrame) -> pl.DataFr
     df_pd = feature_df.copy()
     drug = pd.to_numeric(df_pd["Drug"], errors="coerce").fillna(0.0)
     df_pd["Drug"] = drug.astype("float32")
-    for source_col in _DRUG_INTERACTION_SOURCES:
+    for source_col in (*_DRUG_INTERACTION_SOURCES, *_DRUG_EMISSION_INTERACTION_SOURCES):
         if source_col in df_pd.columns:
             df_pd[f"drug_x_{source_col}"] = (
                 drug * pd.to_numeric(df_pd[source_col], errors="coerce").fillna(0.0)
@@ -81,13 +90,14 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
     bias_param_spec = BASE_BIAS_PARAM_SPEC
     at_choice_param_spec = BASE_AT_CHOICE_PARAM_SPEC
     choice_lag_param_spec = BASE_CHOICE_LAG_PARAM_SPEC
+    choice_lag_param_2_spec = BASE_CHOICE_LAG_PARAM_2_SPEC
 
     def read_dataset(self) -> pl.DataFrame:
         """Return all Alexis 2AFC batches with a unified ``Drug`` column.
 
-        Older 2AFC batches do not have drug/rest annotations, so their
-        ``Drug`` values stay null. Batch 6 keeps the original 0/1 coding and
-        gets a readable ``condition`` label for plotting.
+        Older 2AFC batches do not have drug/saline annotations, so their
+        ``Drug`` values stay null and are treated as rest. Batch 6 keeps the
+        original 0/1 coding and gets a readable ``condition`` label for plotting.
         """
         data_dir = get_data_dir()
         base = pl.read_parquet(data_dir / "alexis_combined.parquet")
@@ -102,11 +112,11 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
         df = pl.concat([base, drug], how="diagonal_relaxed")
         return df.with_columns(
             pl.when(pl.col("Drug").is_null())
-            .then(pl.lit(None, dtype=pl.Utf8))
+            .then(pl.lit("rest"))
             .when(pl.col("Drug") == 1)
             .then(pl.lit("drug"))
             .when(pl.col("Drug") == 0)
-            .then(pl.lit("rest"))
+            .then(pl.lit("saline"))
             .otherwise(pl.lit(None, dtype=pl.Utf8))
             .alias("condition")
         )
@@ -136,14 +146,14 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
         if selected not in {"nan", "null", "none", "no_drug", "saline", "rest", "drug"}:
             raise ValueError(
                 f"Unknown 2AFC drug condition filter {condition_filter!r}. "
-                "Expected one of: all, nan, rest, drug."
+                "Expected one of: all, nan, rest, saline, drug."
             )
 
         drug_col = self.drug_condition_col(df)
         if drug_col is None:
             raise ValueError("2AFC_DRUG requires a 'Drug' or 'drug' column for condition filtering.")
 
-        if selected in {"nan", "null", "none", "no_drug"}:
+        if selected in {"nan", "null", "none", "no_drug", "rest"}:
             if isinstance(df, pl.DataFrame):
                 return df.filter(pl.col(drug_col).is_null())
             return df.loc[pd.to_numeric(df[drug_col], errors="coerce").isna()].copy()
@@ -190,10 +200,14 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
         include_stim_strength = "stim_strength" in requested or any(
             str(col).startswith(_SF_COL_PREFIX) for col in requested
         )
-        include_stim_param = _STIM_PARAM_COL in requested
+        include_stim_param = (
+            _STIM_PARAM_COL in requested
+            or "drug_x_stim_param" in requested
+        )
         include_bias_param = "bias_param" in requested
         include_at_choice_param = "at_choice_param" in requested
         include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested
+        include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested
 
         missing_optional = (
             (include_stim_strength and not any(str(col).startswith(_SF_COL_PREFIX) for col in feature_df.columns))
@@ -201,6 +215,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
             or (include_bias_param and "bias_param" not in feature_df.columns)
             or (include_at_choice_param and "at_choice_param" not in feature_df.columns)
             or (include_choice_lag_param and _CHOICE_LAG_PARAM_COL not in feature_df.columns)
+            or (include_choice_lag_param_2 and _CHOICE_LAG_PARAM_2_COL not in feature_df.columns)
         )
         if missing_optional:
             raw_cols = [
@@ -235,6 +250,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
                 include_bias_param=False,
                 include_at_choice_param=False,
                 include_choice_lag_param=include_choice_lag_param,
+                include_choice_lag_param_2=include_choice_lag_param_2,
             )
             if include_bias_param or include_at_choice_param:
                 feature_pd = feature_df.to_pandas()
@@ -268,5 +284,6 @@ __all__ = [
     "EMISSION_COLS",
     "TRANSITION_COLS",
     "DRUG_INTERACTION_COLS",
+    "DRUG_EMISSION_INTERACTION_COLS",
     "TwoAFCDrugAdapter",
 ]
