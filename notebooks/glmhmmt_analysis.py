@@ -59,7 +59,7 @@ def _():
     from src.process import two_afc_drug as process_two_afc_drug
     from src.process import two_adc as process_two_adc
     from src.process import two_adc_drug as process_two_adc_drug
-    from src.process.common import add_choice_lag_summary_regressor
+    from src.process.common import add_choice_lag_summary_regressor, pick_existing_column
 
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
@@ -215,6 +215,7 @@ def _():
         np,
         paths,
         pd,
+        pick_existing_column,
         pl,
         plt,
         prepare_predictions_df,
@@ -2961,10 +2962,10 @@ def _(mo):
 
 
 @app.cell
-def _(mo, pl, selected, task_name, trial_df):
+def _(mo, pick_existing_column, pl, selected, trial_df):
     mo.stop(not selected, mo.md("No fitted subjects available."))
     _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-    drug_col = "drug_code" if (task_name == "2ADC_DRUG") else "Drug"
+    drug_col = pick_existing_column(_trial_df_sel, ["drug_code", "Drug", "drug"])
     mo.stop(drug_col not in _trial_df_sel.columns, mo.md("`trial_df` has no `drug` column."))
     _session_drug = (
         _trial_df_sel.group_by(["subject", "session"])

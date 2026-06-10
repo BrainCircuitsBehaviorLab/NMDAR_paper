@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -193,12 +193,15 @@ def _():
     sns.set_style("ticks")
     sns.set_context("paper")
     paths = get_runtime_paths()
+    from src.process.common import adapter_behavioral_column
+    from src.plots.common import paper_boxplot
     from src.utils import fig_size
 
     return (
         CoefficientEditorWidget,
         ModelCfg,
         ModelManagerWidget,
+        adapter_behavioral_column,
         apply_state_tweak_to_trial_df,
         apply_state_tweak_to_view,
         boxplot_figsize,
@@ -227,6 +230,7 @@ def _():
         mo,
         model_plots,
         np,
+        paper_boxplot,
         paths,
         pd,
         pl,
@@ -282,6 +286,12 @@ def _(ModelCfg, ui_model_manager):
 def _(mo):
     get_last_fit_click, set_last_fit_click = mo.state(0)
     return get_last_fit_click, set_last_fit_click
+
+
+@app.cell
+def _(df_all):
+    df_all
+    return
 
 
 @app.cell(hide_code=True)
@@ -569,7 +579,6 @@ def _(
     np,
     paths,
     pd,
-    pl,
     put_legend_inside_panel,
     save_plot,
     selected,
@@ -591,6 +600,8 @@ def _(
         "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
         "at_choice_param": r"$\mathrm{A}_t$",
         "choice_lag_param": r"$\mathrm{A}$",
+        "choice_lag_param_2": r"$\mathrm{A}$",
+        "prev_choice": r"$choice_{t-1}$",
         "stim_x_delay_param":  r"$\mathrm{Stim}:\mathrm{Delay}_{\mathrm{param}}$"
     }
 
@@ -622,7 +633,8 @@ def _(
 
     _summary_fig, _summary_ax = make_boxplot_axis()
     _summary_figs = model_plots.emission_weights_summary_boxplot(
-        _weights_df.filter((pl.col("feature") == "stim_param") |(pl.col("feature") == "bias") ),
+        # _weights_df.filter((pl.col("feature") == "stim_param") |(pl.col("feature") == "bias") ),
+        _weights_df,
         connect_subjects=True,
         show_ttests=True,
         feature_order=_preferred_feature_order,
@@ -2766,12 +2778,14 @@ def _(mo):
 @app.cell
 def _(
     adapter,
+    adapter_behavioral_column,
     build_state_accuracy_payload,
     build_state_posterior_count_payload,
     df_all,
     fig_size,
     mo,
     model_plots,
+    paper_boxplot,
     pd,
     pl,
     plt,
@@ -2808,67 +2822,98 @@ def _(
     _fig_nlicks = None
     _trial_pdf = _trial_df_sel.to_pandas()
     _state_col = _pick_column(_trial_pdf, ["state_label", "state_label_pred"])
-    if "nLicks" in _trial_pdf.columns:
-        state_nlicks_df = _trial_pdf.copy()
-    else:
-        _behavioral_cols = getattr(adapter, "behavioral_cols", {}) or {}
-        _session_col = _pick_column(
-            df_all,
-            [getattr(adapter, "session_col", None), _behavioral_cols.get("session"), "session", "Session"],
-        )
-        _trial_col = _pick_column(
-            df_all,
-            [getattr(adapter, "sort_col", None), _behavioral_cols.get("trial_idx"), "trial_idx", "trial", "Trial"],
-        )
-        if "nLicks" in df_all.columns and _session_col is not None and _trial_col is not None:
-            _lick_pdf = (
+    _behavior_metric_candidates = [
+        "nLicks",
+        "RT",
+        "RT2",
+        "response_time_first",
+        "reaction_time",
+        "ReactionTime",
+        "timepoint_4",
+    ]
+    state_behavior_df = _trial_pdf.copy()
+    _missing_behavior_cols = [
+        _col
+        for _col in _behavior_metric_candidates
+        if _col not in state_behavior_df.columns and _col in df_all.columns
+    ]
+    if _missing_behavior_cols:
+        _session_col = adapter_behavioral_column(adapter, df_all, "session", "session", "Session")
+        _trial_col = adapter_behavioral_column(adapter, df_all, "trial_idx", "trial_idx", "trial", "Trial")
+        if (
+            _session_col is not None
+            and _trial_col is not None
+            and {"subject", "session", "trial_idx"}.issubset(state_behavior_df.columns)
+        ):
+            _behavior_pdf = (
                 df_all
-                .select(["subject", _session_col, _trial_col, "nLicks"])
+                .select(["subject", _session_col, _trial_col, *_missing_behavior_cols])
                 .rename({_session_col: "session", _trial_col: "trial_idx"})
                 .to_pandas()
             )
-            state_nlicks_df = _trial_pdf.merge(
-                _lick_pdf,
+            state_behavior_df = state_behavior_df.merge(
+                _behavior_pdf,
                 on=["subject", "session", "trial_idx"],
                 how="left",
             )
-        else:
-            state_nlicks_df = pd.DataFrame()
-            _state_nlicks_message = mo.md("`nLicks` is not available for this task/dataframe.")
+
+    if "nLicks" in state_behavior_df.columns:
+        state_nlicks_df = state_behavior_df.copy()
+    else:
+        state_nlicks_df = pd.DataFrame()
+        _state_nlicks_message = mo.md("`nLicks` is not available for this task/dataframe.")
 
     if _state_nlicks_message is None and _state_col is not None and not state_nlicks_df.empty:
         state_nlicks_df = state_nlicks_df.copy()
         state_nlicks_df["nLicks"] = pd.to_numeric(state_nlicks_df["nLicks"], errors="coerce")
         state_nlicks_df = state_nlicks_df.dropna(subset=["nLicks", _state_col])
+        plot_df = (
+            state_nlicks_df#[state_nlicks_df["performance"] == 1]
+            .groupby(["subject", _state_col], as_index=False)["nLicks"]
+            .median()
+        )
         if state_nlicks_df.empty:
             _state_nlicks_message = mo.md("No valid `nLicks` values for selected fitted trials.")
         else:
-            _fig_nlicks, _ax_nlicks = plt.subplots(figsize=(4, 4))
-            sns.boxplot(
-                data=state_nlicks_df,
+            _fig_nlicks, _ax_nlicks = plt.subplots(figsize=fig_size(3,1))
+            paper_boxplot(
+                data=plot_df,
                 x=_state_col,
+                hue = _state_col,
                 y="nLicks",
                 ax=_ax_nlicks,
-                color="tab:blue",
-                showfliers=False,
-            )
-            sns.stripplot(
-                data=state_nlicks_df,
-                x=_state_col,
-                y="nLicks",
-                ax=_ax_nlicks,
-                color="tab:blue",
-                alpha=0.25,
-                size=2,
-                jitter=0.2,
+                palette={"Engaged": "tab:green", "Disengaged":"tab:gray"},
+                order=["Engaged", "Disengaged"],
             )
             _ax_nlicks.set_xlabel("State")
-            _ax_nlicks.set_ylabel("Number of licks")
-            _ax_nlicks.tick_params(axis="x", rotation=30)
+            _ax_nlicks.set_ylabel("Number of licks in correct trials")
+            _ax_nlicks.tick_params(axis="x")
             sns.despine(ax=_ax_nlicks)
             _fig_nlicks.tight_layout()
     elif _state_nlicks_message is None:
         _state_nlicks_message = mo.md("State labels are not available for the `nLicks` boxplot.")
+    if _fig_nlicks is not None and _state_col is not None:
+        try:
+            from statannotations.Annotator import Annotator
+
+            pairs = [("Engaged", "Disengaged")]
+            annotator = Annotator(
+                _ax_nlicks,
+                pairs,
+                data=plot_df,
+                x=_state_col,
+                y="nLicks",
+                order=["Engaged", "Disengaged"],
+            )
+            annotator.configure(
+                test="t-test_paired",
+                text_format="star",
+                loc="outside",
+                verbose=0,
+            )
+            annotator.apply_and_annotate()
+        except Exception:
+            pass
 
     mo.vstack(
         [
@@ -2904,6 +2949,7 @@ def _(
                             _fig_post.figure,
                             save_plot(
                                 _fig_post.figure,
+
                                 "posterior trial-count kde",
                                 stem="state_posterior_count_kde",
                             ),
@@ -2913,12 +2959,12 @@ def _(
                     mo.vstack(
                         [
                             mo.md("#### State-change KDE"),
-                            _fig_switch_kde,
-                            save_plot(
-                                _fig_switch_kde,
-                                "state changes per session kde",
-                                stem="state_switches_kde",
-                            ),
+                            # _fig_switch_kde,
+                            # save_plot(
+                            #     _fig_switch_kde,
+                            #     "state changes per session kde",
+                            #     stem="state_switches_kde",
+                            # ),
                         ],
                         align="center",
                     ),
@@ -2927,6 +2973,347 @@ def _(
             ),
             mo.md("**Trial counts & mean accuracy per label:**"),
         ]
+    )
+    return (state_behavior_df,)
+
+
+@app.cell
+def _(state_behavior_df):
+    state_behavior_df
+    return
+
+
+@app.cell
+def _(fig_size, mo, np, pd, plt, save_plot, sns, state_behavior_df):
+    mo.stop(
+        state_behavior_df.empty,
+        mo.md("No state/behavior dataframe is available for ROC analysis."),
+    )
+
+    _state_col = next(
+        (_col for _col in ["state_label", "state_label_pred"] if _col in state_behavior_df.columns),
+        None,
+    )
+    mo.stop(_state_col is None, mo.md("State labels are not available for behavioral ROC curves."))
+
+    _rt_col = next(
+        (
+            _col
+            for _col in ["RT", "RT2", "response_time_first", "reaction_time", "ReactionTime", "timepoint_4"]
+            if _col in state_behavior_df.columns
+        ),
+        None,
+    )
+    _metric_specs = [("nLicks", "Licking", "Higher lick count")]
+    if _rt_col is not None:
+        _metric_specs.append((_rt_col, "RT", "Faster RT"))
+    _metric_specs = [_spec for _spec in _metric_specs if _spec[0] in state_behavior_df.columns]
+    mo.stop(not _metric_specs, mo.md("No `nLicks` or RT column was found for behavioral ROC curves."))
+
+    def _binary_engaged_target(_labels):
+        _label_text = pd.Series(_labels, copy=False).astype(str).str.strip().str.lower()
+        _positive = _label_text.eq("engaged") | _label_text.str.startswith("engaged ")
+        _negative = _label_text.eq("disengaged") | _label_text.str.startswith("disengaged ")
+        return _positive.to_numpy(dtype=bool), (_positive | _negative).to_numpy(dtype=bool)
+
+    def _roc_curve(_target, _score):
+        _target = np.asarray(_target, dtype=bool)
+        _score = np.asarray(_score, dtype=float)
+        _valid = np.isfinite(_score)
+        _target = _target[_valid]
+        _score = _score[_valid]
+        _n_pos = int(_target.sum())
+        _n_neg = int((~_target).sum())
+        if _target.size == 0 or _n_pos == 0 or _n_neg == 0:
+            return None
+        _order = np.argsort(-_score, kind="mergesort")
+        _target_sorted = _target[_order]
+        _score_sorted = _score[_order]
+        _threshold_idxs = np.r_[np.where(np.diff(_score_sorted))[0], _target_sorted.size - 1]
+        _tps = np.cumsum(_target_sorted)[_threshold_idxs]
+        _fps = (1 + _threshold_idxs) - _tps
+        _tpr = np.r_[0.0, _tps / _n_pos]
+        _fpr = np.r_[0.0, _fps / _n_neg]
+        _auc = float(np.sum(np.diff(_fpr) * (_tpr[:-1] + _tpr[1:]) / 2.0))
+        return _fpr, _tpr, _auc
+
+    _fig_roc, _axes = plt.subplots(
+        1,
+        len(_metric_specs),
+        figsize=fig_size(1, max(1, len(_metric_specs))),
+        squeeze=False,
+        layout="constrained",
+    )
+    _plotted = False
+    for _ax, (_metric_col, _title, _direction_label) in zip(_axes.ravel(), _metric_specs, strict=False):
+        _df = state_behavior_df[[_state_col, _metric_col]].copy()
+        _target, _valid_labels = _binary_engaged_target(_df[_state_col])
+        _score = pd.to_numeric(_df[_metric_col], errors="coerce").to_numpy(dtype=float)
+        if _metric_col != "nLicks":
+            _score = -_score
+        _result = _roc_curve(_target[_valid_labels], _score[_valid_labels])
+        if _result is None:
+            _ax.text(0.5, 0.5, "Need Engaged and Disengaged trials", ha="center", va="center")
+            _ax.set_axis_off()
+            continue
+        _fpr, _tpr, _auc = _result
+        _ax.plot(_fpr, _tpr, color="#1B6CA8", lw=2, label=f"AUC = {_auc:.3f}")
+        _ax.plot([0, 1], [0, 1], color="0.6", lw=1, ls="--")
+        _ax.set_title(_title)
+        _ax.set_xlabel("False positive rate")
+        _ax.set_ylabel("True positive rate")
+        _ax.set_xlim(0, 1)
+        _ax.set_ylim(0, 1)
+        _ax.legend(title=_direction_label, frameon=False, loc="lower right")
+        sns.despine(ax=_ax)
+        _plotted = True
+
+    mo.stop(not _plotted, mo.md("Behavioral ROC curves require both Engaged and Disengaged labeled trials."))
+    mo.vstack(
+        [
+            mo.md("#### Behavioral ROC by state"),
+            _fig_roc,
+            save_plot(
+                _fig_roc,
+                "behavioral ROC by state",
+                stem="state_behavioral_roc",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    get_behavior_session_pick, set_behavior_session_pick = mo.state(None)
+    ui_behavior_random_session = mo.ui.run_button(label="Pick random session")
+    return (
+        get_behavior_session_pick,
+        set_behavior_session_pick,
+        ui_behavior_random_session,
+    )
+
+
+@app.cell
+def _(
+    mo,
+    np,
+    set_behavior_session_pick,
+    state_behavior_df,
+    ui_behavior_random_session,
+):
+    mo.stop(not ui_behavior_random_session.value)
+    mo.stop(
+        state_behavior_df.empty or not {"subject", "session"}.issubset(state_behavior_df.columns),
+        mo.md("No subject/session table is available for random behavioral ECDF selection."),
+    )
+
+    _state_col = next(
+        (_col for _col in ["state_label", "state_label_pred"] if _col in state_behavior_df.columns),
+        None,
+    )
+    _metric_cols = [
+        _col
+        for _col in ["nLicks", "RT", "RT2", "response_time_first", "reaction_time", "ReactionTime", "timepoint_4"]
+        if _col in state_behavior_df.columns
+    ]
+    mo.stop(_state_col is None or not _metric_cols, mo.md("Need state labels and licks/RT columns for random behavioral ECDF selection."))
+
+    _sessions_df = (
+        state_behavior_df
+        .dropna(subset=["subject", "session", _state_col])
+        .dropna(subset=_metric_cols, how="all")
+        .groupby(["subject", "session"], as_index=False)
+        .size()
+        .rename(columns={"size": "n_trials"})
+    )
+    _sessions_df = _sessions_df[_sessions_df["n_trials"] > 0].sort_values(["subject", "session"])
+    mo.stop(_sessions_df.empty, mo.md("No sessions with state labels and licks/RT values are available."))
+
+    _row = _sessions_df.iloc[int(np.random.default_rng().integers(len(_sessions_df)))]
+    set_behavior_session_pick({"subject": _row["subject"], "session": str(_row["session"])})
+    return
+
+
+@app.cell
+def _(
+    get_behavior_session_pick,
+    mo,
+    set_behavior_session_pick,
+    state_behavior_df,
+):
+    _subj_opts = (
+        sorted(state_behavior_df["subject"].dropna().astype(str).unique().tolist(), key=str)
+        if "subject" in state_behavior_df.columns and not state_behavior_df.empty
+        else ["(no subjects)"]
+    )
+    _pick = get_behavior_session_pick() or {}
+    _picked_subj = str(_pick.get("subject")) if _pick.get("subject") is not None else None
+    _default_subj = _picked_subj if _picked_subj in _subj_opts else _subj_opts[0]
+    ui_behavior_session_subj = mo.ui.dropdown(
+        options=_subj_opts,
+        value=_default_subj,
+        label="Subject",
+        on_change=lambda value: set_behavior_session_pick({"subject": value, "session": None}),
+    )
+    return (ui_behavior_session_subj,)
+
+
+@app.cell
+def _(
+    get_behavior_session_pick,
+    mo,
+    set_behavior_session_pick,
+    state_behavior_df,
+    ui_behavior_random_session,
+    ui_behavior_session_subj,
+):
+    if (
+        state_behavior_df.empty
+        or "subject" not in state_behavior_df.columns
+        or "session" not in state_behavior_df.columns
+        or ui_behavior_session_subj.value == "(no subjects)"
+    ):
+        _sess_values = ["(no sessions)"]
+    else:
+        _subject_sessions = state_behavior_df.loc[
+            state_behavior_df["subject"].astype(str) == str(ui_behavior_session_subj.value),
+            "session",
+        ]
+        _sess_values = sorted(_subject_sessions.dropna().astype(str).unique().tolist(), key=str) or ["(no sessions)"]
+
+    _pick = get_behavior_session_pick() or {}
+    _picked_session = (
+        str(_pick.get("session"))
+        if str(_pick.get("subject")) == str(ui_behavior_session_subj.value) and _pick.get("session") is not None
+        else None
+    )
+    _default_session = _picked_session if _picked_session in _sess_values else _sess_values[0]
+    ui_behavior_session_id = mo.ui.dropdown(
+        options=_sess_values,
+        value=_default_session,
+        label="Session",
+        on_change=lambda value: set_behavior_session_pick({"subject": ui_behavior_session_subj.value, "session": value}),
+    )
+
+    mo.vstack(
+        [
+            mo.md("#### Example session RT/lick cumulative distributions"),
+            mo.hstack([ui_behavior_random_session, ui_behavior_session_subj, ui_behavior_session_id]),
+        ],
+        align="start",
+    )
+    return (ui_behavior_session_id,)
+
+
+@app.cell
+def _(
+    fig_size,
+    mo,
+    np,
+    pd,
+    plt,
+    save_plot,
+    sns,
+    state_behavior_df,
+    ui_behavior_session_id,
+    ui_behavior_session_subj,
+):
+    mo.stop(
+        state_behavior_df.empty
+        or ui_behavior_session_subj.value == "(no subjects)"
+        or ui_behavior_session_id.value == "(no sessions)",
+        mo.md("Pick a subject/session with state labels and licks/RT values."),
+    )
+
+    _state_col = next(
+        (_col for _col in ["state_label", "state_label_pred"] if _col in state_behavior_df.columns),
+        None,
+    )
+    mo.stop(_state_col is None, mo.md("State labels are not available for the example-session ECDF."))
+
+    _rt_col = next(
+        (
+            _col
+            for _col in ["RT", "RT2", "response_time_first", "reaction_time", "ReactionTime", "timepoint_4"]
+            if _col in state_behavior_df.columns
+        ),
+        None,
+    )
+    _metric_specs = [("nLicks", "Licks")]
+    if _rt_col is not None:
+        _metric_specs.append((_rt_col, "RT"))
+    _metric_specs = [_spec for _spec in _metric_specs if _spec[0] in state_behavior_df.columns]
+    mo.stop(not _metric_specs, mo.md("No `nLicks` or RT column was found for the example-session ECDF."))
+
+    _session_df = state_behavior_df[
+        (state_behavior_df["subject"].astype(str) == str(ui_behavior_session_subj.value))
+        & (state_behavior_df["session"].astype(str) == str(ui_behavior_session_id.value))
+    ].copy()
+    mo.stop(_session_df.empty, mo.md("No rows found for the selected subject/session."))
+
+    _state_values = _session_df[_state_col].dropna().astype(str).unique().tolist()
+    _state_order = [_state for _state in ["Engaged", "Disengaged"] if _state in _state_values]
+    _state_order.extend([_state for _state in sorted(_state_values, key=str) if _state not in _state_order])
+    mo.stop(not _state_order, mo.md("No state labels found for the selected subject/session."))
+
+    def _ecdf(_values):
+        _values = pd.to_numeric(pd.Series(_values), errors="coerce").dropna().to_numpy(dtype=float)
+        if _values.size == 0:
+            return None, None
+        _x = np.sort(_values)
+        _y = np.arange(1, _x.size + 1, dtype=float) / float(_x.size)
+        return _x, _y
+
+    _palette = {
+        "Engaged": "tab:green",
+        "Disengaged": "tab:gray",
+    }
+    _fallback_colors = plt.get_cmap("tab10")(np.linspace(0.0, 1.0, max(1, len(_state_order))))
+
+    _fig_ecdf, _axes = plt.subplots(
+        1,
+        len(_metric_specs),
+        figsize=fig_size(1, max(1, len(_metric_specs))),
+        squeeze=False,
+        layout="constrained",
+    )
+    _plotted = False
+    for _ax, (_metric_col, _title) in zip(_axes.ravel(), _metric_specs, strict=False):
+        for _idx, _state in enumerate(_state_order):
+            _sub = _session_df[_session_df[_state_col].astype(str) == str(_state)]
+            _x, _y = _ecdf(_sub[_metric_col])
+            if _x is None:
+                continue
+            _ax.step(
+                _x,
+                _y,
+                where="post",
+                lw=2,
+                color=_palette.get(str(_state), _fallback_colors[_idx]),
+                label=f"{_state} (n={len(_x)})",
+            )
+            _plotted = True
+        _ax.set_title(_title)
+        _ax.set_xlabel(_metric_col)
+        _ax.set_ylabel("Cumulative probability")
+        _ax.set_ylim(0, 1)
+        _ax.legend(frameon=False, loc="lower right")
+        sns.despine(ax=_ax)
+
+    mo.stop(not _plotted, mo.md("No licks/RT values were available for the selected subject/session."))
+    mo.vstack(
+        [
+            mo.md(f"Subject `{ui_behavior_session_subj.value}`, session `{ui_behavior_session_id.value}`"),
+            _fig_ecdf,
+            save_plot(
+                _fig_ecdf,
+                "example session behavioral ECDF by state",
+                stem="example_session_behavior_ecdf_by_state",
+            ),
+        ],
+        align="center",
     )
     return
 
@@ -3903,6 +4290,7 @@ def _(
     adapter,
     cmp_valid,
     np,
+    paper_boxplot,
     plt,
     sns,
     ssm_coef_df,
@@ -4091,14 +4479,13 @@ def _(
                 & (coef_pd["contrast"] == key["contrast"])
             )
             panel_df = coef_pd.loc[mask].copy()
-            sns.boxplot(
+            paper_boxplot(
                 data=panel_df,
                 x="feature",
                 y="delta_ssm_minus_dynamax",
                 ax=_ax,
-                showfliers=False,
                 color="#D9D9D9",
-                boxprops={"alpha": 0.8},
+                boxprops={"color": "gray", "alpha": 0.8},
             )
             sns.stripplot(
                 data=panel_df,

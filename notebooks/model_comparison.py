@@ -25,9 +25,13 @@ def _():
     from matplotlib.lines import Line2D
     from glmhmmt.plots_common import custom_boxplot
     from plot_saver import make_plot_saver
+    from src.process.common import adapter_behavioral_column
+    from src.plots.common import paper_boxplot
     sns.set_style("white")
+    sns.set_context("paper")
     return (
         Line2D,
+        adapter_behavioral_column,
         build_emission_weights_df,
         build_trial_df,
         build_views,
@@ -40,6 +44,7 @@ def _():
         mo,
         model_aliases_for_kind,
         np,
+        paper_boxplot,
         paths,
         pl,
         plt,
@@ -150,7 +155,6 @@ def _(build_views, get_adapter, load_fit_bundle_raw, paths):
 
 @app.cell
 def _(get_adapter, mo, model_aliases, ui_task):
-
     adapter = get_adapter(ui_task.value)
 
     ui_glm_dir = mo.ui.multiselect(
@@ -398,7 +402,7 @@ def _(adapter, df_all, mo, pl):
         label="Cross-entropy grouping",
     )
     mo.hstack([ui_ce_condition])
-    return (ui_ce_condition,)
+    return
 
 
 @app.cell
@@ -490,7 +494,7 @@ def _(np):
                         _out[_i] = 2
         return _out
 
-    return (observed_choice_index,)
+    return
 
 
 @app.cell
@@ -885,237 +889,6 @@ def _(plt, results_plot, sns, ui_bic_baseline):
 
 
 @app.cell
-def _(
-    build_trial_df,
-    df_all,
-    load_fit_bundle,
-    np,
-    observed_choice_index,
-    pl,
-    results_filtered,
-    ui_ce_condition,
-    ui_subjects,
-    ui_task,
-):
-    _cond_col = ui_ce_condition.value
-    mo_delim = 1e-12
-
-    if results_filtered.is_empty() or _cond_col is None:
-        ce_by_subject_condition = pl.DataFrame(
-            schema={
-                "subject": pl.Utf8,
-                "condition": pl.Utf8,
-                "model_kind": pl.Utf8,
-                "model_alias": pl.Utf8,
-                "model_label": pl.Utf8,
-                "K": pl.Int64,
-                "cross_entropy": pl.Float64,
-                "n_trials": pl.Int64,
-            }
-        )
-    else:
-        _model_specs = (
-            results_filtered
-            .select(["model_kind", "model_alias", "model_label", "K"])
-            .unique()
-            .sort(["model_kind", "model_alias", "K"])
-            .iter_rows(named=True)
-        )
-        _frames = []
-        for _spec in _model_specs:
-            _adapter_fit, _arrays_store, _names, _views = load_fit_bundle(
-                ui_task.value,
-                _spec["model_kind"],
-                _spec["model_alias"],
-                int(_spec["K"]),
-                ui_subjects.value,
-            )
-            if not _views:
-                continue
-
-            _prob_cols = _adapter_fit.probability_columns
-            _bcols = _adapter_fit.behavioral_cols
-            _sort_col = _adapter_fit.sort_col
-            _ses_col = _adapter_fit.session_col
-
-            for _subj, _view in _views.items():
-                _df_sub = (
-                    df_all
-                    .filter(pl.col("subject") == _subj)
-                    .sort(_sort_col)
-                    .filter(pl.col(_ses_col).count().over(_ses_col) >= 2)
-                )
-                if _df_sub.height != _view.T or _cond_col not in _df_sub.columns:
-                    continue
-
-                _trial_df = build_trial_df(_view, _adapter_fit, _df_sub, _bcols)
-                _choice_idx = observed_choice_index(_adapter_fit, _trial_df)
-                _probs = np.column_stack([np.asarray(_trial_df[_c], dtype=float) for _c in _prob_cols])
-                _valid = (
-                    (_choice_idx >= 0)
-                    & (_choice_idx < _probs.shape[1])
-                    & np.all(np.isfinite(_probs), axis=1)
-                )
-                if not np.any(_valid):
-                    continue
-
-                _picked = _probs[np.arange(len(_choice_idx)), np.clip(_choice_idx, 0, _probs.shape[1] - 1)]
-                _ce = np.full(len(_choice_idx), np.nan, dtype=float)
-                _ce[_valid] = -np.log(np.clip(_picked[_valid], mo_delim, 1.0))
-
-                _ce_df = _trial_df.select(["subject", _cond_col]).with_columns([
-                    pl.lit(_spec["model_kind"]).alias("model_kind"),
-                    pl.lit(_spec["model_alias"]).alias("model_alias"),
-                    pl.lit(_spec["model_label"]).alias("model_label"),
-                    pl.lit(int(_spec["K"])).alias("K"),
-                    pl.Series("cross_entropy", _ce),
-                ])
-                _ce_df = (
-                    _ce_df
-                    .filter(pl.col("cross_entropy").is_finite())
-                    .with_columns(pl.col(_cond_col).cast(pl.Utf8).alias("condition"))
-                    .drop(_cond_col)
-                )
-                if _ce_df.height > 0:
-                    _frames.append(_ce_df)
-
-        if _frames:
-            ce_by_subject_condition = (
-                pl.concat(_frames, how="diagonal")
-                .group_by(["subject", "condition", "model_kind", "model_alias", "model_label", "K"])
-                .agg([
-                    pl.mean("cross_entropy").alias("cross_entropy"),
-                    pl.len().alias("n_trials"),
-                ])
-                .sort(["K", "condition", "model_kind", "model_alias", "subject"])
-            )
-        else:
-            ce_by_subject_condition = pl.DataFrame(
-                schema={
-                    "subject": pl.Utf8,
-                    "condition": pl.Utf8,
-                    "model_kind": pl.Utf8,
-                    "model_alias": pl.Utf8,
-                    "model_label": pl.Utf8,
-                    "K": pl.Int64,
-                    "cross_entropy": pl.Float64,
-                    "n_trials": pl.Int64,
-                }
-            )
-
-    ce_by_subject_condition
-    return (ce_by_subject_condition,)
-
-
-@app.cell
-def _(ce_by_subject_condition, mo, plt, sns):
-    mo.stop(ce_by_subject_condition.is_empty(), mo.md("No trial-level cross-entropy data could be built for the current selection."))
-
-    _ce_raw = ce_by_subject_condition.to_pandas()
-    _K_order = sorted(_ce_raw["K"].unique())
-    _cond_order = sorted(_ce_raw["condition"].dropna().unique())
-    _labels = _ce_raw["model_label"].drop_duplicates().tolist()
-    _base_colors = sns.color_palette("tab20", n_colors=max(1, len(_labels)))
-    _palette = {_label: _base_colors[_i] for _i, _label in enumerate(_labels)}
-
-    _fig_ce, _axes = plt.subplots(
-        len(_K_order),
-        1,
-        figsize=(max(7, 1.4 * len(_cond_order)), 3.8 * max(1, len(_K_order))),
-        squeeze=False,
-    )
-
-    for _row, _K in enumerate(_K_order):
-        _ax = _axes[_row, 0]
-        _sub = _ce_raw[_ce_raw["K"] == _K]
-        sns.boxplot(
-            data=_sub,
-            x="condition",
-            y="cross_entropy",
-            hue="model_label",
-            order=_cond_order,
-            hue_order=_labels,
-            palette=_palette,
-            width=0.8,
-            showfliers=False,
-            boxprops={"alpha": 0.45},
-            ax=_ax,
-        )
-        sns.stripplot(
-            data=_sub,
-            x="condition",
-            y="cross_entropy",
-            hue="model_label",
-            order=_cond_order,
-            hue_order=_labels,
-            palette=_palette,
-            dodge=True,
-            jitter=0.18,
-            alpha=0.75,
-            size=3.5,
-            ax=_ax,
-            legend=False,
-        )
-        _ax.set_title(f"Cross-entropy by condition (K={_K})")
-        _ax.set_xlabel("Condition")
-        _ax.set_ylabel("Cross-entropy")
-        _ax.tick_params(axis="x", rotation=20)
-        if _ax.get_legend() is not None:
-            _ax.get_legend().remove()
-        sns.despine(ax=_ax)
-
-    _handles, _legend_labels = _axes[0, 0].get_legend_handles_labels()
-    _handles_out = []
-    _labels_out = []
-    for _h, _l in zip(_handles, _legend_labels):
-        if _l in _labels and _l not in _labels_out:
-            _handles_out.append(_h)
-            _labels_out.append(_l)
-    if _handles_out:
-        _fig_ce.legend(
-            _handles_out,
-            _labels_out,
-            title="Model",
-            loc="lower center",
-            bbox_to_anchor=(0.5, -0.01),
-            ncol=min(3, max(1, len(_labels_out))),
-            frameon=False,
-        )
-    _fig_ce.tight_layout(rect=(0, 0.08, 1, 1))
-    _fig_ce
-    return
-
-
-@app.cell
-def _(mo, pl, plt, results_filtered, sns):
-    _pivot_df = (
-        results_filtered
-        .with_columns(
-            (pl.col("model_label") + "_K" + pl.col("K").cast(pl.Utf8)).alias("model_K")
-        )
-        .pivot(index="subject", on="model_K", values="test_ll_per_trial")
-        .to_pandas()
-        .set_index("subject")
-    )
-
-    mo.stop(_pivot_df.empty, mo.md("No data to plot."))
-
-    _fig_heat, _ax_h = plt.subplots(
-        figsize=(max(6, _pivot_df.shape[1] * 0.9), max(4, _pivot_df.shape[0] * 0.4))
-    )
-    sns.heatmap(
-        _pivot_df, ax=_ax_h, cmap="RdYlGn",
-        annot=True, fmt=".3f", linewidths=0.3,
-        cbar_kws={"label": "CV test LL / trial"},
-    )
-    _ax_h.set_title("CV test log-likelihood per trial - subject x model/K")
-    _ax_h.set_xlabel("")
-    _fig_heat.tight_layout()
-    _fig_heat
-    return
-
-
-@app.cell
 def _(mo, results_long):
     _MODEL_KIND_LABELS = {
         "glm": "GLM",
@@ -1496,12 +1269,6 @@ def _(
 
 
 @app.cell
-def _(trial_df):
-    trial_df
-    return
-
-
-@app.cell
 def _(
     mo,
     pairwise_metric_delta_summary,
@@ -1524,9 +1291,9 @@ def _(
 
 @app.cell
 def _(
-    custom_boxplot,
     mo,
     np,
+    paper_boxplot,
     pairwise_alias_a,
     pairwise_alias_b,
     pairwise_metric_deltas,
@@ -1555,7 +1322,7 @@ def _(
         ("delta_bic", "Δ BIC", (-800, 800)),
     ]
 
-    def _p_label(_values):
+    def p_label(_values):
         _values = _values[np.isfinite(_values)]
         if len(_values) < 2:
             return ""
@@ -1578,9 +1345,8 @@ def _(
 
     _fig_pair_metrics, _axd = plt.subplot_mosaic(
         [["ll", "bic"]],
-        figsize=fig_size(1,3),
+        figsize=fig_size(2,2),
         constrained_layout=True,
-        gridspec_kw={"width_ratios": [1, 1]},
     )
     _axes = [_axd["ll"], _axd["bic"]]
     for _ax, (_delta_col, _ylabel, _ylim) in zip(_axes, _panels, strict=False):
@@ -1588,27 +1354,13 @@ def _(
         _finite = _delta[np.isfinite(_delta)]
         _ax.axhline(0, color="0.35", linewidth=1.0, linestyle="--", alpha=0.75, zorder=0)
         if len(_finite) > 0:
-            custom_boxplot(
-                _ax,
-                _finite,
-                positions=[0],
-                widths=0.36,
-                median_colors=["tab:orange"],
-                showfliers=False,
-                showcaps=False,
-                zorder=1,
-                median_linewidth=2.2,
+            paper_boxplot(
+                y=_finite,
+                ax=_ax,
+                color = "tab:red",
+                width=.5,
             )
-            # _jitter = _rng.uniform(-0.06, 0.06, size=len(_finite))
-            # _ax.scatter(
-            #     _jitter,
-            #     _finite,
-            #     color="#4C78A8",
-            #     alpha=0.72,
-            #     s=30,
-            #     zorder=2,
-            # )
-        _p_txt = _p_label(_finite)
+        _p_txt = p_label(_finite)
         _ax.set_ylim(*_ylim)
         if _p_txt:
             _ax.text(0.5, 0.88, _p_txt, ha="center", va="bottom", transform=_ax.transAxes)
@@ -1866,7 +1618,7 @@ def _(pl):
 
 
 @app.cell
-def _(df_all, pd):
+def _(adapter_behavioral_column, df_all, pd):
     RT_METRIC_CANDIDATES = (
         "RT",
         "RT2",
@@ -1890,23 +1642,8 @@ def _(df_all, pd):
         if adapter is None or not missing_cols:
             return out
 
-        behavioral_cols = getattr(adapter, "behavioral_cols", {}) or {}
-        session_col = next(
-            (
-                col
-                for col in [getattr(adapter, "session_col", None), behavioral_cols.get("session"), "session", "Session"]
-                if col and col in df_all.columns
-            ),
-            None,
-        )
-        trial_col = next(
-            (
-                col
-                for col in [getattr(adapter, "sort_col", None), behavioral_cols.get("trial_idx"), "trial_idx", "trial", "Trial"]
-                if col and col in df_all.columns
-            ),
-            None,
-        )
+        session_col = adapter_behavioral_column(adapter, df_all, "session", "session", "Session")
+        trial_col = adapter_behavioral_column(adapter, df_all, "trial_idx", "trial_idx", "trial", "Trial")
         if session_col is None or trial_col is None or not {"subject", "session", "trial_idx"}.issubset(out.columns):
             return out
 
@@ -2072,10 +1809,10 @@ def _(
 
 @app.cell
 def _(
-    Line2D,
-    custom_boxplot,
+    fig_size,
     mo,
     np,
+    paper_boxplot,
     pairwise_K_a,
     pairwise_K_b,
     pairwise_adapter_a,
@@ -2090,283 +1827,79 @@ def _(
     sns,
     ttest_rel,
 ):
+    mo.stop(pairwise_session_occupancy.is_empty(), mo.md("#### No session occupancy for current subset."))
 
-
-    mo.stop(
-        pairwise_session_occupancy.is_empty(),
-        mo.md(
-            "#### Session occupancy and mean accuracy by state\n\nSession-level occupancy could not be built for the current subject subset."
-        ),
-    )
-
-    _acc_schema = {
-        "subject": pl.Utf8,
-        "model_alias": pl.Utf8,
-        "state_label": pl.Utf8,
-        "accuracy": pl.Float64,
-        "n_trials": pl.Int64,
-    }
-
-    def _subject_accuracy(alias: str, df):
+    def subject_accuracy(alias, df):
         if df.is_empty() or "state_label" not in df.columns:
-            return pl.DataFrame(schema=_acc_schema)
-        _df = df
-        if "correct_bool" not in _df.columns:
-            if "performance" not in _df.columns:
-                return pl.DataFrame(schema=_acc_schema)
-            _df = _df.with_columns(
-                pl.col("performance").cast(pl.Boolean).alias("correct_bool")
-            )
+            return pl.DataFrame()
+        if "correct_bool" not in df.columns:
+            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
         return (
-            _df
-            .filter(
-                pl.col("state_label").is_not_null()
-                & pl.col("correct_bool").is_not_null()
-            )
-            .group_by(["subject", "state_label"])
-            .agg(
-                [
-                    (pl.col("correct_bool").cast(pl.Float64).mean() * 100.0).alias("accuracy"),
-                    pl.len().alias("n_trials"),
-                ]
-            )
-            .with_columns(pl.lit(alias).alias("model_alias"))
-            .select(["subject", "model_alias", "state_label", "accuracy", "n_trials"])
+            df.drop_nulls(["state_label", "correct_bool"])
+            .group_by("subject", "state_label")
+            .agg((pl.mean("correct_bool") * 100).alias("value"))
+            .with_columns(pl.lit(alias).alias("model_alias"), pl.lit("Accuracy (%)").alias("metric"))
         )
 
-    _acc_frames = []
-    _acc_a = _subject_accuracy(pairwise_alias_a, pairwise_trial_df_a)
-    _acc_b = _subject_accuracy(pairwise_alias_b, pairwise_trial_df_b)
-    if not _acc_a.is_empty():
-        _acc_frames.append(_acc_a)
-    if not _acc_b.is_empty():
-        _acc_frames.append(_acc_b)
-    pairwise_subject_accuracy = (
-        pl.concat(_acc_frames, how="diagonal")
-        if _acc_frames
-        else pl.DataFrame(schema=_acc_schema)
+    occ = pairwise_subject_occupancy.rename({"occupancy": "value"}).with_columns(
+        pl.lit("Occupancy").alias("metric")
     )
-    pairwise_accuracy_summary = (
-        pairwise_subject_accuracy
-        .group_by(["model_alias", "state_label"])
-        .agg(
-            [
-                pl.len().alias("n_subjects"),
-                pl.mean("accuracy").alias("accuracy_mean"),
-                pl.std("accuracy").alias("accuracy_std"),
-            ]
-        )
-        .with_columns(
-            (pl.col("accuracy_std") / pl.col("n_subjects").sqrt()).alias("accuracy_sem")
-        )
-        .sort(["state_label", "model_alias"])
-    )
+    acc = pl.concat([
+        subject_accuracy(pairwise_alias_a, pairwise_trial_df_a),
+        subject_accuracy(pairwise_alias_b, pairwise_trial_df_b),
+    ], how="diagonal")
 
-    _palette = {
-        pairwise_alias_a: "#1B6CA8",
-        pairwise_alias_b: "#C76D3A",
-    }
-    _occ_pd = pairwise_subject_occupancy.to_pandas()
-    _acc_pd = pairwise_subject_accuracy.to_pandas()
-    _state_order = []
-    for _label in list(_occ_pd.get("state_label", [])) + list(_acc_pd.get("state_label", [])):
-        if _label not in _state_order:
-            _state_order.append(_label)
-    _models = [pairwise_alias_a, pairwise_alias_b]
-    _offsets = np.linspace(-0.18, 0.18, len(_models))
-    _width = 0.26
-    _rng = np.random.default_rng(42)
+    plot_df = pl.concat([occ, acc], how="diagonal").to_pandas()
 
-    def _p_label(pval: float) -> str:
-        if not np.isfinite(pval):
-            return ""
-        if pval < 0.001:
-            return "***"
-        if pval < 0.01:
-            return "**"
-        if pval < 0.05:
-            return "*"
-        return ""
+    models = [pairwise_alias_a, pairwise_alias_b]
+    palette2 = {pairwise_alias_a: "#1B6CA8", pairwise_alias_b: "#C76D3A"}
+    fig, axs = plt.subplot_mosaic([["occ", "acc"]], figsize=fig_size(1, 2))
 
-    def _draw(ax, df_pd, value_col, title, ylabel, ylim=None, chance=None):
-        if df_pd.empty or not _state_order:
-            ax.text(0.5, 0.5, "No data", ha="center", va="center")
-            ax.set_title(title)
-            return
+    for key, metric, ylim, chance in [
+        ("occ", "Occupancy", (0, 1), 1 / pairwise_K_a if pairwise_K_a == pairwise_K_b else None),
+        ("acc", "Accuracy (%)", (0, 100), 100 / pairwise_adapter_a.num_classes if pairwise_adapter_a else None),
+    ]:
+        _ax = axs[key]
+        df = plot_df[plot_df["metric"].eq(metric)]
+        order = sorted(df["state_label"].dropna().unique())
 
         if chance is not None:
-            ax.axhline(
-                chance,
-                color="#7A7A7A",
-                linestyle="--",
-                linewidth=1.0,
-                alpha=0.85,
-            )
+            _ax.axhline(chance, ls="--", lw=1, c="gray")
 
-        _y_min = float(df_pd[value_col].min()) if not df_pd.empty else 0.0
-        _y_max = float(df_pd[value_col].max()) if not df_pd.empty else 1.0
-        _y_span = max(_y_max - _y_min, 1.0)
-        _line_pad = 0.08 * _y_span
-
-        for _state_idx, _state in enumerate(_state_order):
-            _rows_a = df_pd[
-                (df_pd["state_label"] == _state)
-                & (df_pd["model_alias"] == pairwise_alias_a)
-            ][["subject", value_col]]
-            _rows_b = df_pd[
-                (df_pd["state_label"] == _state)
-                & (df_pd["model_alias"] == pairwise_alias_b)
-            ][["subject", value_col]]
-            _paired = _rows_a.merge(_rows_b, on="subject", how="inner", suffixes=("_a", "_b"))
-            _paired_jitter = (
-                _rng.uniform(-0.035, 0.035, size=len(_paired))
-                if len(_paired) > 0
-                else np.array([])
-            )
-
-            for _model_idx, _model in enumerate(_models):
-                _rows = df_pd[
-                    (df_pd["state_label"] == _state)
-                    & (df_pd["model_alias"] == _model)
-                ]
-                if _rows.empty:
-                    continue
-                _values = _rows[value_col].to_numpy(dtype=float)
-                _pos = _state_idx + _offsets[_model_idx]
-                custom_boxplot(
-                    ax,
-                    _values,
-                    positions=[_pos],
-                    widths=_width,
-                    median_colors=_palette[_model],
-                    showfliers=False,
-                    showcaps=True,
-                    zorder=1,
-                    median_linewidth=2.2,
-                )
-
-                if _model == pairwise_alias_a:
-                    _paired_value_col = f"{value_col}_a"
-                else:
-                    _paired_value_col = f"{value_col}_b"
-
-                if not _paired.empty:
-                    _paired_x = _pos + _paired_jitter
-                    ax.scatter(
-                        _paired_x,
-                        _paired[_paired_value_col].to_numpy(dtype=float),
-                        color=_palette[_model],
-                        alpha=0.55,
-                        s=26,
-                        zorder=4,
-                    )
-
-                _paired_subjects = set(_paired["subject"].tolist()) if not _paired.empty else set()
-                _unpaired = _rows[~_rows["subject"].isin(_paired_subjects)]
-                _jitter = _rng.uniform(-0.035, 0.035, size=len(_unpaired))
-                ax.scatter(
-                    np.full(len(_unpaired), _pos) + _jitter,
-                    _unpaired[value_col].to_numpy(dtype=float),
-                    color=_palette[_model],
-                    alpha=0.45,
-                    s=26,
-                    zorder=3,
-                )
-
-            if not _paired.empty:
-                _x_a = _state_idx + _offsets[0] + _paired_jitter
-                _x_b = _state_idx + _offsets[1] + _paired_jitter
-                _y_a = _paired[f"{value_col}_a"].to_numpy(dtype=float)
-                _y_b = _paired[f"{value_col}_b"].to_numpy(dtype=float)
-                for _xa, _xb, _ya, _yb in zip(_x_a, _x_b, _y_a, _y_b, strict=False):
-                    ax.plot(
-                        [_xa, _xb],
-                        [_ya, _yb],
-                        color="#B0B0B0",
-                        linewidth=0.9,
-                        alpha=0.7,
-                        zorder=2,
-                    )
-
-                if len(_paired) >= 2:
-                    if np.allclose(_y_a, _y_b):
-                        _pval = 1.0
-                    else:
-                        _, _pval = ttest_rel(_y_a, _y_b, nan_policy="omit")
-                    _stars = _p_label(float(_pval))
-                    if _stars:
-                        _line_y = max(np.nanmax(_y_a), np.nanmax(_y_b)) + _line_pad
-                        ax.plot(
-                            [_state_idx + _offsets[0], _state_idx + _offsets[1]],
-                            [_line_y, _line_y],
-                            color="black",
-                            linewidth=1.0,
-                            zorder=5,
-                        )
-                        ax.text(
-                            _state_idx,
-                            _line_y + 0.02 * _y_span,
-                            _stars,
-                            ha="center",
-                            va="bottom",
-                            fontsize=10,
-                        )
-
-        ax.set_xticks(range(len(_state_order)))
-        ax.set_xticklabels(_state_order, rotation=20, ha="right")
-        ax.set_title(title)
-        ax.set_xlabel("")
-        ax.set_ylabel(ylabel)
-        if ylim is not None:
-            _upper = max(
-                ylim[1],
-                _y_max + 2.5 * _line_pad,
-            )
-            ax.set_ylim(ylim[0], _upper)
-        sns.despine(ax=ax)
-
-    fig_occ, ax_occ = plt.subplots(figsize=(4, 4), constrained_layout=False)
-    _draw(
-        ax_occ,
-        _occ_pd,
-        "occupancy",
-        "Mean session occupancy by state",
-        "Fractional occupancy",
-        ylim=(0, 1),
-        chance=1.0 / max(1, pairwise_K_a) if pairwise_K_a == pairwise_K_b else None,
-    )
-    fig_acc2, ax_acc = plt.subplots(figsize=(4, 4), constrained_layout=False)
-    _chance_acc = (
-        100.0 / max(1, pairwise_adapter_a.num_classes)
-        if pairwise_adapter_a is not None
-        else None
-    )
-    _draw(
-        ax_acc,
-        _acc_pd,
-        "accuracy",
-        "Mean accuracy by state",
-        "Accuracy (%)",
-        ylim=(0, 100),
-        chance=_chance_acc,
-    )
-
-    _handles = [
-        Line2D([0], [0], marker="o", linestyle="", color=_palette[_model], label=_model, markersize=6)
-        for _model in _models
-    ]
-    for _fig in (fig_occ, fig_acc2):
-        _fig.legend(
-            _handles,
-            _models,
-            title="Model",
-            loc="lower center",
-            bbox_to_anchor=(0.5, -0.02),
-            ncol=2,
-            frameon=False,
+        paper_boxplot(
+            data=df, x="state_label", y="value", hue="model_alias",
+            order=order, hue_order=models, palette=palette2,
+            width=.55, ax=_ax,
         )
-        _fig.tight_layout(rect=(0, 0.08, 1, 1))
-    mo.vstack([fig_occ, fig_acc2,],)
+
+        for i, state in enumerate(order):
+            wide = (
+                df[df["state_label"].eq(state)]
+                .pivot(index="subject", columns="model_alias", values="value")
+                .dropna()
+            )
+            for _, row in wide.iterrows():
+                _ax.plot([i - .2, i + .2], [row[models[0]], row[models[1]]], alpha = 0.15, color = "tab:gray")
+
+            if len(wide) >= 2 and not np.allclose(wide[models[0]], wide[models[1]]):
+                p = ttest_rel(wide[models[0]], wide[models[1]], nan_policy="omit").pvalue
+                stars = "***" if p < .001 else "**" if p < .01 else "*" if p < .05 else "ns"
+                if stars:
+                    y = wide.max().max() + .05 * (ylim[1] - ylim[0])
+                    _ax.plot([i - .2, i + .2], [y, y], c="k", lw=1)
+                    _ax.text(i, y, stars, ha="center", va="bottom")
+
+        _ax.set(xlabel="", ylabel=metric, ylim=ylim)
+        _ax.tick_params(axis="x")
+        sns.despine(ax=_ax)
+
+    handles, labels = axs["occ"].get_legend_handles_labels()
+    for _ax in axs.values():
+        _ax.legend_.remove()
+    fig.legend(handles[:2], labels[:2], title="Model", loc="lower center", ncol=2, frameon=False)
+    fig.tight_layout(rect=(0, .12, 1, 1))
+
+    fig
     return
 
 
@@ -2376,6 +1909,7 @@ def _(
     augment_behavior_metrics,
     fig_size,
     mo,
+    n_shuffles,
     np,
     pairwise_adapter_a,
     pairwise_adapter_b,
@@ -2389,7 +1923,6 @@ def _(
     save_plot,
     sns,
 ):
-    sns.set_context("paper")
     _df_a = augment_behavior_metrics(pairwise_trial_df_a, pairwise_adapter_a)
     _df_b = augment_behavior_metrics(pairwise_trial_df_b, pairwise_adapter_b)
     if not _df_a.empty:
@@ -2449,7 +1982,7 @@ def _(
         _auc = float(np.sum(np.diff(_fpr) * (_tpr[:-1] + _tpr[1:]) / 2.0))
         return _fpr, _tpr, _auc
 
-    def _shuffled_auc(_target, _score, _rng, n_shuffles=200):
+    # def _shuffled_auc(_target, _score, _rng, n_shuffles=200):
         _aucs = []
         for _ in range(n_shuffles):
             _result = _roc_curve(_rng.permutation(_target), _score)
@@ -2482,14 +2015,13 @@ def _(
             if _result is None:
                 continue
             _fpr, _tpr, _auc = _result
-            _shuffle_auc = _shuffled_auc(_target, _score, _rng)
             _name = str(_slot_df["model_name"].iloc[0])
             _ax.plot(
                 _fpr,
                 _tpr,
                 color=_palette.get(_slot, "tab:gray"),
                 lw=2,
-                label=f"{_name} (AUC={_auc:.3f}; shuffled={_shuffle_auc:.3f})",
+                label=f"{_name} (AUC={_auc:.3f})",
             )
             _plotted = True
         _ax.plot([0, 1], [0, 1], color="tab:gray", lw=1, ls="--")
@@ -2514,159 +2046,6 @@ def _(
         ],
         align="center",
     )
-    return
-
-
-@app.cell
-def _(mo):
-    ui_viz_model = mo.ui.dropdown(
-        options=["glm", "glmhmm", "glmhmmt"],
-        value="glmhmm",
-        label="Model kind",
-    )
-    return (ui_viz_model,)
-
-
-@app.cell
-def _(mo, model_aliases, ui_task, ui_viz_model):
-
-    ui_viz_alias = mo.ui.dropdown(
-        options=model_aliases(ui_task.value, ui_viz_model.value),
-        value=None,
-        label="Model alias",
-    )
-    ui_viz_K = mo.ui.slider(start=1, stop=8, value=2, label="K (for GLMHMM/T)")
-
-    mo.vstack([
-        mo.md("### Emission weights from cached fits"),
-        mo.hstack([ui_viz_model, ui_viz_alias, ui_viz_K]),
-    ])
-    return ui_viz_K, ui_viz_alias
-
-
-@app.cell
-def _(
-    build_emission_weights_df,
-    load_fit_bundle,
-    mo,
-    ui_subjects,
-    ui_task,
-    ui_viz_K,
-    ui_viz_alias,
-    ui_viz_model,
-):
-    mo.stop(
-        not ui_viz_alias.value,
-        mo.md("Select a model alias above to visualise weights."),
-    )
-
-    _kind = ui_viz_model.value
-    _K = ui_viz_K.value
-    _adapter_viz, _arrays_store, _names, _views = load_fit_bundle(
-        ui_task.value,
-        _kind,
-        ui_viz_alias.value,
-        _K,
-        ui_subjects.value,
-    )
-
-    mo.stop(
-        not _arrays_store,
-        mo.md(
-            f"No cached arrays were found for `{ui_viz_alias.value}` at K={_K}."
-        ),
-    )
-
-    _plots = _adapter_viz.get_plots()
-
-    try:
-        _fig_ag, _fig_cls = _plots.plot_emission_weights(
-            build_emission_weights_df(_views),
-            K=_K,
-        )
-        _viz_output = mo.vstack([
-            mo.md(f"**{_kind}  K={_K}**  —  {ui_viz_alias.value}"),
-            _fig_ag,
-            _fig_cls,
-        ])
-    except Exception as _e:
-        _viz_output = mo.md(f"⚠️  Could not render weight plot: `{_e}`")
-    _viz_output
-    return
-
-
-@app.cell
-def _(mo):
-    refit_button = mo.ui.run_button(
-        label="⚠️  Re-fit selected (overwrites cached metrics)"
-    )
-    mo.vstack([
-        mo.md("---\n### Re-fit (optional)"),
-        mo.md(
-            "> Runs the fit scripts for the selected task / subjects / K range "
-            "and overwrites `_metrics.parquet` files in the chosen folders.  \n"
-            "> Reload the page afterward to see updated metrics."
-        ),
-        refit_button,
-    ])
-    return (refit_button,)
-
-
-@app.cell
-def _(
-    get_adapter,
-    mo,
-    paths,
-    refit_button,
-    ui_K_range,
-    ui_glmhmm_dir,
-    ui_glmhmmt_dir,
-    ui_subjects,
-    ui_task,
-):
-    mo.stop(
-        not refit_button.value,
-        mo.md("Press the button above to trigger re-fitting."),
-    )
-
-    try:
-        from glmhmmt.cli.fit_glmhmm import main as _fit_glmhmm_main
-        from glmhmmt.cli.fit_glmhmmt import main as _fit_glmhmmt_main
-        _FITTING_AVAILABLE = True
-    except ImportError:
-        _FITTING_AVAILABLE = False
-
-    _K_min, _K_max = ui_K_range.value
-    _K_list = list(range(max(2, _K_min), _K_max + 1))
-
-    if not _FITTING_AVAILABLE:
-        mo.md("❌  Fitting scripts not available in this environment (likely WASM).")
-        mo.stop(True)
-    _baseline_class_idx = int(get_adapter(ui_task.value).baseline_class_idx)
-
-    with mo.status.spinner(title="Re-fitting GLMHMM…"):
-        if ui_glmhmm_dir.value:
-            for _alias in ui_glmhmm_dir.value:
-                _fit_glmhmm_main(
-                    subjects=ui_subjects.value,
-                    K_list=_K_list,
-                    out_dir=paths.RESULTS / "fits" / ui_task.value / "glmhmm" / _alias,
-                    task=ui_task.value,
-                    baseline_class_idx=_baseline_class_idx,
-                )
-
-    with mo.status.spinner(title="Re-fitting GLMHMM-T…"):
-        if ui_glmhmmt_dir.value:
-            for _alias in ui_glmhmmt_dir.value:
-                _fit_glmhmmt_main(
-                    subjects=ui_subjects.value,
-                    K_list=_K_list,
-                    out_dir=paths.RESULTS / "fits" / ui_task.value / "glmhmmt" / _alias,
-                    task=ui_task.value,
-                    baseline_class_idx=_baseline_class_idx,
-                )
-
-    mo.md("✅  Re-fit complete. Reload the notebook to refresh cached metrics.")
     return
 
 

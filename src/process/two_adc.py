@@ -10,6 +10,16 @@ import polars as pl
 import pandas as pd
 
 from ._choice_tau import compute_choice_ewma, load_subject_choice_half_life
+from .design import (
+    choice_outcome_lag_frames,
+    constant_frame,
+    lag_names,
+    lagged_level_indicator_frame,
+    level_indicator_frame,
+    numeric_prefixed,
+    session_one_hot_frame,
+    shifted_lag_frame,
+)
 from ._transition_params import transition_weighted_sum
 from glmhmmt.cli.alexis_functions import get_action_trace
 from glmhmmt.runtime import get_data_dir
@@ -38,40 +48,16 @@ except ImportError:
                 result.append({"key": col, "label": col, "members": {"N": col}})
         return result
 
-from src.process.common import (
-    PreparedWeightFamilyPlot,
-    label_states_by_regressor,
-    prepare_grouped_weight_family_plot,
-    to_pandas_df,
-)
+from src.process.common import label_states_by_regressor
 
 _DELAY_HOT_COL_PREFIX = "delay_"
-_BIAS_HOT_COL_PREFIX = "bias_"
-_CHOICE_LAG_COL_PREFIX = "choice_lag_"
-_CHOICE_LAG_CORR_COL_PREFIX = "choice_lag_corr_"
-_CHOICE_LAG_INC_COL_PREFIX = "choice_lag_inc_"
-_CHOICE_LAG_CORR_ALIAS = "choice_lag_corr"
-_CHOICE_LAG_INC_ALIAS = "choice_lag_inc"
-_CHOICE_LAG_15_ALIAS = "choice_lag_15_lags"
-_CHOICE_LAG_50_ALIAS = "choice_lag_50_lags"
-_CHOICE_LAG_100_ALIAS = "choice_lag_100_lags"
-_AT_CHOICE_LAG_15_ALIAS = "at_choice_lag_15_lags"
-_AT_CHOICE_LAG_50_ALIAS = "at_choice_lag_50_lags"
-_AT_CHOICE_LAG_100_ALIAS = "at_choice_lag_100_lags"
-_REWARD_LAG_COL_PREFIX = "reward_lag_"
-_DIFFICULTY_HOT_COL_PREFIX = "difficulty_hot_"
-_PREV_DIFFICULTY_HOT_COL_PREFIX = "prev_difficulty_hot_"
-_PREV_DIFFICULTY_LAG_COL_PREFIX = "prev_difficulty_lag_"
-_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX = "prev_difficulty_lag_hot_"
-_PREV_DAY_REWARD_LAG_COL_PREFIX = "prev_day_total_reward_lag_"
-_NUM_CHOICE_LAGS = 100
 _NUM_LEGACY_CHOICE_LAGS = 15
 _NUM_MEDIUM_CHOICE_LAGS = 50
 _NUM_REWARD_LAGS = 15
 _NUM_DIFFICULTY_LAGS = 20
 _NUM_DAY_REWARD_LAGS = 5
 _FILTERED_REGRESSOR_TAU = 4.0
-_RAW_PARAM_MODEL_ID = "one hot"
+_RAW_PARAM_MODEL_ID = "one hot2"
 _TRANSITION_PARAM_MODEL_ID = "one hot"
 EMISSION_COLS: list[str] = [
     "bias",
@@ -86,6 +72,7 @@ EMISSION_COLS: list[str] = [
     "at_choice",
     "choice_lag_param",
     "choice_lag_param_2",
+    "choice_lag_param_correct",
     "at_error",
     "at_correct",
     "reward_trace",
@@ -132,7 +119,7 @@ _BIAS_PARAM_SPEC = FittedWeightRegressorSpec(
     fit_model_kind="glm",
     fit_model_id=_RAW_PARAM_MODEL_ID,
     arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_BIAS_HOT_COL_PREFIX,),
+    source_feature_prefixes=("bias_",),
 )
 _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     target_name="stim_param",
@@ -164,7 +151,15 @@ _CHOICE_LAG_PARAM_SPEC = FittedWeightRegressorSpec(
     fit_model_kind="glm",
     fit_model_id=_RAW_PARAM_MODEL_ID,
     arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
+    source_feature_prefixes=("choice_lag_",),
+)
+_CHOICE_LAG_PARAM_CORRECT_SPEC = FittedWeightRegressorSpec(
+    target_name="choice_lag_param_correct",
+    fit_task="2AFC_delay",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=("choice_lag_corr_",),
 )
 _CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
     target_name="choice_lag_param_2",
@@ -172,8 +167,8 @@ _CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
     fit_model_kind="glm",
     fit_model_id=_RAW_PARAM_MODEL_ID,
     arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
-    exclude_features=(f"{_CHOICE_LAG_COL_PREFIX}01",),
+    source_feature_prefixes=("choice_lag_",),
+    exclude_features=("choice_lag_01",),
 )
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
@@ -188,6 +183,7 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "at_choice": r"$\mathrm{A}_t^{\mathrm{choice}}$",
     "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
     "choice_lag_param_2": r"$\mathrm{A}_{t,\geq 2}^{\mathrm{choice,param}}$",
+    "choice_lag_param_correct": r"$\mathrm{A}_t^{\mathrm{choice,correct,param}}$",
     "at_error": r"$\mathrm{A}_t^{\mathrm{error}}$",
     "at_correct": r"$\mathrm{A}_t^{\mathrm{correct}}$",
     "reward_trace": r"$\mathrm{Reward}_{\mathrm{trace}}$",
@@ -220,6 +216,7 @@ _EMISSION_GROUPS: list[dict] = [
     {"key": "at_choice", "label": "action (choice)", "members": {"N": "at_choice"}},
     {"key": "choice_lag_param", "label": "choice lag param", "members": {"N": "choice_lag_param"}},
     {"key": "choice_lag_param_2", "label": "choice lag param 2+", "members": {"N": "choice_lag_param_2"}},
+    {"key": "choice_lag_param_correct", "label": "choice lag correct param", "members": {"N": "choice_lag_param_correct"}},
     {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
     {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
     {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
@@ -299,11 +296,6 @@ def _delay_hot_sort_key(name: str) -> tuple[float, str]:
     return (parsed, name) if parsed is not None else (float("inf"), name)
 
 
-def _bias_hot_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_BIAS_HOT_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
 def _ewma_time_series(values: Sequence[float], period: float = _FILTERED_REGRESSOR_TAU) -> np.ndarray:
     values_np = np.asarray(values, dtype=np.float32).reshape(-1)
     if values_np.size == 0:
@@ -312,53 +304,23 @@ def _ewma_time_series(values: Sequence[float], period: float = _FILTERED_REGRESS
     return ewma.iloc[:, 0].to_numpy(dtype=np.float32)
 
 
-def _choice_lag_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_CHOICE_LAG_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _choice_lag_corr_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_CHOICE_LAG_CORR_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _choice_lag_inc_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_CHOICE_LAG_INC_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _reward_lag_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_REWARD_LAG_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
 def _difficulty_hot_sort_key(name: str) -> tuple[float, str]:
-    suffix = name.removeprefix(_DIFFICULTY_HOT_COL_PREFIX)
+    suffix = name.removeprefix("difficulty_hot_")
     parsed = _parse_delay_level_token(suffix)
     return (parsed, name) if parsed is not None else (float("inf"), name)
 
 
 def _prev_difficulty_hot_sort_key(name: str) -> tuple[float, str]:
-    suffix = name.removeprefix(_PREV_DIFFICULTY_HOT_COL_PREFIX)
+    suffix = name.removeprefix("prev_difficulty_hot_")
     parsed = _parse_delay_level_token(suffix)
     return (parsed, name) if parsed is not None else (float("inf"), name)
 
 
-def _prev_difficulty_lag_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_PREV_DIFFICULTY_LAG_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
 def _prev_difficulty_lag_hot_sort_key(name: str) -> tuple[int, float, str]:
-    suffix = name.removeprefix(_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX)
+    suffix = name.removeprefix("prev_difficulty_lag_hot_")
     lag, sep, level_token = suffix.partition("_")
     parsed = _parse_delay_level_token(level_token) if sep and lag.isdigit() else None
     return (int(lag), parsed, name) if parsed is not None else (10**9, float("inf"), name)
-
-
-def _prev_day_reward_lag_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_PREV_DAY_REWARD_LAG_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
 
 
 def _stim_x_delay_hot_sort_key(name: str) -> tuple[float, str]:
@@ -379,20 +341,8 @@ def _delay_hot_cols(columns: list[str]) -> list[str]:
     )
 
 
-def _bias_hot_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_BIAS_HOT_COL_PREFIX)
-            and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
-        ],
-        key=_bias_hot_sort_key,
-    )
-
-
 def _is_bias_hot_col(col: str) -> bool:
-    return col.startswith(_BIAS_HOT_COL_PREFIX) and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+    return col.startswith("bias_") and col.removeprefix("bias_").isdigit()
 
 
 def _drop_unavailable_bias_hot_cols(cols: list[str], available_cols: set[str]) -> list[str]:
@@ -428,73 +378,13 @@ def _session_trial_index(n_trials: int) -> np.ndarray:
     return np.linspace(0.0, 1.0, n, dtype=np.float32)
 
 
-def _choice_lag_cols(columns: list[str], max_lags: int | None = None) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_CHOICE_LAG_COL_PREFIX)
-            and col.removeprefix(_CHOICE_LAG_COL_PREFIX).isdigit()
-            and (
-                max_lags is None
-                or int(col.removeprefix(_CHOICE_LAG_COL_PREFIX)) <= int(max_lags)
-            )
-        ],
-        key=_choice_lag_sort_key,
-    )
-
-
-def _choice_lag_corr_cols(columns: list[str], max_lags: int | None = None) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_CHOICE_LAG_CORR_COL_PREFIX)
-            and col.removeprefix(_CHOICE_LAG_CORR_COL_PREFIX).isdigit()
-            and (
-                max_lags is None
-                or int(col.removeprefix(_CHOICE_LAG_CORR_COL_PREFIX)) <= int(max_lags)
-            )
-        ],
-        key=_choice_lag_corr_sort_key,
-    )
-
-
-def _choice_lag_inc_cols(columns: list[str], max_lags: int | None = None) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_CHOICE_LAG_INC_COL_PREFIX)
-            and col.removeprefix(_CHOICE_LAG_INC_COL_PREFIX).isdigit()
-            and (
-                max_lags is None
-                or int(col.removeprefix(_CHOICE_LAG_INC_COL_PREFIX)) <= int(max_lags)
-            )
-        ],
-        key=_choice_lag_inc_sort_key,
-    )
-
-
-def _reward_lag_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_REWARD_LAG_COL_PREFIX)
-            and col.removeprefix(_REWARD_LAG_COL_PREFIX).isdigit()
-        ],
-        key=_reward_lag_sort_key,
-    )
-
-
 def _difficulty_hot_cols(columns: list[str]) -> list[str]:
     return sorted(
         [
             col
             for col in columns
-            if col.startswith(_DIFFICULTY_HOT_COL_PREFIX)
-            and _parse_delay_level_token(col.removeprefix(_DIFFICULTY_HOT_COL_PREFIX)) is not None
+            if col.startswith("difficulty_hot_")
+            and _parse_delay_level_token(col.removeprefix("difficulty_hot_")) is not None
         ],
         key=_difficulty_hot_sort_key,
     )
@@ -505,22 +395,10 @@ def _prev_difficulty_hot_cols(columns: list[str]) -> list[str]:
         [
             col
             for col in columns
-            if col.startswith(_PREV_DIFFICULTY_HOT_COL_PREFIX)
-            and _parse_delay_level_token(col.removeprefix(_PREV_DIFFICULTY_HOT_COL_PREFIX)) is not None
+            if col.startswith("prev_difficulty_hot_")
+            and _parse_delay_level_token(col.removeprefix("prev_difficulty_hot_")) is not None
         ],
         key=_prev_difficulty_hot_sort_key,
-    )
-
-
-def _prev_difficulty_lag_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_PREV_DIFFICULTY_LAG_COL_PREFIX)
-            and col.removeprefix(_PREV_DIFFICULTY_LAG_COL_PREFIX).isdigit()
-        ],
-        key=_prev_difficulty_lag_sort_key,
     )
 
 
@@ -529,22 +407,10 @@ def _prev_difficulty_lag_hot_cols(columns: list[str]) -> list[str]:
         [
             col
             for col in columns
-            if col.startswith(_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX)
+            if col.startswith("prev_difficulty_lag_hot_")
             and _prev_difficulty_lag_hot_sort_key(col)[0] < 10**9
         ],
         key=_prev_difficulty_lag_hot_sort_key,
-    )
-
-
-def _prev_day_reward_lag_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_PREV_DAY_REWARD_LAG_COL_PREFIX)
-            and col.removeprefix(_PREV_DAY_REWARD_LAG_COL_PREFIX).isdigit()
-        ],
-        key=_prev_day_reward_lag_sort_key,
     )
 
 
@@ -611,12 +477,12 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
         registered.update(family_cols)
 
     delay_hot_cols = _delay_hot_cols(available_cols)
-    bias_hot_cols = _bias_hot_cols(available_cols)
-    choice_lag_cols = _choice_lag_cols(available_cols)
-    choice_lag_corr_cols = _choice_lag_corr_cols(available_cols)
-    choice_lag_inc_cols = _choice_lag_inc_cols(available_cols)
-    choice_lag_15_cols = _choice_lag_cols(available_cols, max_lags=_NUM_LEGACY_CHOICE_LAGS)
-    choice_lag_50_cols = _choice_lag_cols(available_cols, max_lags=_NUM_MEDIUM_CHOICE_LAGS)
+    bias_hot_cols = numeric_prefixed(available_cols, "bias_")
+    choice_lag_cols = numeric_prefixed(available_cols, "choice_lag_")
+    choice_lag_corr_cols = numeric_prefixed(available_cols, "choice_lag_corr_")
+    choice_lag_inc_cols = numeric_prefixed(available_cols, "choice_lag_inc_")
+    choice_lag_15_cols = numeric_prefixed(available_cols, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS)
+    choice_lag_50_cols = numeric_prefixed(available_cols, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS)
     stim_x_delay_hot_cols = _stim_x_delay_hot_cols(available_cols)
 
     for group in _EMISSION_GROUPS:
@@ -632,27 +498,27 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
         if key == "at_choice":
             add_scalar(group)
             add_hidden_family(
-                key=_CHOICE_LAG_15_ALIAS,
+                key="choice_lag_15_lags",
                 label="choice lag (15)",
                 family_cols=choice_lag_15_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_50_ALIAS,
+                key="choice_lag_50_lags",
                 label="choice lag (50)",
                 family_cols=choice_lag_50_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_100_ALIAS,
+                key="choice_lag_100_lags",
                 label="choice lag (100)",
                 family_cols=choice_lag_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_CORR_ALIAS,
+                key="choice_lag_correct",
                 label="choice lag correct",
                 family_cols=choice_lag_corr_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_INC_ALIAS,
+                key="choice_lag_inc",
                 label="choice lag incorrect",
                 family_cols=choice_lag_inc_cols,
             )
@@ -686,7 +552,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
     for col in TRANSITION_COLS:
         add_scalar(col)
 
-    reward_lag_cols = _reward_lag_cols(available_cols)
+    reward_lag_cols = numeric_prefixed(available_cols, "reward_lag_")
     if reward_lag_cols:
         result.append(
             {
@@ -699,7 +565,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
         )
         registered.update(reward_lag_cols)
 
-    prev_day_reward_lag_cols = _prev_day_reward_lag_cols(available_cols)
+    prev_day_reward_lag_cols = numeric_prefixed(available_cols, "prev_day_total_reward_lag_")
     if prev_day_reward_lag_cols:
         result.append(
             {
@@ -738,7 +604,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
         )
         registered.update(prev_difficulty_hot_cols)
 
-    prev_difficulty_lag_cols = _prev_difficulty_lag_cols(available_cols)
+    prev_difficulty_lag_cols = numeric_prefixed(available_cols, "prev_difficulty_lag_")
     if prev_difficulty_lag_cols:
         result.append(
             {
@@ -792,11 +658,11 @@ def _max_sessions_from_df(df: pl.DataFrame | pd.DataFrame) -> int:
 
 def _infer_bias_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     columns = list(df.columns)
-    existing = _bias_hot_cols(columns)
+    existing = numeric_prefixed(columns, "bias_")
     if existing:
         return existing
     max_sessions = _max_sessions_from_df(df)
-    return [f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(max_sessions)]
+    return [f"bias_{idx}" for idx in range(max_sessions)]
 
 
 @lru_cache(maxsize=1)
@@ -814,44 +680,17 @@ def _max_subject_sessions() -> int:
     )
 
 
-def _choice_lag_names(max_lags: int | None = None) -> list[str]:
-    n_lags = _NUM_CHOICE_LAGS if max_lags is None else min(int(max_lags), _NUM_CHOICE_LAGS)
-    return [f"{_CHOICE_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, n_lags + 1)]
-
-
-def _choice_lag_corr_names(max_lags: int | None = None) -> list[str]:
-    n_lags = _NUM_CHOICE_LAGS if max_lags is None else min(int(max_lags), _NUM_CHOICE_LAGS)
-    return [f"{_CHOICE_LAG_CORR_COL_PREFIX}{idx:02d}" for idx in range(1, n_lags + 1)]
-
-
-def _choice_lag_inc_names(max_lags: int | None = None) -> list[str]:
-    n_lags = _NUM_CHOICE_LAGS if max_lags is None else min(int(max_lags), _NUM_CHOICE_LAGS)
-    return [f"{_CHOICE_LAG_INC_COL_PREFIX}{idx:02d}" for idx in range(1, n_lags + 1)]
-
-
-def _reward_lag_names() -> list[str]:
-    return [f"{_REWARD_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, _NUM_REWARD_LAGS + 1)]
-
-
-def _prev_day_reward_lag_names() -> list[str]:
-    return [f"{_PREV_DAY_REWARD_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, _NUM_DAY_REWARD_LAGS + 1)]
-
-
-def _prev_difficulty_lag_names() -> list[str]:
-    return [f"{_PREV_DIFFICULTY_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, _NUM_DIFFICULTY_LAGS + 1)]
-
-
 def _difficulty_hot_names(levels: Sequence[float]) -> list[str]:
-    return [f"{_DIFFICULTY_HOT_COL_PREFIX}{_delay_level_token(level)}" for level in levels]
+    return [f"difficulty_hot_{_delay_level_token(level)}" for level in levels]
 
 
 def _prev_difficulty_hot_names(levels: Sequence[float]) -> list[str]:
-    return [f"{_PREV_DIFFICULTY_HOT_COL_PREFIX}{_delay_level_token(level)}" for level in levels]
+    return [f"prev_difficulty_hot_{_delay_level_token(level)}" for level in levels]
 
 
 def _prev_difficulty_lag_hot_names(levels: Sequence[float]) -> list[str]:
     return [
-        f"{_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX}{lag_idx:02d}_{_delay_level_token(level)}"
+        f"prev_difficulty_lag_hot_{lag_idx:02d}_{_delay_level_token(level)}"
         for lag_idx in range(1, _NUM_DIFFICULTY_LAGS + 1)
         for level in levels
     ]
@@ -929,6 +768,13 @@ from src.process.common import (
     subject_glm_ild_curves as _subject_glm_ild_curves,
     to_pandas_df,
 )
+from src.process.plot_payloads import (
+    TWO_ADC_PROFILE,
+    prepare_binned_accuracy_figure as _prepare_binned_accuracy_figure,
+    prepare_predictions_df as _prepare_predictions_df,
+    prepare_right_by_regressor as _prepare_right_by_regressor,
+    prepare_right_by_regressor_simple as _prepare_right_by_regressor_simple,
+)
 
 PRED_COL = "p_pred"
 RESPONSE_MODE = "pm1_or_prob"
@@ -991,51 +837,8 @@ def _correct_prob_pandas(df: pd.DataFrame) -> pd.Series:
 
 
 def prepare_predictions_df(df_pred):
-    """Prepare a canonical 2AFC-delay trial predictions dataframe."""
-    if isinstance(df_pred, pl.DataFrame):
-        df = df_pred.clone()
-        required = {"stimulus", "response", "performance"}
-        missing = sorted(required.difference(df.columns))
-        if missing:
-            raise ValueError(f"Missing required 2AFC-delay columns: {missing}")
-
-        if "correct_bool" not in df.columns:
-            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
-        if "pL" not in df.columns or "pR" not in df.columns:
-            raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
-
-        df = df.with_columns(
-            pl.col("pR").alias("p_pred"),
-            _correct_prob_expr(pl).alias("p_model_correct"),
-        )
-        if "delays" in df.columns:
-            return df.with_columns(pl.col("delays").cast(pl.Float64).alias("delay"))
-        if "delay_raw" in df.columns:
-            return df.with_columns(pl.col("delay_raw").cast(pl.Float64).alias("delay"))
-        if "delay" in df.columns:
-            return df.with_columns(pl.col("delay").cast(pl.Float64).alias("delay"))
-        return df
-
-    df = df_pred.copy()
-    required = {"stimulus", "response", "performance"}
-    missing = sorted(required.difference(df.columns))
-    if missing:
-        raise ValueError(f"Missing required 2AFC-delay columns: {missing}")
-
-    if "correct_bool" not in df.columns:
-        df["correct_bool"] = df["performance"].astype(bool)
-    if "pL" not in df.columns or "pR" not in df.columns:
-        raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
-
-    df["p_pred"] = df["pR"]
-    df["p_model_correct"] = _correct_prob_pandas(df)
-    if "delays" in df.columns:
-        df["delay"] = pd.to_numeric(df["delays"], errors="coerce")
-    elif "delay_raw" in df.columns:
-        df["delay"] = pd.to_numeric(df["delay_raw"], errors="coerce")
-    elif "delay" in df.columns:
-        df["delay"] = pd.to_numeric(df["delay"], errors="coerce")
-    return df
+    """Compatibility wrapper for the shared 2ADC trial payload builder."""
+    return _prepare_predictions_df(df_pred, profile=TWO_ADC_PROFILE)
 
 
 def prepare_delay_accuracy_summary(
@@ -1163,13 +966,10 @@ def prepare_right_by_regressor_simple(
     xlabel: str | None = None,
     n_bins: int = 10,
 ):
-    return prepare_simple_regressor_curve(
+    return _prepare_right_by_regressor_simple(
         trial_df,
+        profile=TWO_ADC_PROFILE,
         regressor_col=regressor_col,
-        pred_col=PRED_COL,
-        response_mode=RESPONSE_MODE,
-        baseline=BASELINE,
-        ylabel=p_right_label(),
         xlabel=xlabel,
         n_bins=n_bins,
     )
@@ -1183,293 +983,14 @@ def prepare_binned_accuracy_figure(
     xlabel: str | None = None,
     n_bins: int = 4,
 ) -> tuple[list[dict] | None, str | None]:
-    df_pd = to_pandas_df(trial_df)
-    if regressor_col not in df_pd.columns:
-        return None, None
-
-    df_pd, bin_centers = attach_quantile_bin_column(
-        df_pd,
-        value_col=regressor_col,
-        max_bins=int(n_bins),
-        quantiles=None,
+    return _prepare_binned_accuracy_figure(
+        trial_df,
+        profile=TWO_ADC_PROFILE,
+        regressor_col=regressor_col,
+        x_col=x_col,
+        xlabel=xlabel,
+        n_bins=n_bins,
     )
-    if df_pd is None:
-        return None, None
-    reg_bin_labels = bin_centers["_reg_bin"].tolist()
-
-    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
-    df_pd = attach_signed_delay_columns(df_pd)
-    if df_pd.empty:
-        return None, None
-
-    conds = sorted(df_pd["condition"].dropna().unique()) if "condition" in df_pd.columns else []
-    exps = sorted(df_pd["experiment"].dropna().unique()) if "experiment" in df_pd.columns else []
-    delay_ticks, delay_tick_labels = delay_ticks_from_df(df_pd)
-
-    if x_col is not None:
-        if x_col not in df_pd.columns:
-            return None, None
-        df_pd[x_col] = pd.to_numeric(df_pd[x_col], errors="coerce")
-
-        def _custom_subject_summary(*, subgroup_col: str | None = None, subgroup_value=None) -> pd.DataFrame:
-            plot_df = df_pd.copy()
-            if subgroup_col is not None:
-                plot_df = plot_df[plot_df[subgroup_col] == subgroup_value].copy()
-            plot_df = plot_df[
-                plot_df["_reg_bin"].notna()
-                & plot_df[x_col].notna()
-                & plot_df["_reg_bin"].isin(reg_bin_labels)
-            ].copy()
-            if plot_df.empty:
-                return pd.DataFrame()
-            return (
-                plot_df.groupby(["_reg_bin", "subject", x_col], observed=True)
-                .agg(
-                    data_mean=("_response_right", "mean"),
-                    model_mean=(PRED_COL, "mean"),
-                    n_trials=("_response_right", "count"),
-                )
-                .reset_index()
-            )
-
-        panels: list[dict] = [
-            {
-                "summary": summarize_grouped_panel(
-                    df_pd,
-                    line_group_col="_reg_bin",
-                    x_col=x_col,
-                    subject_col="subject",
-                    data_col="_response_right",
-                    model_col=PRED_COL,
-                    line_order=reg_bin_labels,
-                ),
-                "subject_summary": _custom_subject_summary(),
-                "meta": {
-                    "xlabel": xlabel or display_regressor_name(x_col),
-                    "ylabel": p_right_label(),
-                    "legend_title": display_regressor_name(regressor_col),
-                    "baseline": BASELINE,
-                    "x_col": x_col,
-                    "fit_x_col": x_col,
-                },
-            }
-        ]
-
-        for cond in conds:
-            panels.append(
-                {
-                    "summary": summarize_grouped_panel(
-                        df_pd,
-                        line_group_col="_reg_bin",
-                        x_col=x_col,
-                        subject_col="subject",
-                        data_col="_response_right",
-                        model_col=PRED_COL,
-                        line_order=reg_bin_labels,
-                        subgroup_col="condition",
-                        subgroup_value=cond,
-                    ),
-                    "subject_summary": _custom_subject_summary(
-                        subgroup_col="condition",
-                        subgroup_value=cond,
-                    ),
-                    "meta": {
-                        "xlabel": xlabel or display_regressor_name(x_col),
-                        "ylabel": p_right_label(),
-                        "legend_title": display_regressor_name(regressor_col),
-                        "baseline": BASELINE,
-                        "x_col": x_col,
-                        "fit_x_col": x_col,
-                    },
-                }
-            )
-
-        for exp in exps:
-            panels.append(
-                {
-                    "summary": summarize_grouped_panel(
-                        df_pd,
-                        line_group_col="_reg_bin",
-                        x_col=x_col,
-                        subject_col="subject",
-                        data_col="_response_right",
-                        model_col=PRED_COL,
-                        line_order=reg_bin_labels,
-                        subgroup_col="experiment",
-                        subgroup_value=exp,
-                    ),
-                    "subject_summary": _custom_subject_summary(
-                        subgroup_col="experiment",
-                        subgroup_value=exp,
-                    ),
-                    "meta": {
-                        "xlabel": xlabel or display_regressor_name(x_col),
-                        "ylabel": p_right_label(),
-                        "legend_title": display_regressor_name(regressor_col),
-                        "baseline": BASELINE,
-                        "x_col": x_col,
-                        "fit_x_col": x_col,
-                    },
-                }
-            )
-
-        return panels, display_regressor_name(regressor_col)
-
-    def _subject_summary(
-        *,
-        x_col: str,
-        subgroup_col: str | None = None,
-        subgroup_value=None,
-    ) -> pd.DataFrame:
-        plot_df = df_pd.copy()
-        if subgroup_col is not None:
-            plot_df = plot_df[plot_df[subgroup_col] == subgroup_value].copy()
-        plot_df = plot_df[
-            plot_df["_reg_bin"].notna()
-            & plot_df[x_col].notna()
-            & plot_df["_reg_bin"].isin(reg_bin_labels)
-        ].copy()
-        if plot_df.empty:
-            return pd.DataFrame()
-        return (
-            plot_df.groupby(["_reg_bin", "subject", x_col], observed=True)
-            .agg(
-                data_mean=("_response_right", "mean"),
-                model_mean=(PRED_COL, "mean"),
-                n_trials=("_response_right", "count"),
-            )
-            .reset_index()
-        )
-
-    panels: list[dict] = []
-
-    panels.append(
-        {
-            "summary": summarize_grouped_panel(
-                df_pd,
-                line_group_col="_reg_bin",
-                x_col="delay",
-                subject_col="subject",
-                data_col="_response_right",
-                model_col=PRED_COL,
-                line_order=reg_bin_labels,
-            ),
-            "subject_summary": _subject_summary(x_col="delay"),
-            "meta": {
-                "xlabel": "Delay",
-                "ylabel": p_right_label(),
-                "legend_title": display_regressor_name(regressor_col),
-                "baseline": BASELINE,
-                "xticks": delay_ticks,
-                "x_tick_labels": delay_tick_labels,
-                "x_col": "delay",
-            },
-        }
-    )
-
-    if "_signed_delay_cat" in df_pd.columns and df_pd["_signed_delay_cat"].notna().any():
-        x_order, x_tick_labels = signed_delay_order_and_labels(df_pd)
-        signed_delay_code_col = "_signed_delay_code"
-        code_map = {value: idx for idx, value in enumerate(x_order)}
-        df_pd[signed_delay_code_col] = df_pd["_signed_delay_cat"].astype(str).map(code_map)
-        signed_summary = summarize_grouped_panel(
-            df_pd,
-            line_group_col="_reg_bin",
-            x_col="_signed_delay_cat",
-            subject_col="subject",
-            data_col="_response_right",
-            model_col=PRED_COL,
-            line_order=reg_bin_labels,
-            x_order=x_order,
-        )
-        if not signed_summary.empty:
-            signed_summary[signed_delay_code_col] = signed_summary["_signed_delay_cat"].astype(str).map(code_map)
-        signed_subject_summary = _subject_summary(x_col="_signed_delay_cat")
-        if not signed_subject_summary.empty:
-            signed_subject_summary[signed_delay_code_col] = (
-                signed_subject_summary["_signed_delay_cat"].astype(str).map(code_map)
-            )
-        panels.append(
-            {
-                "summary": signed_summary,
-                "subject_summary": signed_subject_summary,
-                "meta": {
-                    "xlabel": "Signed delay",
-                    "ylabel": p_right_label(),
-                    "legend_title": display_regressor_name(regressor_col),
-                    "baseline": BASELINE,
-                    "x_order": x_order,
-                    "x_tick_labels": x_tick_labels,
-                    "categorical_x": True,
-                    "x_col": "_signed_delay_cat",
-                    "fit_x_col": signed_delay_code_col,
-                },
-            }
-        )
-
-    for cond in conds:
-        panels.append(
-            {
-                "summary": summarize_grouped_panel(
-                    df_pd,
-                    line_group_col="_reg_bin",
-                    x_col="delay",
-                    subject_col="subject",
-                    data_col="_response_right",
-                    model_col=PRED_COL,
-                    line_order=reg_bin_labels,
-                    subgroup_col="condition",
-                    subgroup_value=cond,
-                ),
-                "subject_summary": _subject_summary(
-                    x_col="delay",
-                    subgroup_col="condition",
-                    subgroup_value=cond,
-                ),
-                "meta": {
-                    "xlabel": "Delay",
-                    "ylabel": p_right_label(),
-                    "legend_title": display_regressor_name(regressor_col),
-                    "baseline": BASELINE,
-                    "xticks": delay_ticks,
-                    "x_tick_labels": delay_tick_labels,
-                    "x_col": "delay",
-                },
-            }
-        )
-
-    for exp in exps:
-        panels.append(
-            {
-                "summary": summarize_grouped_panel(
-                    df_pd,
-                    line_group_col="_reg_bin",
-                    x_col="delay",
-                    subject_col="subject",
-                    data_col="_response_right",
-                    model_col=PRED_COL,
-                    line_order=reg_bin_labels,
-                    subgroup_col="experiment",
-                    subgroup_value=exp,
-                ),
-                "subject_summary": _subject_summary(
-                    x_col="delay",
-                    subgroup_col="experiment",
-                    subgroup_value=exp,
-                ),
-                "meta": {
-                    "xlabel": "Delay",
-                    "ylabel": p_right_label(),
-                    "legend_title": display_regressor_name(regressor_col),
-                    "baseline": BASELINE,
-                    "xticks": delay_ticks,
-                    "x_tick_labels": delay_tick_labels,
-                    "x_col": "delay",
-                },
-            }
-        )
-
-    return panels, display_regressor_name(regressor_col)
 
 
 def prepare_right_by_regressor(
@@ -1481,109 +1002,15 @@ def prepare_right_by_regressor(
     group_col: str | None = None,
     group_order: Sequence | None = None,
 ):
-    df_pd = to_pandas_df(trial_df)
-    required = {regressor_col, "response", PRED_COL, "subject"}
-    if not required.issubset(df_pd.columns):
-        return None, None
-    resolved_group_col, resolved_group_order = resolve_grouping(
-        df_pd,
+    return _prepare_right_by_regressor(
+        trial_df,
+        profile=TWO_ADC_PROFILE,
+        regressor_col=regressor_col,
+        xlabel=xlabel,
+        n_bins=n_bins,
         group_col=group_col,
         group_order=group_order,
     )
-
-    df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
-    df_pd[PRED_COL] = pd.to_numeric(df_pd[PRED_COL], errors="coerce")
-    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
-    df_pd = attach_signed_delay_columns(df_pd)
-
-    df_pd = df_pd[
-        np.isfinite(df_pd[regressor_col])
-        & np.isfinite(df_pd[PRED_COL])
-        & np.isfinite(df_pd["_response_right"])
-    ].copy()
-    if df_pd.empty:
-        return None, None
-
-    df_pd = df_pd[df_pd["_signed_delay_cat"].notna()].copy()
-    if df_pd.empty:
-        return None, None
-
-    df_pd, bin_centers = attach_quantile_bin_column(
-        df_pd,
-        value_col=regressor_col,
-        max_bins=n_bins,
-        quantiles=None,
-    )
-    if df_pd is None:
-        return None, None
-    bin_order = bin_centers["_reg_bin"].tolist()
-
-    delay_order, delay_labels = signed_delay_order_and_labels(df_pd)
-
-    if resolved_group_col is None:
-        summary = summarize_grouped_panel(
-            df_pd,
-            line_group_col="_signed_delay_cat",
-            x_col="_reg_bin",
-            subject_col="subject",
-            data_col="_response_right",
-            model_col=PRED_COL,
-            line_order=delay_order,
-            x_order=bin_order,
-        )
-        line_group_col = "_signed_delay_cat"
-        line_order = delay_order
-        line_labels = delay_labels
-        legend_title = "Signed delay"
-    else:
-        df_pd = df_pd[df_pd[resolved_group_col].notna()].copy()
-        df_pd = df_pd[df_pd[resolved_group_col].isin(resolved_group_order)].copy()
-        subj = (
-            df_pd.groupby(["subject", resolved_group_col, "_reg_bin"], observed=True)
-            .agg(
-                data_mean=("_response_right", "mean"),
-                model_mean=(PRED_COL, "mean"),
-            )
-            .reset_index()
-        )
-        summary = (
-            subj.groupby([resolved_group_col, "_reg_bin"], observed=True)
-            .agg(
-                md=("data_mean", "mean"),
-                sd=("data_mean", "std"),
-                nd=("data_mean", "count"),
-                mm=("model_mean", "mean"),
-            )
-            .reset_index()
-        )
-        summary["sem"] = summary["sd"].fillna(0.0) / np.sqrt(summary["nd"].clip(lower=1))
-        summary[resolved_group_col] = pd.Categorical(
-            summary[resolved_group_col],
-            categories=resolved_group_order,
-            ordered=True,
-        )
-        summary["_reg_bin"] = pd.Categorical(summary["_reg_bin"], categories=bin_order, ordered=True)
-        summary = summary.sort_values([resolved_group_col, "_reg_bin"])
-        line_group_col = resolved_group_col
-        line_order = resolved_group_order
-        line_labels = []
-        legend_title = resolved_group_col
-    if summary.empty:
-        return None, None
-
-    summary = summary.merge(bin_centers, on="_reg_bin", how="left")
-
-    meta = {
-        "xlabel": xlabel or display_regressor_name(regressor_col),
-        "ylabel": p_right_label(),
-        "legend_title": legend_title,
-        "baseline": BASELINE,
-        "line_group_col": line_group_col,
-        "line_order": line_order,
-        "line_labels": line_labels,
-        "legend_outside": True,
-    }
-    return summary, meta
 
 
 
@@ -1606,6 +1033,13 @@ class TwoAFCDelayAdapter(TaskAdapter):
     accuracy_x_label: str = "Delay"
     emission_cols: list[str] = EMISSION_COLS
     transition_cols: list[str] = TRANSITION_COLS
+    bias_param_spec: FittedWeightRegressorSpec = _BIAS_PARAM_SPEC
+    stim_param_spec: FittedWeightRegressorSpec = _STIM_PARAM_SPEC
+    delay_param_spec: FittedWeightRegressorSpec = _DELAY_PARAM_SPEC
+    stim_x_delay_param_spec: FittedWeightRegressorSpec = _STIM_X_DELAY_PARAM_SPEC
+    choice_lag_param_spec: FittedWeightRegressorSpec = _CHOICE_LAG_PARAM_SPEC
+    choice_lag_param_2_spec: FittedWeightRegressorSpec = _CHOICE_LAG_PARAM_2_SPEC
+    choice_lag_param_correct_spec: FittedWeightRegressorSpec = _CHOICE_LAG_PARAM_CORRECT_SPEC
 
     _SCORING_OPTIONS: dict = {
         "stim (w)": [("stim", "pos")],
@@ -1665,9 +1099,9 @@ class TwoAFCDelayAdapter(TaskAdapter):
             session_name: float(pd.to_numeric(df_session["hit"], errors="coerce").fillna(0.0).sum())
             for session_name, df_session in df_pd.groupby("session", sort=False)
         }
-        choice_lag_cols = _choice_lag_names()
-        reward_lag_cols = _reward_lag_names()
-        prev_day_reward_lag_cols = _prev_day_reward_lag_names()
+        choice_lag_cols = lag_names("choice_lag_", 15)
+        reward_lag_cols = lag_names("reward_lag_", _NUM_REWARD_LAGS)
+        prev_day_reward_lag_cols = lag_names("prev_day_total_reward_lag_", _NUM_DAY_REWARD_LAGS)
         prev_day_reward_lag_maps: dict[str, dict[Any, float]] = {}
         for lag_idx, lag_col in enumerate(prev_day_reward_lag_cols, start=1):
             raw_values = [
@@ -1678,7 +1112,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
             ]
             scaled_values = _scale_by_max_sequence(raw_values)
             prev_day_reward_lag_maps[lag_col] = dict(zip(session_order, scaled_values))
-        prev_difficulty_lag_cols = _prev_difficulty_lag_names()
+        prev_difficulty_lag_cols = lag_names("prev_difficulty_lag_", _NUM_DIFFICULTY_LAGS)
 
         parts: list[pd.DataFrame] = []
         for _, df_session in df_pd.groupby("session", sort=False):
@@ -1697,21 +1131,10 @@ class TwoAFCDelayAdapter(TaskAdapter):
                 for lag_col in prev_day_reward_lag_cols
             }
             prev_day_total_reward = prev_day_reward_lags.get(
-                f"{_PREV_DAY_REWARD_LAG_COL_PREFIX}01",
+                "prev_day_total_reward_lag_01",
                 0.0,
             )
-            bias_hot = pd.get_dummies(
-                pd.Series(
-                    np.full(len(part), session_idx, dtype=np.int32),
-                    index=part.index,
-                ),
-                prefix=_BIAS_HOT_COL_PREFIX.removesuffix("_"),
-                prefix_sep="_",
-                dtype=np.float32,
-            ).reindex(
-                columns=[f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(max_sessions)],
-                fill_value=0.0,
-            )
+            bias_hot = session_one_hot_frame(session_idx, max_sessions, part.index)
             delay_hot_cols = {
                 f"{_DELAY_HOT_COL_PREFIX}{_delay_level_token(delay_value)}": np.where(
                     part["delay_raw"] == np.float32(delay_value),
@@ -1730,87 +1153,41 @@ class TwoAFCDelayAdapter(TaskAdapter):
                 ).astype(np.float32)
                 for delay_value in delay_levels
             }
-            choice_lag_df = pd.DataFrame(
-                {
-                    lag_col: part["choice_signed"].shift(lag_idx).fillna(0.0).astype(np.float32)
-                    for lag_idx, lag_col in enumerate(choice_lag_cols, start=1)
-                },
+            choice_lag_df = shifted_lag_frame(part["choice_signed"], choice_lag_cols, part.index)
+            choice_lag_corr_df, choice_lag_inc_df = choice_outcome_lag_frames(
+                part["choice_signed"],
+                part["hit"],
+                n_lags=15,
                 index=part.index,
             )
-            choice_lag_corr_df = pd.DataFrame(
-                {
-                    f"{_CHOICE_LAG_CORR_COL_PREFIX}{lag_idx:02d}": (
-                        part["hit"].shift(lag_idx).fillna(0.0).astype(np.float32)
-                        * part["choice_signed"].shift(lag_idx).fillna(0.0).astype(np.float32)
-                    )
-                    for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)
-                },
+            reward_lag_df = shifted_lag_frame(part["hit"], reward_lag_cols, part.index)
+            prev_day_reward_lag_df = constant_frame(prev_day_reward_lags, part.index)
+            difficulty_hot_df = level_indicator_frame(
+                part["delay_raw"],
+                delay_levels,
+                prefix="difficulty_hot_",
                 index=part.index,
+                label=_delay_level_token,
             )
-            choice_lag_inc_df = pd.DataFrame(
-                {
-                    f"{_CHOICE_LAG_INC_COL_PREFIX}{lag_idx:02d}": (
-                        (1.0 - part["hit"].shift(lag_idx).fillna(0.0).astype(np.float32))
-                        * part["choice_signed"].shift(lag_idx).fillna(0.0).astype(np.float32)
-                    )
-                    for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)
-                },
+            prev_difficulty_hot_df = level_indicator_frame(
+                part["delay_raw"].shift(1).fillna(0.0),
+                delay_levels,
+                prefix="prev_difficulty_hot_",
                 index=part.index,
+                label=_delay_level_token,
             )
-            reward_lag_df = pd.DataFrame(
-                {
-                    lag_col: part["hit"].shift(lag_idx).fillna(0.0).astype(np.float32)
-                    for lag_idx, lag_col in enumerate(reward_lag_cols, start=1)
-                },
-                index=part.index,
+            prev_difficulty_lag_df = shifted_lag_frame(
+                part["delay_raw"].abs(),
+                prev_difficulty_lag_cols,
+                part.index,
             )
-            prev_day_reward_lag_df = pd.DataFrame(
-                {
-                    lag_col: np.full(len(part), value, dtype=np.float32)
-                    for lag_col, value in prev_day_reward_lags.items()
-                },
+            prev_difficulty_lag_hot_df = lagged_level_indicator_frame(
+                part["delay_raw"],
+                delay_levels,
+                prefix="prev_difficulty_lag_hot_",
+                n_lags=_NUM_DIFFICULTY_LAGS,
                 index=part.index,
-            )
-            difficulty_hot_df = pd.DataFrame(
-                {
-                    f"{_DIFFICULTY_HOT_COL_PREFIX}{_delay_level_token(delay_value)}": np.where(
-                        part["delay_raw"] == np.float32(delay_value),
-                        1.0,
-                        0.0,
-                    ).astype(np.float32)
-                    for delay_value in delay_levels
-                },
-                index=part.index,
-            )
-            prev_difficulty_hot_df = pd.DataFrame(
-                {
-                    f"{_PREV_DIFFICULTY_HOT_COL_PREFIX}{_delay_level_token(delay_value)}": np.where(
-                        part["delay_raw"].shift(1).fillna(0.0) == np.float32(delay_value),
-                        1.0,
-                        0.0,
-                    ).astype(np.float32)
-                    for delay_value in delay_levels
-                },
-                index=part.index,
-            )
-            prev_difficulty_lag_df = pd.DataFrame(
-                {
-                    lag_col: part["delay_raw"].shift(lag_idx).fillna(0.0).abs().astype(np.float32)
-                    for lag_idx, lag_col in enumerate(prev_difficulty_lag_cols, start=1)
-                },
-                index=part.index,
-            )
-            prev_difficulty_lag_hot_df = pd.DataFrame(
-                {
-                    f"{_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX}{lag_idx:02d}_{_delay_level_token(delay_value)}": np.where(
-                        part["delay_raw"].shift(lag_idx).fillna(0.0) == np.float32(delay_value),
-                        1.0,
-                        0.0,
-                    ).astype(np.float32)
-                    for lag_idx in range(1, _NUM_DIFFICULTY_LAGS + 1)
-                    for delay_value in delay_levels
-                },
-                index=part.index,
+                label=_delay_level_token,
             )
 
             trace_input = pd.DataFrame(
@@ -1878,22 +1255,22 @@ class TwoAFCDelayAdapter(TaskAdapter):
             part["WM"] = part["WM"].fillna(0).astype(np.float32)
             part["RL"] = part["RL"].fillna(0).astype(np.float32)
             part["ILD"] = part["stim"].astype(np.float32)
+            feature_frames = [
+                ("bias_hot", bias_hot),
+                ("delay_hot", pd.DataFrame(delay_hot_cols, index=part.index)),
+                ("stim_x_delay_hot", pd.DataFrame(stimx_delay_hot_cols, index=part.index)),
+                ("choice_lag", choice_lag_df),
+                ("choice_lag_correct", choice_lag_corr_df),
+                ("choice_lag_inc", choice_lag_inc_df),
+                ("reward_lag", reward_lag_df),
+                ("prev_day_total_reward_lag", prev_day_reward_lag_df),
+                ("difficulty_hot", difficulty_hot_df),
+                ("prev_difficulty_hot", prev_difficulty_hot_df),
+                ("prev_difficulty_lag", prev_difficulty_lag_df),
+                ("prev_difficulty_lag_hot", prev_difficulty_lag_hot_df),
+            ]
             part = pd.concat(
-                [
-                    part,
-                    bias_hot,
-                    pd.DataFrame(delay_hot_cols, index=part.index),
-                    pd.DataFrame(stimx_delay_hot_cols, index=part.index),
-                    choice_lag_df,
-                    choice_lag_corr_df,
-                    choice_lag_inc_df,
-                    reward_lag_df,
-                    prev_day_reward_lag_df,
-                    difficulty_hot_df,
-                    prev_difficulty_hot_df,
-                    prev_difficulty_lag_df,
-                    prev_difficulty_lag_hot_df,
-                ],
+                [part, *(frame for _, frame in feature_frames)],
                 axis=1,
             )
             parts.append(part)
@@ -1906,13 +1283,14 @@ class TwoAFCDelayAdapter(TaskAdapter):
             delay_z = ((delay_raw - delay_mean) / delay_std).astype(np.float32)
         else:
             delay_z = pd.Series(np.zeros(len(feature_df), dtype=np.float32), index=feature_df.index)
-        bias_param = _safe_weighted_sum_regressor(feature_df, _BIAS_PARAM_SPEC)
-        stim_param = _safe_weighted_sum_regressor(feature_df, _STIM_PARAM_SPEC)
-        delay_param = _safe_weighted_sum_regressor(feature_df, _DELAY_PARAM_SPEC)
-        stim_x_delay_param = _safe_weighted_sum_regressor(feature_df, _STIM_X_DELAY_PARAM_SPEC)
-        choice_lag_param = _safe_weighted_sum_regressor(feature_df, _CHOICE_LAG_PARAM_SPEC)
-        choice_lag_param_2 = _safe_weighted_sum_regressor(feature_df, _CHOICE_LAG_PARAM_2_SPEC)
-        reward_lag_cols = _reward_lag_cols(list(feature_df.columns))
+        bias_param = _safe_weighted_sum_regressor(feature_df, self.bias_param_spec)
+        stim_param = _safe_weighted_sum_regressor(feature_df, self.stim_param_spec)
+        delay_param = _safe_weighted_sum_regressor(feature_df, self.delay_param_spec)
+        stim_x_delay_param = _safe_weighted_sum_regressor(feature_df, self.stim_x_delay_param_spec)
+        choice_lag_param = _safe_weighted_sum_regressor(feature_df, self.choice_lag_param_spec)
+        choice_lag_param_2 = _safe_weighted_sum_regressor(feature_df, self.choice_lag_param_2_spec)
+        choice_lag_param_correct = _safe_weighted_sum_regressor(feature_df, self.choice_lag_param_correct_spec)
+        reward_lag_cols = numeric_prefixed(list(feature_df.columns), "reward_lag_")
         difficulty_hot_cols = _difficulty_hot_cols(list(feature_df.columns))
         prev_difficulty_hot_cols = _prev_difficulty_lag_hot_cols(list(feature_df.columns))
         delay_np = np.asarray(delay_z, dtype=np.float32)
@@ -1952,6 +1330,11 @@ class TwoAFCDelayAdapter(TaskAdapter):
                     if choice_lag_param_2 is not None
                     else np.zeros(len(feature_df), dtype=np.float32)
                 ),
+                "choice_lag_param_correct": (
+                    np.asarray(choice_lag_param_correct, dtype=np.float32)
+                    if choice_lag_param_correct is not None
+                    else np.zeros(len(feature_df), dtype=np.float32)
+                ),
                 "reward_lag_param": transition_weighted_sum(
                     feature_df,
                     fit_task=self.task_key,
@@ -1989,33 +1372,29 @@ class TwoAFCDelayAdapter(TaskAdapter):
     ) -> list[str]:
         requested = emission_cols if emission_cols is not None else self.default_emission_cols(feature_df)
         expanded: list[str] = []
+        delay_hot_cols = _infer_delay_hot_cols_from_df(feature_df)
+        stim_x_delay_hot_cols = _stim_x_delay_hot_cols(list(feature_df.columns))
+        if not stim_x_delay_hot_cols:
+            stim_x_delay_hot_cols = [
+                f"stim_x_delay_hot_{col.removeprefix(_DELAY_HOT_COL_PREFIX)}"
+                for col in delay_hot_cols
+            ]
+        choice_lag_cols = numeric_prefixed(list(feature_df.columns), "choice_lag_")
         family_aliases = {
-            "bias_hot": self.bias_hot_cols(feature_df),
-            "delay_hot": self.delay_hot_cols(feature_df),
-            "choice_lag": self.choice_lag_cols(feature_df),
-            "at_choice_lag": self.choice_lag_cols(feature_df),
-            _CHOICE_LAG_CORR_ALIAS: _choice_lag_corr_cols(list(feature_df.columns)),
-            _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_cols(list(feature_df.columns)),
-            _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                feature_df,
-                max_lags=_NUM_LEGACY_CHOICE_LAGS,
-            ),
-            _CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                feature_df,
-                max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-            ),
-            _CHOICE_LAG_100_ALIAS: self.choice_lag_cols(feature_df),
-            _AT_CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                feature_df,
-                max_lags=_NUM_LEGACY_CHOICE_LAGS,
-            ),
-            _AT_CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                feature_df,
-                max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-            ),
-            _AT_CHOICE_LAG_100_ALIAS: self.choice_lag_cols(feature_df),
-            "stim_x_delay_hot": self.stim_x_delay_hot_cols(feature_df),
-            "stim_x_delay_one_hot": self.stim_x_delay_hot_cols(feature_df),
+            "bias_hot": _infer_bias_hot_cols_from_df(feature_df),
+            "delay_hot": delay_hot_cols,
+            "choice_lag": choice_lag_cols,
+            "at_choice_lag": choice_lag_cols,
+            "choice_lag_correct": numeric_prefixed(list(feature_df.columns), "choice_lag_corr_"),
+            "choice_lag_inc": numeric_prefixed(list(feature_df.columns), "choice_lag_inc_"),
+            "choice_lag_15_lags": numeric_prefixed(list(feature_df.columns), "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
+            "choice_lag_50_lags": numeric_prefixed(list(feature_df.columns), "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+            "choice_lag_100_lags": choice_lag_cols,
+            "at_choice_lag_15_lags": numeric_prefixed(list(feature_df.columns), "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
+            "at_choice_lag_50_lags": numeric_prefixed(list(feature_df.columns), "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+            "at_choice_lag_100_lags": choice_lag_cols,
+            "stim_x_delay_hot": stim_x_delay_hot_cols,
+            "stim_x_delay_one_hot": stim_x_delay_hot_cols,
         }
         for col in requested:
             expanded.extend(family_aliases.get(col, [col]))
@@ -2047,7 +1426,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
         ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
         dynamic_ucols = [
-            *_reward_lag_cols(list(feature_df.columns)),
+            *numeric_prefixed(list(feature_df.columns), "reward_lag_"),
             *_difficulty_hot_cols(list(feature_df.columns)),
             *_prev_difficulty_hot_cols(list(feature_df.columns)),
         ]
@@ -2058,6 +1437,14 @@ class TwoAFCDelayAdapter(TaskAdapter):
         if bad_u:
             raise ValueError(
                 f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
+            )
+        missing_e = [c for c in ecols if c not in feature_df.columns]
+        missing_u = [c for c in ucols if c not in feature_df.columns]
+        if missing_e or missing_u:
+            raise ValueError(
+                "Requested design columns are not present in feature_df. "
+                f"Missing emission columns: {missing_e}; missing transition columns: {missing_u}. "
+                "Build optional features through load_subject or build_feature_df before calling build_design_matrices."
             )
 
         y_np = feature_df["model_choice_bin"].to_numpy().astype(np.int32)
@@ -2093,18 +1480,23 @@ class TwoAFCDelayAdapter(TaskAdapter):
                 f"stim_x_delay_hot_{_delay_level_token(delay_value)}"
                 for delay_value in _all_delay_levels()
             ]
-            bias_hot_cols = [f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(_max_subject_sessions())]
-            choice_lag_cols = _choice_lag_names()
+            bias_hot_cols = [f"bias_{idx}" for idx in range(_max_subject_sessions())]
+            choice_lag_cols = lag_names("choice_lag_", 15)
         else:
-            delay_hot_cols = self.delay_hot_cols(df)
-            stim_x_delay_hot_cols = self.stim_x_delay_hot_cols(df)
-            bias_hot_cols = self.bias_hot_cols(df)
-            choice_lag_cols = self.choice_lag_cols(df)
+            delay_hot_cols = _infer_delay_hot_cols_from_df(df)
+            stim_x_delay_hot_cols = _stim_x_delay_hot_cols(list(df.columns))
+            if not stim_x_delay_hot_cols:
+                stim_x_delay_hot_cols = [
+                    f"stim_x_delay_hot_{col.removeprefix(_DELAY_HOT_COL_PREFIX)}"
+                    for col in delay_hot_cols
+                ]
+            bias_hot_cols = _infer_bias_hot_cols_from_df(df)
+            choice_lag_cols = numeric_prefixed(list(df.columns), "choice_lag_")
 
         default_cols = [
+            *self.emission_cols,
             *bias_hot_cols,
             *choice_lag_cols,
-            "stim",
             *delay_hot_cols,
             *stim_x_delay_hot_cols,
         ]
@@ -2119,11 +1511,11 @@ class TwoAFCDelayAdapter(TaskAdapter):
                 [
                     *self.default_transition_cols(),
                     *_LEGACY_TRANSITION_COLS,
-                    *_reward_lag_names(),
-                    *_prev_day_reward_lag_names(),
+                    *lag_names("reward_lag_", _NUM_REWARD_LAGS),
+                    *lag_names("prev_day_total_reward_lag_", _NUM_DAY_REWARD_LAGS),
                     *_all_difficulty_hot_names(),
                     *_all_prev_difficulty_hot_names(),
-                    *_prev_difficulty_lag_names(),
+                    *lag_names("prev_difficulty_lag_", _NUM_DIFFICULTY_LAGS),
                     *_all_prev_difficulty_lag_hot_names(),
                 ]
             )
@@ -2133,32 +1525,42 @@ class TwoAFCDelayAdapter(TaskAdapter):
         available_cols = list(self.emission_cols)
         available_cols.extend(
             [
-                _CHOICE_LAG_15_ALIAS,
-                _CHOICE_LAG_50_ALIAS,
-                _CHOICE_LAG_100_ALIAS,
-                _CHOICE_LAG_CORR_ALIAS,
-                _CHOICE_LAG_INC_ALIAS,
-                _AT_CHOICE_LAG_15_ALIAS,
-                _AT_CHOICE_LAG_50_ALIAS,
-                _AT_CHOICE_LAG_100_ALIAS,
+                "choice_lag_15_lags",
+                "choice_lag_50_lags",
+                "choice_lag_100_lags",
+                "choice_lag_correct",
+                "choice_lag_inc",
+                "at_choice_lag_15_lags",
+                "at_choice_lag_50_lags",
+                "at_choice_lag_100_lags",
             ]
         )
-        available_cols.extend(self.choice_lag_cols(df))
         available_cols.extend(
-            _choice_lag_corr_cols(list(df.columns))
+            numeric_prefixed(list(df.columns), "choice_lag_")
             if df is not None
-            else _choice_lag_corr_names()
+            else lag_names("choice_lag_", 15)
         )
         available_cols.extend(
-            _choice_lag_inc_cols(list(df.columns))
+            numeric_prefixed(list(df.columns), "choice_lag_corr_")
             if df is not None
-            else _choice_lag_inc_names()
+            else lag_names("choice_lag_corr_", 15)
+        )
+        available_cols.extend(
+            numeric_prefixed(list(df.columns), "choice_lag_inc_")
+            if df is not None
+            else lag_names("choice_lag_inc_", 15)
         )
         if df is not None:
-            available_cols.extend(self.sf_cols(df))
-            available_cols.extend(self.delay_hot_cols(df))
-            available_cols.extend(self.stim_x_delay_hot_cols(df))
-            available_cols.extend(self.bias_hot_cols(df))
+            delay_hot_cols = _infer_delay_hot_cols_from_df(df)
+            stim_x_delay_hot_cols = _stim_x_delay_hot_cols(list(df.columns))
+            if not stim_x_delay_hot_cols:
+                stim_x_delay_hot_cols = [
+                    f"stim_x_delay_hot_{col.removeprefix(_DELAY_HOT_COL_PREFIX)}"
+                    for col in delay_hot_cols
+                ]
+            available_cols.extend(delay_hot_cols)
+            available_cols.extend(stim_x_delay_hot_cols)
+            available_cols.extend(_infer_bias_hot_cols_from_df(df))
         return list(dict.fromkeys(available_cols))
 
     def resolve_design_names(
@@ -2171,60 +1573,46 @@ class TwoAFCDelayAdapter(TaskAdapter):
         requested_ucols = list(transition_cols) if transition_cols is not None else self.default_transition_cols()
         expanded_ecols: list[str] = []
         if df is not None:
+            columns = list(df.columns)
+            delay_hot_cols = _infer_delay_hot_cols_from_df(df)
+            stim_x_delay_hot_cols = _stim_x_delay_hot_cols(columns)
+            if not stim_x_delay_hot_cols:
+                stim_x_delay_hot_cols = [
+                    f"stim_x_delay_hot_{col.removeprefix(_DELAY_HOT_COL_PREFIX)}"
+                    for col in delay_hot_cols
+                ]
+            choice_lag_cols = numeric_prefixed(columns, "choice_lag_")
             family_aliases = {
-                "bias_hot": self.bias_hot_cols(df),
-                "delay_hot": self.delay_hot_cols(df),
-                "choice_lag": self.choice_lag_cols(df),
-                "at_choice_lag": self.choice_lag_cols(df),
-                _CHOICE_LAG_CORR_ALIAS: _choice_lag_corr_cols(list(df.columns)),
-                _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_cols(list(df.columns)),
-                _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_LEGACY_CHOICE_LAGS,
-                ),
-                _CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-                ),
-                _CHOICE_LAG_100_ALIAS: self.choice_lag_cols(df),
-                _AT_CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_LEGACY_CHOICE_LAGS,
-                ),
-                _AT_CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-                ),
-                _AT_CHOICE_LAG_100_ALIAS: self.choice_lag_cols(df),
-                "stim_x_delay_hot": self.stim_x_delay_hot_cols(df),
-                "stim_x_delay_one_hot": self.stim_x_delay_hot_cols(df),
+                "bias_hot": _infer_bias_hot_cols_from_df(df),
+                "delay_hot": delay_hot_cols,
+                "choice_lag": choice_lag_cols,
+                "at_choice_lag": choice_lag_cols,
+                "choice_lag_correct": numeric_prefixed(columns, "choice_lag_corr_"),
+                "choice_lag_inc": numeric_prefixed(columns, "choice_lag_inc_"),
+                "choice_lag_15_lags": numeric_prefixed(columns, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
+                "choice_lag_50_lags": numeric_prefixed(columns, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+                "choice_lag_100_lags": choice_lag_cols,
+                "at_choice_lag_15_lags": numeric_prefixed(columns, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
+                "at_choice_lag_50_lags": numeric_prefixed(columns, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+                "at_choice_lag_100_lags": choice_lag_cols,
+                "stim_x_delay_hot": stim_x_delay_hot_cols,
+                "stim_x_delay_one_hot": stim_x_delay_hot_cols,
             }
             for col in requested_ecols:
                 expanded_ecols.extend(family_aliases.get(col, [col]))
         else:
+            choice_lag_cols = lag_names("choice_lag_", 15)
             family_aliases = {
-                "choice_lag": self.choice_lag_cols(df),
-                "at_choice_lag": self.choice_lag_cols(df),
-                _CHOICE_LAG_CORR_ALIAS: _choice_lag_corr_names(),
-                _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_names(),
-                _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_LEGACY_CHOICE_LAGS,
-                ),
-                _CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-                ),
-                _CHOICE_LAG_100_ALIAS: self.choice_lag_cols(df),
-                _AT_CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_LEGACY_CHOICE_LAGS,
-                ),
-                _AT_CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-                ),
-                _AT_CHOICE_LAG_100_ALIAS: self.choice_lag_cols(df),
+                "choice_lag": choice_lag_cols,
+                "at_choice_lag": choice_lag_cols,
+                "choice_lag_correct": lag_names("choice_lag_corr_", 15),
+                "choice_lag_inc": lag_names("choice_lag_inc_", 15),
+                "choice_lag_15_lags": lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS),
+                "choice_lag_50_lags": lag_names("choice_lag_", _NUM_MEDIUM_CHOICE_LAGS),
+                "choice_lag_100_lags": choice_lag_cols,
+                "at_choice_lag_15_lags": lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS),
+                "at_choice_lag_50_lags": lag_names("choice_lag_", _NUM_MEDIUM_CHOICE_LAGS),
+                "at_choice_lag_100_lags": choice_lag_cols,
             }
             for col in requested_ecols:
                 expanded_ecols.extend(family_aliases.get(col, [col]))
@@ -2233,11 +1621,11 @@ class TwoAFCDelayAdapter(TaskAdapter):
         bad_e = [c for c in expanded_ecols if c not in allowed_ecols]
         dynamic_ucols: list[str] = []
         if df is not None:
-            dynamic_ucols.extend(_reward_lag_cols(list(df.columns)))
-            dynamic_ucols.extend(_prev_day_reward_lag_cols(list(df.columns)))
+            dynamic_ucols.extend(numeric_prefixed(list(df.columns), "reward_lag_"))
+            dynamic_ucols.extend(numeric_prefixed(list(df.columns), "prev_day_total_reward_lag_"))
             dynamic_ucols.extend(_difficulty_hot_cols(list(df.columns)))
             dynamic_ucols.extend(_prev_difficulty_hot_cols(list(df.columns)))
-            dynamic_ucols.extend(_prev_difficulty_lag_cols(list(df.columns)))
+            dynamic_ucols.extend(numeric_prefixed(list(df.columns), "prev_difficulty_lag_"))
             dynamic_ucols.extend(_prev_difficulty_lag_hot_cols(list(df.columns)))
         allowed_ucols = list(dict.fromkeys([*self.available_transition_cols(), *dynamic_ucols]))
         bad_u = [c for c in requested_ucols if c not in allowed_ucols]
@@ -2248,171 +1636,6 @@ class TwoAFCDelayAdapter(TaskAdapter):
                 f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
         return {"X_cols": list(dict.fromkeys(expanded_ecols)), "U_cols": list(requested_ucols)}
-
-    def delay_hot_cols(self, df: pl.DataFrame) -> List[str]:
-        """Return delay one-hot columns."""
-        return _infer_delay_hot_cols_from_df(df)
-
-    def stim_x_delay_hot_cols(self, df: pl.DataFrame) -> List[str]:
-        """Return stimulus×delay one-hot columns."""
-        existing = _stim_x_delay_hot_cols(list(df.columns))
-        if existing:
-            return existing
-        return [
-            f"stim_x_delay_hot_{col.removeprefix(_DELAY_HOT_COL_PREFIX)}"
-            for col in self.delay_hot_cols(df)
-        ]
-
-    def bias_hot_cols(self, df: pl.DataFrame) -> List[str]:
-        """Return session one-hot bias columns."""
-        return _infer_bias_hot_cols_from_df(df)
-
-    def choice_lag_cols(
-        self,
-        df: pl.DataFrame | None = None,
-        max_lags: int | None = None,
-    ) -> List[str]:
-        """Return explicit previous-choice lag columns."""
-        if df is not None:
-            existing = _choice_lag_cols(list(df.columns), max_lags=max_lags)
-            if existing:
-                return existing
-        return _choice_lag_names(max_lags=max_lags)
-
-    def weight_family_specs(self, weights_df=None) -> Dict[str, dict]:
-        df = to_pandas_df(weights_df) if weights_df is not None else None
-        feature_names = [] if df is None or df.empty or "feature" not in df.columns else pd.unique(df["feature"].astype(str)).tolist()
-        delay_cols = _delay_hot_cols(feature_names)
-        stim_x_delay_cols = _stim_x_delay_hot_cols(feature_names)
-        choice_cols = _choice_lag_cols(feature_names)
-        choice_corr_cols = _choice_lag_corr_cols(feature_names)
-        choice_inc_cols = _choice_lag_inc_cols(feature_names)
-        choice_15_cols = _choice_lag_cols(feature_names, max_lags=_NUM_LEGACY_CHOICE_LAGS)
-        choice_50_cols = _choice_lag_cols(feature_names, max_lags=_NUM_MEDIUM_CHOICE_LAGS)
-        bias_cols = _bias_hot_cols(feature_names)
-
-        def _delay_groups(columns: list[str], prefix: str) -> list[tuple[str, list[str]]]:
-            groups: list[tuple[str, list[str]]] = []
-            for col in columns:
-                token = col.removeprefix(prefix)
-                parsed = _parse_delay_level_token(token)
-                if parsed is None:
-                    continue
-                groups.append((_format_delay_level_label(parsed), [col]))
-            return groups
-
-        return {
-            "stim_hot": {
-                "title": "stim×delay one-hot",
-                "xlabel": "delay level",
-                "plot_kind": "box",
-                "feature_groups": _delay_groups(stim_x_delay_cols, "stim_x_delay_hot_"),
-            },
-            "delay_hot": {
-                "title": "delay_hot",
-                "xlabel": "delay level",
-                "plot_kind": "box",
-                "feature_groups": _delay_groups(delay_cols, _DELAY_HOT_COL_PREFIX),
-            },
-            "stim_x_delay_hot": {
-                "title": "stim×delay one-hot",
-                "xlabel": "delay level",
-                "plot_kind": "box",
-                "feature_groups": _delay_groups(stim_x_delay_cols, "stim_x_delay_hot_"),
-            },
-            "stim_x_delay_one_hot": {
-                "title": "stim×delay one-hot",
-                "xlabel": "delay level",
-                "plot_kind": "box",
-                "feature_groups": _delay_groups(stim_x_delay_cols, "stim_x_delay_hot_"),
-            },
-            "choice_lag": {
-                "title": "choice_lag_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
-            },
-            _CHOICE_LAG_15_ALIAS: {
-                "title": "choice_lag_01-15",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_15_cols],
-            },
-            _CHOICE_LAG_50_ALIAS: {
-                "title": "choice_lag_01-50",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_50_cols],
-            },
-            _CHOICE_LAG_100_ALIAS: {
-                "title": "choice_lag_01-100",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
-            },
-            _CHOICE_LAG_CORR_ALIAS: {
-                "title": "choice_lag_corr_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_CORR_COL_PREFIX))), [col]) for col in choice_corr_cols],
-            },
-            _CHOICE_LAG_INC_ALIAS: {
-                "title": "choice_lag_inc_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_INC_COL_PREFIX))), [col]) for col in choice_inc_cols],
-            },
-            "at_choice_lag": {
-                "title": "choice_lag_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
-            },
-            _AT_CHOICE_LAG_15_ALIAS: {
-                "title": "choice_lag_01-15",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_15_cols],
-            },
-            _AT_CHOICE_LAG_50_ALIAS: {
-                "title": "choice_lag_01-50",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_50_cols],
-            },
-            _AT_CHOICE_LAG_100_ALIAS: {
-                "title": "choice_lag_01-100",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
-            },
-            "bias_hot": {
-                "title": "bias_hot",
-                "xlabel": "Session index",
-                "plot_kind": "line",
-                "feature_groups": [(col.removeprefix(_BIAS_HOT_COL_PREFIX), [col]) for col in bias_cols],
-            },
-        }
-
-    def prepare_weight_family_plot(
-        self,
-        weights_df,
-        family_key: str,
-        *,
-        variant: str | None = None,
-    ) -> PreparedWeightFamilyPlot | None:
-        del variant
-        spec = self.weight_family_specs(weights_df).get(family_key)
-        if spec is None:
-            return None
-        return prepare_grouped_weight_family_plot(
-            weights_df,
-            feature_groups=spec["feature_groups"],
-            title=spec["title"],
-            xlabel=spec["xlabel"],
-            plot_kind=spec["plot_kind"],
-            weight_row_indices=(0,),
-        )
 
     def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_emission_groups(list(available_cols))

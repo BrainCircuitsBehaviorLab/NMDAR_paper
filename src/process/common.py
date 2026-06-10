@@ -73,6 +73,55 @@ def resolve_task_plot_columns(
     )
 
 
+def _iter_column_candidates(candidates: Sequence[object]):
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if isinstance(candidate, str):
+            yield candidate
+        elif isinstance(candidate, Sequence):
+            yield from _iter_column_candidates(candidate)
+
+
+def pick_existing_column(df_like, candidates: Sequence[object]) -> str | None:
+    """Return the first candidate column present in a pandas/polars dataframe."""
+
+    columns = set(getattr(df_like, "columns", []))
+    for candidate in _iter_column_candidates(candidates):
+        if candidate in columns:
+            return candidate
+    return None
+
+
+def adapter_behavioral_column(adapter, df_like, key: str, *fallbacks: object) -> str | None:
+    """Resolve a raw behavioral column, preferring the adapter mapping."""
+
+    behavioral_cols = dict(getattr(adapter, "behavioral_cols", {}) or {})
+    candidates: list[object] = []
+    if key == "subject":
+        candidates.extend([behavioral_cols.get("subject"), getattr(adapter, "subject_col", None), "subject"])
+    elif key == "session":
+        candidates.extend([behavioral_cols.get("session"), getattr(adapter, "session_col", None)])
+    elif key in {"trial", "trial_idx"}:
+        session_col = behavioral_cols.get("session") or getattr(adapter, "session_col", None)
+        sort_col = getattr(adapter, "sort_col", None)
+        sort_candidates = [
+            col
+            for col in _iter_column_candidates([sort_col])
+            if col != session_col
+        ]
+        candidates.extend([
+            behavioral_cols.get(key),
+            behavioral_cols.get("trial_idx"),
+            behavioral_cols.get("trial"),
+            sort_candidates,
+        ])
+    else:
+        candidates.append(behavioral_cols.get(key))
+    candidates.extend(fallbacks)
+    return pick_existing_column(df_like, candidates)
+
+
 def to_pandas_df(df_like) -> pd.DataFrame:
     if isinstance(df_like, pd.DataFrame):
         return df_like.copy()

@@ -10,6 +10,17 @@ import jax.numpy as jnp
 import polars as pl
 
 from ._choice_tau import compute_choice_ewma, load_subject_choice_half_life
+from .design import (
+    choice_outcome_lag_frames,
+    constant_frame,
+    lag_level_prefixed,
+    lag_names,
+    lagged_level_indicator_frame,
+    level_indicator_frame,
+    numeric_prefixed,
+    session_one_hot_frame,
+    shifted_lag_frame,
+)
 from ._transition_params import transition_weighted_sum
 from glmhmmt.tasks.fitted_regressors import (
     FittedWeightRegressorSpec,
@@ -20,7 +31,6 @@ from glmhmmt.tasks.fitted_regressors import (
 from glmhmmt.tasks import TaskAdapter, _register, build_selector_groups as _build_selector_groups
 from glmhmmt.runtime import get_data_dir
 from src.process.common import (
-    PreparedWeightFamilyPlot,
     attach_quantile_bin_column,
     attach_response_right_column,
     display_regressor_name,
@@ -28,7 +38,6 @@ from src.process.common import (
     mean_glm_feature_curve as _mean_glm_feature_curve,
     mean_glm_ild_curve as _mean_glm_ild_curve,
     p_right_label,
-    prepare_grouped_weight_family_plot,
     prepare_simple_regressor_curve,
     resolve_grouping,
     summarize_grouped_panel,
@@ -36,32 +45,17 @@ from src.process.common import (
     subject_glm_ild_curves as _subject_glm_ild_curves,
     to_pandas_df,
 )
+from src.process.plot_payloads import (
+    TWO_AFC_PROFILE,
+    prepare_binned_accuracy_figure as _prepare_binned_accuracy_figure,
+    prepare_predictions_df as _prepare_predictions_df,
+    prepare_right_by_regressor as _prepare_right_by_regressor,
+    prepare_right_by_regressor_simple as _prepare_right_by_regressor_simple,
+)
 
 
 # Default experiments to keep (avoids habituation / drug sessions)
 _KEEP_EXPERIMENTS = ["2AFC_2", "2AFC_3", "2AFC_4", "2AFC_6"]
-_SF_COL_PREFIX = "sf_"
-_STIM_ABS_COL_PREFIX = "stim_"
-_ABS_ILD_HOT_COL_PREFIX = "abs_ILD_hot_"
-_BIAS_HOT_COL_PREFIX = "bias_"
-_CHOICE_LAG_COL_PREFIX = "choice_lag_"
-_CHOICE_LAG_CORR_COL_PREFIX = "choice_lag_corr_"
-_CHOICE_LAG_INC_COL_PREFIX = "choice_lag_inc_"
-_CHOICE_LAG_CORRECT_ALIAS = "choice_lag_correct"
-_CHOICE_LAG_INC_ALIAS = "choice_lag_inc"
-_CHOICE_LAG_15_ALIAS = "choice_lag_15_lags"
-_CHOICE_LAG_50_ALIAS = "choice_lag_50_lags"
-_CHOICE_LAG_100_ALIAS = "choice_lag_100_lags"
-_AT_CHOICE_LAG_15_ALIAS = "at_choice_lag_15_lags"
-_AT_CHOICE_LAG_50_ALIAS = "at_choice_lag_50_lags"
-_AT_CHOICE_LAG_100_ALIAS = "at_choice_lag_100_lags"
-_REWARD_LAG_COL_PREFIX = "reward_lag_"
-_DIFFICULTY_HOT_COL_PREFIX = "difficulty_hot_"
-_PREV_DIFFICULTY_HOT_COL_PREFIX = "prev_difficulty_hot_"
-_PREV_DIFFICULTY_LAG_COL_PREFIX = "prev_difficulty_lag_"
-_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX = "prev_difficulty_lag_hot_"
-_PREV_DAY_REWARD_LAG_COL_PREFIX = "prev_day_total_reward_lag_"
-_NUM_CHOICE_LAGS = 15
 _NUM_LEGACY_CHOICE_LAGS = 15
 _NUM_MEDIUM_CHOICE_LAGS = 40
 _NUM_REWARD_LAGS = 40
@@ -121,58 +115,124 @@ _STIM_PARAM_COL = "stim_param"
 _CHOICE_LAG_PARAM_COL = "choice_lag_param"
 _CHOICE_LAG_PARAM_2_COL = "choice_lag_param_2"
 _CHOICE_LAG_PARAM_CORRECT_COL = "choice_lag_param_correct"
-_STIM_PARAM_SPEC = FittedWeightRegressorSpec(
-    target_name="stim_param",
-    fit_task="2AFC",
-    fit_model_kind="glm",
-    fit_model_id=_RAW_PARAM_MODEL_ID,
-    arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_STIM_ABS_COL_PREFIX,),
-    exclude_features=("stim_0",),
-    excluded_subjects=("325", "325.0"),
-    sign=1.0,
-)
-_BIAS_PARAM_SPEC = FittedWeightRegressorSpec(
-    target_name="bias_param",
-    fit_task="2AFC",
-    fit_model_kind="glm",
-    fit_model_id=_RAW_PARAM_MODEL_ID,
-    arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_BIAS_HOT_COL_PREFIX,),
-)
-_AT_CHOICE_PARAM_SPEC = FittedWeightRegressorSpec(
-    target_name="at_choice_param",
-    fit_task="2AFC",
-    fit_model_kind="glm",
-    fit_model_id=_RAW_PARAM_MODEL_ID,
-    arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
-)
-_CHOICE_LAG_PARAM_SPEC = FittedWeightRegressorSpec(
-    target_name=_CHOICE_LAG_PARAM_COL,
-    fit_task="2AFC",
-    fit_model_kind="glm",
-    fit_model_id=_RAW_PARAM_MODEL_ID,
-    arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
-)
-_CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
-    target_name=_CHOICE_LAG_PARAM_2_COL,
-    fit_task="2AFC",
-    fit_model_kind="glm",
-    fit_model_id=_RAW_PARAM_MODEL_ID,
-    arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
-    exclude_features=(f"{_CHOICE_LAG_COL_PREFIX}01",),
-)
-_CHOICE_LAG_PARAM_CORRECT_SPEC = FittedWeightRegressorSpec(
-    target_name=_CHOICE_LAG_PARAM_CORRECT_COL,
-    fit_task="2AFC",
-    fit_model_kind="glm",
-    fit_model_id=_RAW_PARAM_MODEL_ID,
-    arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_CHOICE_LAG_CORR_COL_PREFIX,),
-)
+
+
+def _fitted_weight_spec(
+    *,
+    target_name: str,
+    source_feature_prefixes: tuple[str, ...],
+    fit_task: str = "2AFC",
+    fit_model_id: str = _RAW_PARAM_MODEL_ID,
+    exclude_features: tuple[str, ...] = (),
+    excluded_subjects: tuple[str, ...] = (),
+    sign: float = 1.0,
+) -> FittedWeightRegressorSpec:
+    return FittedWeightRegressorSpec(
+        target_name=target_name,
+        fit_task=fit_task,
+        fit_model_kind="glm",
+        fit_model_id=fit_model_id,
+        arrays_suffix="glm_arrays.npz",
+        source_feature_prefixes=source_feature_prefixes,
+        exclude_features=exclude_features,
+        excluded_subjects=excluded_subjects,
+        sign=sign,
+    )
+
+
+def _stim_param_spec(
+    *,
+    target_name: str = _STIM_PARAM_COL,
+    fit_task: str = "2AFC",
+    fit_model_id: str = _RAW_PARAM_MODEL_ID,
+) -> FittedWeightRegressorSpec:
+    return _fitted_weight_spec(
+        target_name=target_name,
+        fit_task=fit_task,
+        fit_model_id=fit_model_id,
+        source_feature_prefixes=("stim_",),
+        exclude_features=("stim_0",),
+        excluded_subjects=("325", "325.0"),
+    )
+
+
+def _bias_param_spec(
+    *,
+    target_name: str = "bias_param",
+    fit_task: str = "2AFC",
+    fit_model_id: str = _RAW_PARAM_MODEL_ID,
+) -> FittedWeightRegressorSpec:
+    return _fitted_weight_spec(
+        target_name=target_name,
+        fit_task=fit_task,
+        fit_model_id=fit_model_id,
+        source_feature_prefixes=("bias_",),
+    )
+
+
+def _at_choice_param_spec(
+    *,
+    target_name: str = "at_choice_param",
+    fit_task: str = "2AFC",
+    fit_model_id: str = _RAW_PARAM_MODEL_ID,
+) -> FittedWeightRegressorSpec:
+    return _fitted_weight_spec(
+        target_name=target_name,
+        fit_task=fit_task,
+        fit_model_id=fit_model_id,
+        source_feature_prefixes=("choice_lag_",),
+    )
+
+
+def _choice_lag_param_spec(
+    *,
+    target_name: str = _CHOICE_LAG_PARAM_COL,
+    fit_task: str = "2AFC",
+    fit_model_id: str = _RAW_PARAM_MODEL_ID,
+) -> FittedWeightRegressorSpec:
+    return _fitted_weight_spec(
+        target_name=target_name,
+        fit_task=fit_task,
+        fit_model_id=fit_model_id,
+        source_feature_prefixes=("choice_lag_",),
+    )
+
+
+def _choice_lag_param_2_spec(
+    *,
+    target_name: str = _CHOICE_LAG_PARAM_2_COL,
+    fit_task: str = "2AFC",
+    fit_model_id: str = _RAW_PARAM_MODEL_ID,
+) -> FittedWeightRegressorSpec:
+    return _fitted_weight_spec(
+        target_name=target_name,
+        fit_task=fit_task,
+        fit_model_id=fit_model_id,
+        source_feature_prefixes=("choice_lag_",),
+        exclude_features=("choice_lag_01",),
+    )
+
+
+def _choice_lag_param_correct_spec(
+    *,
+    target_name: str = _CHOICE_LAG_PARAM_CORRECT_COL,
+    fit_task: str = "2AFC",
+    fit_model_id: str = _RAW_PARAM_MODEL_ID,
+) -> FittedWeightRegressorSpec:
+    return _fitted_weight_spec(
+        target_name=target_name,
+        fit_task=fit_task,
+        fit_model_id=fit_model_id,
+        source_feature_prefixes=("choice_lag_corr_",),
+    )
+
+
+_STIM_PARAM_SPEC = _stim_param_spec()
+_BIAS_PARAM_SPEC = _bias_param_spec()
+_AT_CHOICE_PARAM_SPEC = _at_choice_param_spec()
+_CHOICE_LAG_PARAM_SPEC = _choice_lag_param_spec()
+_CHOICE_LAG_PARAM_2_SPEC = _choice_lag_param_2_spec()
+_CHOICE_LAG_PARAM_CORRECT_SPEC = _choice_lag_param_correct_spec()
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "stim_vals": r"$\mathrm{Stimulus}$",
@@ -224,74 +284,6 @@ _EMISSION_GROUPS: list[dict] = [
 ]
 
 
-def _sf_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_SF_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _stim_abs_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_STIM_ABS_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _abs_ild_hot_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_ABS_ILD_HOT_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _bias_hot_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_BIAS_HOT_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _choice_lag_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_CHOICE_LAG_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _choice_lag_corr_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_CHOICE_LAG_CORR_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _choice_lag_inc_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_CHOICE_LAG_INC_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _reward_lag_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_REWARD_LAG_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _difficulty_hot_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_DIFFICULTY_HOT_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _prev_difficulty_hot_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_PREV_DIFFICULTY_HOT_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _prev_difficulty_lag_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_PREV_DIFFICULTY_LAG_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
-def _prev_difficulty_lag_hot_sort_key(name: str) -> tuple[int, int, str]:
-    suffix = name.removeprefix(_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX)
-    lag, sep, level = suffix.partition("_")
-    if sep and lag.isdigit() and level.isdigit():
-        return (int(lag), int(level), name)
-    return (10**9, 10**9, name)
-
-
-def _prev_day_reward_lag_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_PREV_DAY_REWARD_LAG_COL_PREFIX)
-    return (int(suffix), name) if suffix.isdigit() else (10**9, name)
-
-
 def _ewma_time_series(values: Sequence[float], period: float = _FILTERED_REGRESSOR_TAU) -> np.ndarray:
     values_np = np.asarray(values, dtype=np.float32).reshape(-1)
     if values_np.size == 0:
@@ -300,44 +292,8 @@ def _ewma_time_series(values: Sequence[float], period: float = _FILTERED_REGRESS
     return ewma.iloc[:, 0].to_numpy(dtype=np.float32)
 
 
-def _stim_abs_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_STIM_ABS_COL_PREFIX)
-            and col.removeprefix(_STIM_ABS_COL_PREFIX).isdigit()
-        ],
-        key=_stim_abs_sort_key,
-    )
-
-
-def _abs_ild_hot_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_ABS_ILD_HOT_COL_PREFIX)
-            and col.removeprefix(_ABS_ILD_HOT_COL_PREFIX).isdigit()
-        ],
-        key=_abs_ild_hot_sort_key,
-    )
-
-
-def _bias_hot_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_BIAS_HOT_COL_PREFIX)
-            and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
-        ],
-        key=_bias_hot_sort_key,
-    )
-
-
 def _is_bias_hot_col(col: str) -> bool:
-    return col.startswith(_BIAS_HOT_COL_PREFIX) and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+    return col.startswith("bias_") and col.removeprefix("bias_").isdigit()
 
 
 def _drop_unavailable_bias_hot_cols(cols: list[str], available_cols: set[str]) -> list[str]:
@@ -373,188 +329,41 @@ def _session_trial_index(n_trials: int) -> np.ndarray:
     return np.linspace(0.0, 1.0, n, dtype=np.float32)
 
 
-def _choice_lag_cols(columns: list[str], max_lags: int | None = None) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_CHOICE_LAG_COL_PREFIX)
-            and col.removeprefix(_CHOICE_LAG_COL_PREFIX).isdigit()
-            and (
-                max_lags is None
-                or int(col.removeprefix(_CHOICE_LAG_COL_PREFIX)) <= int(max_lags)
-            )
-        ],
-        key=_choice_lag_sort_key,
-    )
-
-
-def _choice_lag_corr_cols(columns: list[str], max_lags: int | None = None) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_CHOICE_LAG_CORR_COL_PREFIX)
-            and col.removeprefix(_CHOICE_LAG_CORR_COL_PREFIX).isdigit()
-            and (
-                max_lags is None
-                or int(col.removeprefix(_CHOICE_LAG_CORR_COL_PREFIX)) <= int(max_lags)
-            )
-        ],
-        key=_choice_lag_corr_sort_key,
-    )
-
-
-def _choice_lag_inc_cols(columns: list[str], max_lags: int | None = None) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_CHOICE_LAG_INC_COL_PREFIX)
-            and col.removeprefix(_CHOICE_LAG_INC_COL_PREFIX).isdigit()
-            and (
-                max_lags is None
-                or int(col.removeprefix(_CHOICE_LAG_INC_COL_PREFIX)) <= int(max_lags)
-            )
-        ],
-        key=_choice_lag_inc_sort_key,
-    )
-
-
-def _reward_lag_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_REWARD_LAG_COL_PREFIX)
-            and col.removeprefix(_REWARD_LAG_COL_PREFIX).isdigit()
-        ],
-        key=_reward_lag_sort_key,
-    )
-
-
-def _difficulty_hot_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_DIFFICULTY_HOT_COL_PREFIX)
-            and col.removeprefix(_DIFFICULTY_HOT_COL_PREFIX).isdigit()
-        ],
-        key=_difficulty_hot_sort_key,
-    )
-
-
-def _prev_difficulty_hot_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_PREV_DIFFICULTY_HOT_COL_PREFIX)
-            and col.removeprefix(_PREV_DIFFICULTY_HOT_COL_PREFIX).isdigit()
-        ],
-        key=_prev_difficulty_hot_sort_key,
-    )
-
-
-def _prev_difficulty_lag_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_PREV_DIFFICULTY_LAG_COL_PREFIX)
-            and col.removeprefix(_PREV_DIFFICULTY_LAG_COL_PREFIX).isdigit()
-        ],
-        key=_prev_difficulty_lag_sort_key,
-    )
-
-
-def _prev_difficulty_lag_hot_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX)
-            and _prev_difficulty_lag_hot_sort_key(col)[0] < 10**9
-        ],
-        key=_prev_difficulty_lag_hot_sort_key,
-    )
-
-
-def _prev_day_reward_lag_cols(columns: list[str]) -> list[str]:
-    return sorted(
-        [
-            col
-            for col in columns
-            if col.startswith(_PREV_DAY_REWARD_LAG_COL_PREFIX)
-            and col.removeprefix(_PREV_DAY_REWARD_LAG_COL_PREFIX).isdigit()
-        ],
-        key=_prev_day_reward_lag_sort_key,
-    )
-
-
 def _infer_stim_abs_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     columns = list(df.columns)
-    existing = _stim_abs_cols(columns)
+    existing = numeric_prefixed(columns, "stim_")
     if existing:
         return existing
     if "ILD" not in columns:
         return []
     ild_series = df["ILD"].drop_nulls() if isinstance(df, pl.DataFrame) else df["ILD"].dropna()
     stim_abs_levels = sorted({int(abs(v)) for v in ild_series.to_list()})
-    return [f"{_STIM_ABS_COL_PREFIX}{stim_abs}" for stim_abs in stim_abs_levels]
+    return [f"stim_{stim_abs}" for stim_abs in stim_abs_levels]
 
 
 def _infer_abs_ild_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     columns = list(df.columns)
-    existing = _abs_ild_hot_cols(columns)
+    existing = numeric_prefixed(columns, "abs_ILD_hot_")
     if existing:
         return existing
     if "ILD" not in columns:
         return []
     ild_series = df["ILD"].drop_nulls() if isinstance(df, pl.DataFrame) else df["ILD"].dropna()
     stim_abs_levels = sorted({int(abs(v)) for v in ild_series.to_list()})
-    return [f"{_ABS_ILD_HOT_COL_PREFIX}{stim_abs}" for stim_abs in stim_abs_levels]
-
-
-def _choice_lag_names(max_lags: int | None = None) -> list[str]:
-    n_lags = _NUM_CHOICE_LAGS if max_lags is None else min(int(max_lags), _NUM_CHOICE_LAGS)
-    return [f"{_CHOICE_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, n_lags + 1)]
-
-
-def _choice_lag_corr_names(max_lags: int | None = None) -> list[str]:
-    n_lags = _NUM_CHOICE_LAGS if max_lags is None else min(int(max_lags), _NUM_CHOICE_LAGS)
-    return [f"{_CHOICE_LAG_CORR_COL_PREFIX}{idx:02d}" for idx in range(1, n_lags + 1)]
-
-
-def _choice_lag_inc_names(max_lags: int | None = None) -> list[str]:
-    n_lags = _NUM_CHOICE_LAGS if max_lags is None else min(int(max_lags), _NUM_CHOICE_LAGS)
-    return [f"{_CHOICE_LAG_INC_COL_PREFIX}{idx:02d}" for idx in range(1, n_lags + 1)]
-
-
-def _reward_lag_names() -> list[str]:
-    return [f"{_REWARD_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, _NUM_REWARD_LAGS + 1)]
-
-
-def _prev_day_reward_lag_names() -> list[str]:
-    return [f"{_PREV_DAY_REWARD_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, _NUM_DAY_REWARD_LAGS + 1)]
-
-
-def _prev_difficulty_lag_names() -> list[str]:
-    return [f"{_PREV_DIFFICULTY_LAG_COL_PREFIX}{idx:02d}" for idx in range(1, _NUM_DIFFICULTY_LAGS + 1)]
+    return [f"abs_ILD_hot_{stim_abs}" for stim_abs in stim_abs_levels]
 
 
 def _difficulty_hot_names(levels: Sequence[int]) -> list[str]:
-    return [f"{_DIFFICULTY_HOT_COL_PREFIX}{int(level)}" for level in levels]
+    return [f"difficulty_hot_{int(level)}" for level in levels]
 
 
 def _prev_difficulty_hot_names(levels: Sequence[int]) -> list[str]:
-    return [f"{_PREV_DIFFICULTY_HOT_COL_PREFIX}{int(level)}" for level in levels]
+    return [f"prev_difficulty_hot_{int(level)}" for level in levels]
 
 
 def _prev_difficulty_lag_hot_names(levels: Sequence[int]) -> list[str]:
     return [
-        f"{_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX}{lag_idx:02d}_{int(level)}"
+        f"prev_difficulty_lag_hot_{lag_idx:02d}_{int(level)}"
         for lag_idx in range(1, _NUM_DIFFICULTY_LAGS + 1)
         for level in levels
     ]
@@ -610,14 +419,14 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
         )
         registered.update(family_cols)
 
-    stim_cols = _stim_abs_cols(available_cols)
-    abs_ild_hot_cols = _abs_ild_hot_cols(available_cols)
-    bias_hot_cols = _bias_hot_cols(available_cols)
-    choice_lag_cols = _choice_lag_cols(available_cols)
-    choice_lag_corr_cols = _choice_lag_corr_cols(available_cols)
-    choice_lag_inc_cols = _choice_lag_inc_cols(available_cols)
-    choice_lag_15_cols = _choice_lag_cols(available_cols, max_lags=_NUM_LEGACY_CHOICE_LAGS)
-    choice_lag_50_cols = _choice_lag_cols(available_cols, max_lags=_NUM_MEDIUM_CHOICE_LAGS)
+    stim_cols = numeric_prefixed(available_cols, "stim_")
+    abs_ild_hot_cols = numeric_prefixed(available_cols, "abs_ILD_hot_")
+    bias_hot_cols = numeric_prefixed(available_cols, "bias_")
+    choice_lag_cols = numeric_prefixed(available_cols, "choice_lag_")
+    choice_lag_corr_cols = numeric_prefixed(available_cols, "choice_lag_corr_")
+    choice_lag_inc_cols = numeric_prefixed(available_cols, "choice_lag_inc_")
+    choice_lag_15_cols = numeric_prefixed(available_cols, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS)
+    choice_lag_50_cols = numeric_prefixed(available_cols, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS)
 
     for group in _EMISSION_GROUPS:
         key = group["key"]
@@ -645,27 +454,27 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
         if key == "at_choice":
             add_scalar(group)
             add_hidden_family(
-                key=_CHOICE_LAG_15_ALIAS,
+                key="choice_lag_15_lags",
                 label="choice lag (15)",
                 family_cols=choice_lag_15_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_50_ALIAS,
+                key="choice_lag_50_lags",
                 label="choice lag (50)",
                 family_cols=choice_lag_50_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_100_ALIAS,
+                key="choice_lag_100_lags",
                 label="choice lag (100)",
                 family_cols=choice_lag_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_CORRECT_ALIAS,
+                key="choice_lag_correct",
                 label="choice lag correct",
                 family_cols=choice_lag_corr_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_INC_ALIAS,
+                key="choice_lag_inc",
                 label="choice lag incorrect",
                 family_cols=choice_lag_inc_cols,
             )
@@ -691,7 +500,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
     for col in TRANSITION_COLS:
         add_scalar(col)
 
-    reward_lag_cols = _reward_lag_cols(available_cols)
+    reward_lag_cols = numeric_prefixed(available_cols, "reward_lag_")
     if reward_lag_cols:
         result.append(
             {
@@ -704,7 +513,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
         )
         registered.update(reward_lag_cols)
 
-    prev_day_reward_lag_cols = _prev_day_reward_lag_cols(available_cols)
+    prev_day_reward_lag_cols = numeric_prefixed(available_cols, "prev_day_total_reward_lag_")
     if prev_day_reward_lag_cols:
         result.append(
             {
@@ -717,7 +526,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
         )
         registered.update(prev_day_reward_lag_cols)
 
-    difficulty_hot_cols = _difficulty_hot_cols(available_cols)
+    difficulty_hot_cols = numeric_prefixed(available_cols, "difficulty_hot_")
     if difficulty_hot_cols:
         result.append(
             {
@@ -730,7 +539,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
         )
         registered.update(difficulty_hot_cols)
 
-    prev_difficulty_hot_cols = _prev_difficulty_hot_cols(available_cols)
+    prev_difficulty_hot_cols = numeric_prefixed(available_cols, "prev_difficulty_hot_")
     if prev_difficulty_hot_cols:
         result.append(
             {
@@ -743,7 +552,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
         )
         registered.update(prev_difficulty_hot_cols)
 
-    prev_difficulty_lag_cols = _prev_difficulty_lag_cols(available_cols)
+    prev_difficulty_lag_cols = numeric_prefixed(available_cols, "prev_difficulty_lag_")
     if prev_difficulty_lag_cols:
         result.append(
             {
@@ -756,7 +565,7 @@ def _build_transition_groups(available_cols: list[str]) -> list[dict]:
         )
         registered.update(prev_difficulty_lag_cols)
 
-    prev_difficulty_lag_hot_cols = _prev_difficulty_lag_hot_cols(available_cols)
+    prev_difficulty_lag_hot_cols = lag_level_prefixed(available_cols, "prev_difficulty_lag_hot_")
     if prev_difficulty_lag_hot_cols:
         result.append(
             {
@@ -792,11 +601,11 @@ def _max_sessions_from_df(df: pl.DataFrame | pd.DataFrame) -> int:
 
 def _infer_bias_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     columns = list(df.columns)
-    existing = _bias_hot_cols(columns)
+    existing = numeric_prefixed(columns, "bias_")
     if existing:
         return existing
     max_sessions = _max_sessions_from_df(df)
-    return [f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(max_sessions)]
+    return [f"bias_{idx}" for idx in range(max_sessions)]
 
 
 @lru_cache(maxsize=1)
@@ -817,10 +626,10 @@ def _stim_param_weight_map() -> dict[int, float]:
     """Return pooled one-hot stimulus weights used to build ``stim_param``."""
     feature_weights = mean_feature_weights_from_fit(_STIM_PARAM_SPEC)
     return {
-        int(feat.removeprefix(_STIM_ABS_COL_PREFIX)): weight
+        int(feat.removeprefix("stim_")): weight
         for feat, weight in feature_weights.items()
-        if feat.startswith(_STIM_ABS_COL_PREFIX)
-        and feat.removeprefix(_STIM_ABS_COL_PREFIX).isdigit()
+        if feat.startswith("stim_")
+        and feat.removeprefix("stim_").isdigit()
     }
 
 
@@ -831,7 +640,7 @@ def _build_stim_param_from_spec(
 ) -> np.ndarray:
     """Return the pooled one-hot stimulus contribution for each trial."""
     required_features = {
-        f"{_STIM_ABS_COL_PREFIX}{stim_abs}"
+        f"stim_{stim_abs}"
         for stim_abs in stim_abs_levels
         if stim_abs != 0
     }
@@ -862,50 +671,24 @@ def _weighted_sum_regressor_zero_fill(
             part[col] = np.float32(0.0)
     return weighted_sum_regressor(part, spec, dtype=np.float32)
 
+
+def _safe_weighted_sum_regressor(
+    part: pd.DataFrame,
+    spec: FittedWeightRegressorSpec,
+) -> np.ndarray:
+    try:
+        return _weighted_sum_regressor_zero_fill(part, spec)
+    except (FileNotFoundError, ValueError):
+        return np.zeros(len(part), dtype=np.float32)
+
 PRED_COL = "p_pred"
 RESPONSE_MODE = "pm1_or_prob"
 BASELINE = 0.5
 
 
 def prepare_predictions_df(df_pred):
-    """Prepare a canonical 2AFC trial-level predictions dataframe."""
-    if isinstance(df_pred, pl.DataFrame):
-        df = df_pred.clone()
-        required = {"stimulus", "response", "performance"}
-        missing = sorted(required.difference(df.columns))
-        if missing:
-            raise ValueError(f"Missing required 2AFC columns: {missing}")
-
-        if "correct_bool" not in df.columns:
-            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
-        if "pL" not in df.columns or "pR" not in df.columns:
-            raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
-
-        return df.with_columns(
-            pl.col("pR").alias("p_pred"),
-            pl.when(pl.col("stimulus") == 0)
-            .then(pl.col("pL"))
-            .otherwise(pl.col("pR"))
-            .alias("p_model_correct"),
-        )
-
-    df = df_pred.copy()
-    required = {"stimulus", "response", "performance"}
-    missing = sorted(required.difference(df.columns))
-    if missing:
-        raise ValueError(f"Missing required 2AFC columns: {missing}")
-
-    if "correct_bool" not in df.columns:
-        df["correct_bool"] = df["performance"].astype(bool)
-    if "pL" not in df.columns or "pR" not in df.columns:
-        raise ValueError("Missing 'pL' or 'pR' columns (model predictions).")
-
-    df["p_pred"] = df["pR"]
-    df["p_model_correct"] = df.apply(
-        lambda row: row["pL"] if row["stimulus"] == 0 else row["pR"],
-        axis=1,
-    )
-    return df
+    """Compatibility wrapper for the shared 2AFC trial payload builder."""
+    return _prepare_predictions_df(df_pred, profile=TWO_AFC_PROFILE)
 
 
 def mean_glm_ild_curve(arrays_store, subjects, X_cols, *, ild_max, state_k=None):
@@ -987,13 +770,10 @@ def prepare_right_by_regressor_simple(
     xlabel: str | None = None,
     n_bins: int = 10,
 ):
-    return prepare_simple_regressor_curve(
+    return _prepare_right_by_regressor_simple(
         trial_df,
+        profile=TWO_AFC_PROFILE,
         regressor_col=regressor_col,
-        pred_col=PRED_COL,
-        response_mode=RESPONSE_MODE,
-        baseline=BASELINE,
-        ylabel=p_right_label(),
         xlabel=xlabel,
         n_bins=n_bins,
     )
@@ -1007,172 +787,14 @@ def prepare_binned_accuracy_figure(
     xlabel: str | None = None,
     n_bins: int = 4,
 ) -> tuple[list[dict] | None, str | None]:
-    df_pd = to_pandas_df(trial_df)
-    if regressor_col not in df_pd.columns:
-        return None, None
-
-    df_pd, bin_centers = attach_quantile_bin_column(
-        df_pd,
-        value_col=regressor_col,
-        max_bins=int(n_bins),
-        quantiles=None,
+    return _prepare_binned_accuracy_figure(
+        trial_df,
+        profile=TWO_AFC_PROFILE,
+        regressor_col=regressor_col,
+        x_col=x_col,
+        xlabel=xlabel,
+        n_bins=n_bins,
     )
-    if df_pd is None:
-        return None, None
-    reg_bin_labels = bin_centers["_reg_bin"].tolist()
-
-    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
-    if df_pd.empty:
-        return None, None
-
-    if x_col is None:
-        plot_x_col = "_plot_ild"
-        df_pd[plot_x_col] = pd.to_numeric(df_pd["ILD"], errors="coerce")
-        df_pd[plot_x_col] = np.where(
-            np.isclose(df_pd[plot_x_col], -70.0),
-            -16.0,
-            np.where(np.isclose(df_pd[plot_x_col], 70.0), 16.0, df_pd[plot_x_col]),
-        )
-        plot_xlabel = "ILD (dB)"
-    else:
-        if x_col not in df_pd.columns:
-            return None, None
-        plot_x_col = x_col
-        df_pd[plot_x_col] = pd.to_numeric(df_pd[plot_x_col], errors="coerce")
-        plot_xlabel = xlabel or display_regressor_name(x_col)
-    conds = sorted(df_pd["condition"].dropna().unique()) if "condition" in df_pd.columns else []
-    exps = sorted(df_pd["experiment"].dropna().unique()) if "experiment" in df_pd.columns else []
-    ild_ticks = sorted(pd.to_numeric(df_pd[plot_x_col], errors="coerce").dropna().unique()) if x_col is None else []
-
-    # Build sparse tick labels: show central labels and remapped extremes.
-    if ild_ticks:
-        allowed = {-16.0, -8.0, 0.0, 8.0, 16.0}
-        ild_tick_labels: list[str] = []
-        for t in ild_ticks:
-            val = float(t)
-            if any(np.isclose(val, a) for a in allowed):
-                if np.isclose(val, 0.0):
-                    ild_tick_labels.append("0")
-                elif val > 0:
-                    ild_tick_labels.append(f"+{int(round(val))}")
-                else:
-                    ild_tick_labels.append(str(int(round(val))))
-            else:
-                ild_tick_labels.append("")
-    else:
-        ild_tick_labels = []
-
-    panels: list[dict] = []
-
-    def _subject_summary(*, subgroup_col: str | None = None, subgroup_value=None) -> pd.DataFrame:
-        plot_df = df_pd.copy()
-        if subgroup_col is not None:
-            plot_df = plot_df[plot_df[subgroup_col] == subgroup_value].copy()
-        plot_df = plot_df[
-            plot_df["_reg_bin"].notna()
-            & plot_df[plot_x_col].notna()
-            & plot_df["_reg_bin"].isin(reg_bin_labels)
-        ].copy()
-        if plot_df.empty:
-            return pd.DataFrame()
-        return (
-            plot_df.groupby(["_reg_bin", "subject", plot_x_col], observed=True)
-            .agg(
-                data_mean=("_response_right", "mean"),
-                model_mean=(PRED_COL, "mean"),
-                n_trials=("_response_right", "count"),
-            )
-            .reset_index()
-        )
-
-    panels.append(
-        {
-            "summary": summarize_grouped_panel(
-                df_pd,
-                line_group_col="_reg_bin",
-                x_col=plot_x_col,
-                subject_col="subject",
-                data_col="_response_right",
-                model_col=PRED_COL,
-                line_order=reg_bin_labels,
-            ),
-            "subject_summary": _subject_summary(),
-            "meta": {
-                "xlabel": plot_xlabel,
-                "ylabel": p_right_label(),
-                "legend_title": display_regressor_name(regressor_col),
-                "baseline": BASELINE,
-                "xticks": ild_ticks if x_col is None else None,
-                "x_tick_labels": ild_tick_labels if x_col is None else None,
-                "x_col": plot_x_col,
-                "fit_x_col": plot_x_col,
-            }
-        }
-    )
-
-    for cond in conds:
-        panels.append(
-            {
-                "summary": summarize_grouped_panel(
-                df_pd,
-                line_group_col="_reg_bin",
-                x_col=plot_x_col,
-                subject_col="subject",
-                data_col="_response_right",
-                model_col=PRED_COL,
-                    line_order=reg_bin_labels,
-                    subgroup_col="condition",
-                    subgroup_value=cond,
-                ),
-                "subject_summary": _subject_summary(
-                    subgroup_col="condition",
-                    subgroup_value=cond,
-                ),
-                "meta": {
-                    "xlabel": plot_xlabel,
-                    "ylabel": p_right_label(),
-                    "legend_title": display_regressor_name(regressor_col),
-                    "baseline": BASELINE,
-                    "xticks": ild_ticks if x_col is None else None,
-                    "x_tick_labels": ild_tick_labels if x_col is None else None,
-                    "x_col": plot_x_col,
-                    "fit_x_col": plot_x_col,
-                },
-            }
-        )
-
-    for exp in exps:
-        panels.append(
-            {
-                "summary": summarize_grouped_panel(
-                df_pd,
-                line_group_col="_reg_bin",
-                x_col=plot_x_col,
-                subject_col="subject",
-                data_col="_response_right",
-                model_col=PRED_COL,
-                    line_order=reg_bin_labels,
-                    subgroup_col="experiment",
-                    subgroup_value=exp,
-                ),
-                "subject_summary": _subject_summary(
-                    subgroup_col="experiment",
-                    subgroup_value=exp,
-                ),
-                "meta": {
-                    "xlabel": plot_xlabel,
-                    "ylabel": p_right_label(),
-                    "legend_title": display_regressor_name(regressor_col),
-                    "baseline": BASELINE,
-                    "xticks": ild_ticks if x_col is None else None,
-                    "x_tick_labels": ild_tick_labels if x_col is None else None,
-                    "x_col": plot_x_col,
-                    "fit_x_col": plot_x_col,
-                },
-            }
-        )
-
-    return panels, display_regressor_name(regressor_col)
 
 
 def prepare_right_by_regressor(
@@ -1184,103 +806,15 @@ def prepare_right_by_regressor(
     group_col: str | None = None,
     group_order: Sequence | None = None,
 ):
-    df_pd = to_pandas_df(trial_df)
-    required = {regressor_col, "response", PRED_COL, "subject", "ILD"}
-    if not required.issubset(df_pd.columns):
-        return None, None
-    resolved_group_col, resolved_group_order = resolve_grouping(
-        df_pd,
+    return _prepare_right_by_regressor(
+        trial_df,
+        profile=TWO_AFC_PROFILE,
+        regressor_col=regressor_col,
+        xlabel=xlabel,
+        n_bins=n_bins,
         group_col=group_col,
         group_order=group_order,
     )
-
-    df_pd[regressor_col] = pd.to_numeric(df_pd[regressor_col], errors="coerce")
-    df_pd[PRED_COL] = pd.to_numeric(df_pd[PRED_COL], errors="coerce")
-    df_pd["ILD"] = pd.to_numeric(df_pd["ILD"], errors="coerce")
-    df_pd = attach_response_right_column(df_pd, response_mode=RESPONSE_MODE)
-
-    df_pd = df_pd[
-        np.isfinite(df_pd[regressor_col])
-        & np.isfinite(df_pd[PRED_COL])
-        & np.isfinite(df_pd["_response_right"])
-        & np.isfinite(df_pd["ILD"])
-    ].copy()
-    if df_pd.empty:
-        return None, None
-
-    df_pd, bin_centers = attach_quantile_bin_column(
-        df_pd,
-        value_col=regressor_col,
-        max_bins=n_bins,
-        quantiles=None,
-    )
-    if df_pd is None:
-        return None, None
-    bin_order = bin_centers["_reg_bin"].tolist()
-
-    ild_order = sorted(df_pd["ILD"].dropna().unique().tolist())
-
-    if resolved_group_col is None:
-        summary = summarize_grouped_panel(
-            df_pd,
-            line_group_col="ILD",
-            x_col="_reg_bin",
-            subject_col="subject",
-            data_col="_response_right",
-            model_col=PRED_COL,
-            line_order=ild_order,
-            x_order=bin_order,
-        )
-        line_group_col = "ILD"
-        line_order = ild_order
-        legend_title = "Signed ILD"
-    else:
-        df_pd = df_pd[df_pd[resolved_group_col].notna()].copy()
-        df_pd = df_pd[df_pd[resolved_group_col].isin(resolved_group_order)].copy()
-        subj = (
-            df_pd.groupby(["subject", resolved_group_col, "_reg_bin"], observed=True)
-            .agg(
-                data_mean=("_response_right", "mean"),
-                model_mean=(PRED_COL, "mean"),
-            )
-            .reset_index()
-        )
-        summary = (
-            subj.groupby([resolved_group_col, "_reg_bin"], observed=True)
-            .agg(
-                md=("data_mean", "mean"),
-                sd=("data_mean", "std"),
-                nd=("data_mean", "count"),
-                mm=("model_mean", "mean"),
-            )
-            .reset_index()
-        )
-        summary["sem"] = summary["sd"].fillna(0.0) / np.sqrt(summary["nd"].clip(lower=1))
-        summary[resolved_group_col] = pd.Categorical(
-            summary[resolved_group_col],
-            categories=resolved_group_order,
-            ordered=True,
-        )
-        summary["_reg_bin"] = pd.Categorical(summary["_reg_bin"], categories=bin_order, ordered=True)
-        summary = summary.sort_values([resolved_group_col, "_reg_bin"])
-        line_group_col = resolved_group_col
-        line_order = resolved_group_order
-        legend_title = resolved_group_col
-    if summary.empty:
-        return None, None
-
-    summary = summary.merge(bin_centers, on="_reg_bin", how="left")
-
-    meta = {
-        "xlabel": xlabel or display_regressor_name(regressor_col),
-        "ylabel": p_right_label(),
-        "legend_title": legend_title,
-        "baseline": BASELINE,
-        "line_group_col": line_group_col,
-        "line_order": line_order,
-        "legend_outside": True,
-    }
-    return summary, meta
 
 
 
@@ -1377,12 +911,6 @@ class TwoAFCAdapter(TaskAdapter):
         df_sub: pl.DataFrame,
         tau: float = 50.0,
         include_stim_strength: bool = False,
-        include_stim_param: bool = False,
-        include_bias_param: bool = False,
-        include_at_choice_param: bool = False,
-        include_choice_lag_param: bool = False,
-        include_choice_lag_param_2: bool = False,
-        include_choice_lag_param_correct: bool = False,
     ) -> pl.DataFrame:
         """Return the Alexis 2AFC feature dataframe owned by this adapter."""
         from glmhmmt.cli.alexis_functions import get_action_trace, make_frames_dm
@@ -1414,9 +942,9 @@ class TwoAFCAdapter(TaskAdapter):
             session_name: float(pd.to_numeric(df_session["Hit"], errors="coerce").fillna(0.0).sum())
             for session_name, df_session in df_pd.groupby("Session", sort=False)
         }
-        choice_lag_cols = _choice_lag_names()
-        reward_lag_cols = _reward_lag_names()
-        prev_day_reward_lag_cols = _prev_day_reward_lag_names()
+        choice_lag_cols = lag_names("choice_lag_", 15)
+        reward_lag_cols = lag_names("reward_lag_", _NUM_REWARD_LAGS)
+        prev_day_reward_lag_cols = lag_names("prev_day_total_reward_lag_", _NUM_DAY_REWARD_LAGS)
         prev_day_reward_lag_maps: dict[str, dict[Any, float]] = {}
         for lag_idx, lag_col in enumerate(prev_day_reward_lag_cols, start=1):
             raw_values = [
@@ -1427,7 +955,7 @@ class TwoAFCAdapter(TaskAdapter):
             ]
             scaled_values = _scale_by_max_sequence(raw_values)
             prev_day_reward_lag_maps[lag_col] = dict(zip(session_order, scaled_values))
-        prev_difficulty_lag_cols = _prev_difficulty_lag_names()
+        prev_difficulty_lag_cols = lag_names("prev_difficulty_lag_", _NUM_DIFFICULTY_LAGS)
         parts = []
         for _, df_session in df_pd.groupby("Session", sort=False):
             part = df_session.copy().reset_index(drop=True)
@@ -1438,21 +966,10 @@ class TwoAFCAdapter(TaskAdapter):
                 for lag_col in prev_day_reward_lag_cols
             }
             prev_day_total_reward = prev_day_reward_lags.get(
-                f"{_PREV_DAY_REWARD_LAG_COL_PREFIX}01",
+                "prev_day_total_reward_lag_01",
                 0.0,
             )
-            bias_hot = pd.get_dummies(
-                pd.Series(
-                    np.full(len(part), session_idx, dtype=np.int32),
-                    index=part.index,
-                ),
-                prefix=_BIAS_HOT_COL_PREFIX.removesuffix("_"),
-                prefix_sep="_",
-                dtype=np.float32,
-            ).reindex(
-                columns=[f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(max_sessions)],
-                fill_value=0.0,
-            )
+            bias_hot = session_one_hot_frame(session_idx, max_sessions, part.index)
 
             stim_hot_cols: dict[str, np.ndarray] = {}
             for stim_abs in stim_abs_levels:
@@ -1464,10 +981,10 @@ class TwoAFCAdapter(TaskAdapter):
                         [1.0, -1.0],
                         default=0.0,
                     ).astype(np.float32)
-                stim_hot_cols[f"{_STIM_ABS_COL_PREFIX}{stim_abs}"] = stim_col
+                stim_hot_cols[f"stim_{stim_abs}"] = stim_col
             abs_ild_hot_df = pd.DataFrame(
                 {
-                    f"{_ABS_ILD_HOT_COL_PREFIX}{stim_abs}": (
+                    f"abs_ILD_hot_{stim_abs}": (
                         part["ILD"].abs() == stim_abs
                     ).astype(np.float32)
                     for stim_abs in stim_abs_levels
@@ -1476,87 +993,42 @@ class TwoAFCAdapter(TaskAdapter):
             )
             signed_choice = (2.0 * part["Choice"].fillna(0).astype(np.float32)) - 1.0
 
-            choice_lag_df = pd.DataFrame(
-                {
-                    lag_col: signed_choice.shift(lag_idx).fillna(0.0).astype(np.float32)
-                    for lag_idx, lag_col in enumerate(choice_lag_cols, start=1)
-                },
+            choice_lag_df = shifted_lag_frame(signed_choice, choice_lag_cols, part.index)
+            choice_lag_corr_df, choice_lag_inc_df = choice_outcome_lag_frames(
+                signed_choice,
+                part["Hit"],
+                n_lags=15,
                 index=part.index,
             )
-            choice_lag_corr_df = pd.DataFrame(
-                {
-                    f"{_CHOICE_LAG_CORR_COL_PREFIX}{lag_idx:02d}": (
-                        part["Hit"].shift(lag_idx).fillna(0.0).astype(np.float32)
-                        * signed_choice.shift(lag_idx).fillna(0.0).astype(np.float32)
-                    )
-                    for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)
-                },
+            reward_lag_df = shifted_lag_frame(part["Hit"], reward_lag_cols, part.index)
+            prev_day_reward_lag_df = constant_frame(prev_day_reward_lags, part.index)
+            difficulty_hot_df = level_indicator_frame(
+                part["ILD"].abs(),
+                difficulty_levels,
+                prefix="difficulty_hot_",
                 index=part.index,
             )
-            choice_lag_inc_df = pd.DataFrame(
-                {
-                    f"{_CHOICE_LAG_INC_COL_PREFIX}{lag_idx:02d}": (
-                        (1.0 - part["Hit"].shift(lag_idx).fillna(0.0).astype(np.float32))
-                        * signed_choice.shift(lag_idx).fillna(0.0).astype(np.float32)
-                    )
-                    for lag_idx in range(1, _NUM_CHOICE_LAGS + 1)
-                },
+            prev_difficulty_hot_df = level_indicator_frame(
+                part["ILD"].abs().shift(1).fillna(0),
+                difficulty_levels,
+                prefix="prev_difficulty_hot_",
                 index=part.index,
             )
-            reward_lag_df = pd.DataFrame(
-                {
-                    lag_col: part["Hit"].shift(lag_idx).fillna(0.0).astype(np.float32)
-                    for lag_idx, lag_col in enumerate(reward_lag_cols, start=1)
-                },
+            prev_difficulty_lag_df = shifted_lag_frame(
+                part["ILD"].abs() / stim_scale,
+                prev_difficulty_lag_cols,
+                part.index,
+            )
+            prev_difficulty_lag_hot_df = lagged_level_indicator_frame(
+                part["ILD"].abs(),
+                difficulty_levels,
+                prefix="prev_difficulty_lag_hot_",
+                n_lags=_NUM_DIFFICULTY_LAGS,
                 index=part.index,
             )
-            prev_day_reward_lag_df = pd.DataFrame(
-                {
-                    lag_col: np.full(len(part), value, dtype=np.float32)
-                    for lag_col, value in prev_day_reward_lags.items()
-                },
-                index=part.index,
-            )
-            difficulty_hot_df = pd.DataFrame(
-                {
-                    f"{_DIFFICULTY_HOT_COL_PREFIX}{difficulty_level}": (
-                        part["ILD"].abs() == difficulty_level
-                    ).astype(np.float32)
-                    for difficulty_level in difficulty_levels
-                },
-                index=part.index,
-            )
-            prev_difficulty_hot_df = pd.DataFrame(
-                {
-                    f"{_PREV_DIFFICULTY_HOT_COL_PREFIX}{difficulty_level}": (
-                        part["ILD"].abs().shift(1).fillna(0) == difficulty_level
-                    ).astype(np.float32)
-                    for difficulty_level in difficulty_levels
-                },
-                index=part.index,
-            )
-            prev_difficulty_lag_df = pd.DataFrame(
-                {
-                    lag_col: (
-                        part["ILD"].abs().shift(lag_idx).fillna(0) / stim_scale
-                    ).astype(np.float32)
-                    for lag_idx, lag_col in enumerate(prev_difficulty_lag_cols, start=1)
-                },
-                index=part.index,
-            )
-            prev_difficulty_lag_hot_df = pd.DataFrame(
-                {
-                    f"{_PREV_DIFFICULTY_LAG_HOT_COL_PREFIX}{lag_idx:02d}_{difficulty_level}": (
-                        part["ILD"].abs().shift(lag_idx).fillna(0) == difficulty_level
-                    ).astype(np.float32)
-                    for lag_idx in range(1, _NUM_DIFFICULTY_LAGS + 1)
-                    for difficulty_level in difficulty_levels
-                },
-                index=part.index,
-            )
-            part = pd.concat(
-                [
-                    part,
+            feature_frames = [
+                (
+                    "core",
                     pd.DataFrame(
                         {
                             "bias": np.ones(len(part), dtype=np.float32),
@@ -1566,34 +1038,37 @@ class TwoAFCAdapter(TaskAdapter):
                         },
                         index=part.index,
                     ),
-                    bias_hot,
-                    pd.DataFrame(stim_hot_cols, index=part.index),
-                    abs_ild_hot_df,
-                    choice_lag_df,
-                    choice_lag_corr_df,
-                    choice_lag_inc_df,
-                    reward_lag_df,
-                    prev_day_reward_lag_df,
-                    difficulty_hot_df,
-                    prev_difficulty_hot_df,
-                    prev_difficulty_lag_df,
-                    prev_difficulty_lag_hot_df,
-                ],
+                ),
+                ("bias_hot", bias_hot),
+                ("stim_hot", pd.DataFrame(stim_hot_cols, index=part.index)),
+                ("abs_ILD_hot", abs_ild_hot_df),
+                ("choice_lag", choice_lag_df),
+                ("choice_lag_correct", choice_lag_corr_df),
+                ("choice_lag_inc", choice_lag_inc_df),
+                ("reward_lag", reward_lag_df),
+                ("prev_day_total_reward_lag", prev_day_reward_lag_df),
+                ("difficulty_hot", difficulty_hot_df),
+                ("prev_difficulty_hot", prev_difficulty_hot_df),
+                ("prev_difficulty_lag", prev_difficulty_lag_df),
+                ("prev_difficulty_lag_hot", prev_difficulty_lag_hot_df),
+            ]
+            part = pd.concat(
+                [part, *(frame for _, frame in feature_frames)],
                 axis=1,
             )
-            if include_stim_param:
+            try:
                 part[_STIM_PARAM_COL] = self._build_stim_param(part, stim_abs_levels)
+            except (FileNotFoundError, ValueError):
+                part[_STIM_PARAM_COL] = np.zeros(len(part), dtype=np.float32)
 
-            existing_sf_cols = [
-                c for c in part.columns if str(c).startswith(_SF_COL_PREFIX)
-            ]
+            existing_sf_cols = [c for c in part.columns if str(c).startswith("sf_")]
             if include_stim_strength and not existing_sf_cols and "Filename" in part.columns:
                 stim_strength, _ = make_frames_dm(part, stim_set=stim_set, residuals=True, zscore=False)
                 stim_strength = stim_strength.reset_index(drop=True)
                 max_val = float(np.nanmax(np.abs(stim_strength.to_numpy()))) if not stim_strength.empty else 0.0
                 if max_val > 0:
                     stim_strength = stim_strength / max_val
-                stim_strength.columns = [f"{_SF_COL_PREFIX}{col}" for col in stim_strength.columns]
+                stim_strength.columns = [f"sf_{col}" for col in stim_strength.columns]
                 part = pd.concat([part.reset_index(drop=True), stim_strength], axis=1)
 
             at_choice, at_error, at_correct, reward_trace = get_action_trace(part)
@@ -1662,7 +1137,7 @@ class TwoAFCAdapter(TaskAdapter):
                 source_features=reward_lag_cols,
                 fallback=np.asarray(part[reward_lag_cols], dtype=np.float32).mean(axis=1),
             )
-            difficulty_hot_cols = _difficulty_hot_cols(list(part.columns))
+            difficulty_hot_cols = numeric_prefixed(list(part.columns), "difficulty_hot_")
             part["difficulty_hot_param"] = transition_weighted_sum(
                 part,
                 fit_task=self.task_key,
@@ -1670,7 +1145,7 @@ class TwoAFCAdapter(TaskAdapter):
                 source_features=difficulty_hot_cols,
                 fallback=part["stim_vals"].abs().to_numpy(dtype=np.float32),
             )
-            prev_difficulty_hot_cols = _prev_difficulty_lag_hot_cols(list(part.columns))
+            prev_difficulty_hot_cols = lag_level_prefixed(list(part.columns), "prev_difficulty_lag_hot_")
             part["prev_difficulty_param"] = transition_weighted_sum(
                 part,
                 fit_task=self.task_key,
@@ -1678,83 +1153,27 @@ class TwoAFCAdapter(TaskAdapter):
                 source_features=prev_difficulty_hot_cols,
                 fallback=part["prev_difficulty"].to_numpy(dtype=np.float32),
             )
-            if include_bias_param:
-                try:
-                    bias_param = _weighted_sum_regressor_zero_fill(part, self.bias_param_spec)
-                except FileNotFoundError as exc:
-                    raise ValueError(
-                        f"Cannot build {self.bias_param_spec.target_name!r}; pooled fitted weights are unavailable "
-                        f"for {self.bias_param_spec.fit_task}/{self.bias_param_spec.fit_model_kind}/{self.bias_param_spec.fit_model_id}."
-                    ) from exc
-                part = pd.concat(
-                    [part, pd.DataFrame({"bias_param": bias_param}, index=part.index)],
-                    axis=1,
-                )
-            if include_at_choice_param:
-                try:
-                    at_choice_param = _weighted_sum_regressor_zero_fill(part, self.at_choice_param_spec)
-                except FileNotFoundError as exc:
-                    raise ValueError(
-                        f"Cannot build {self.at_choice_param_spec.target_name!r}; pooled fitted weights are unavailable "
-                        f"for {self.at_choice_param_spec.fit_task}/{self.at_choice_param_spec.fit_model_kind}/{self.at_choice_param_spec.fit_model_id}."
-                    ) from exc
-                part = pd.concat(
-                    [part, pd.DataFrame({"at_choice_param": at_choice_param}, index=part.index)],
-                    axis=1,
-                )
-            if include_choice_lag_param:
-                try:
-                    choice_lag_param = _weighted_sum_regressor_zero_fill(part, self.choice_lag_param_spec)
-                except FileNotFoundError as exc:
-                    raise ValueError(
-                        f"Cannot build {self.choice_lag_param_spec.target_name!r}; pooled fitted weights are unavailable "
-                        f"for {self.choice_lag_param_spec.fit_task}/{self.choice_lag_param_spec.fit_model_kind}/{self.choice_lag_param_spec.fit_model_id}."
-                    ) from exc
-                part = pd.concat(
-                    [part, pd.DataFrame({_CHOICE_LAG_PARAM_COL: choice_lag_param}, index=part.index)],
-                    axis=1,
-                )
-            if include_choice_lag_param_2:
-                try:
-                    choice_lag_param_2 = _weighted_sum_regressor_zero_fill(part, self.choice_lag_param_2_spec)
-                except FileNotFoundError as exc:
-                    raise ValueError(
-                        f"Cannot build {self.choice_lag_param_2_spec.target_name!r}; pooled fitted weights are unavailable "
-                        f"for {self.choice_lag_param_2_spec.fit_task}/{self.choice_lag_param_2_spec.fit_model_kind}/{self.choice_lag_param_2_spec.fit_model_id}."
-                    ) from exc
-                part = pd.concat(
-                    [part, pd.DataFrame({_CHOICE_LAG_PARAM_2_COL: choice_lag_param_2}, index=part.index)],
-                    axis=1,
-                )
-            if include_choice_lag_param_correct:
-                try:
-                    choice_lag_param_correct = _weighted_sum_regressor_zero_fill(part, self.choice_lag_param_correct_spec)
-                except FileNotFoundError as exc:
-                    raise ValueError(
-                        f"Cannot build {self.choice_lag_param_correct_spec.target_name!r}; pooled fitted weights are unavailable "
-                        f"for {self.choice_lag_param_correct_spec.fit_task}/{self.choice_lag_param_correct_spec.fit_model_kind}/{self.choice_lag_param_correct_spec.fit_model_id}."
-                    ) from exc
-                part = pd.concat(
-                    [part, pd.DataFrame({_CHOICE_LAG_PARAM_CORRECT_COL: choice_lag_param_correct}, index=part.index)],
-                    axis=1,
-                )
+            fitted_summary_cols = pd.DataFrame(
+                {
+                    "bias_param": _safe_weighted_sum_regressor(part, self.bias_param_spec),
+                    "at_choice_param": _safe_weighted_sum_regressor(part, self.at_choice_param_spec),
+                    _CHOICE_LAG_PARAM_COL: _safe_weighted_sum_regressor(part, self.choice_lag_param_spec),
+                    _CHOICE_LAG_PARAM_2_COL: _safe_weighted_sum_regressor(part, self.choice_lag_param_2_spec),
+                    _CHOICE_LAG_PARAM_CORRECT_COL: _safe_weighted_sum_regressor(
+                        part,
+                        self.choice_lag_param_correct_spec,
+                    ),
+                },
+                index=part.index,
+            )
+            part = pd.concat([part, fitted_summary_cols], axis=1)
             parts.append(part)
 
         return pl.from_pandas(pd.concat(parts, ignore_index=True))
 
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
-        """Return the default 2AFC feature dataframe without frame regressors."""
-        return self._build_feature_df(
-            df_sub,
-            tau=tau,
-            include_stim_strength=False,
-            include_stim_param=False,
-            include_bias_param=False,
-            include_at_choice_param=False,
-            include_choice_lag_param=False,
-            include_choice_lag_param_2=False,
-            include_choice_lag_param_correct=False,
-        )
+        """Return the complete 2AFC feature dataframe."""
+        return self._build_feature_df(df_sub, tau=tau)
 
     def _resolved_emission_cols(
         self,
@@ -1763,45 +1182,33 @@ class TwoAFCAdapter(TaskAdapter):
     ) -> list[str]:
         requested = emission_cols if emission_cols is not None else self.default_emission_cols(feature_df)
         resolved: list[str] = []
-        dynamic_sf_cols = sorted(
-            [c for c in feature_df.columns if c.startswith(_SF_COL_PREFIX)],
-            key=_sf_sort_key,
-        )
+        dynamic_sf_cols = numeric_prefixed(list(feature_df.columns), "sf_")
+        choice_lag_cols = numeric_prefixed(list(feature_df.columns), "choice_lag_")
+        stim_abs_cols = _infer_stim_abs_cols_from_df(feature_df)
+        abs_ild_hot_cols = _infer_abs_ild_hot_cols_from_df(feature_df)
         family_aliases = {
-            "bias_hot": self.bias_hot_cols(feature_df),
-            "choice_lag": self.choice_lag_cols(feature_df),
-            "at_choice_lag": self.choice_lag_cols(feature_df),
-            _CHOICE_LAG_CORRECT_ALIAS: _choice_lag_corr_cols(list(feature_df.columns)),
-            _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_cols(list(feature_df.columns)),
-            _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                feature_df,
-                max_lags=_NUM_LEGACY_CHOICE_LAGS,
-            ),
-            _CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                feature_df,
-                max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-            ),
-            _CHOICE_LAG_100_ALIAS: self.choice_lag_cols(feature_df),
-            _AT_CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                feature_df,
-                max_lags=_NUM_LEGACY_CHOICE_LAGS,
-            ),
-            _AT_CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                feature_df,
-                max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-            ),
-            _AT_CHOICE_LAG_100_ALIAS: self.choice_lag_cols(feature_df),
-            "stim_hot": [col for col in self.stim_abs_cols(feature_df) if col != "stim_0"],
-            "stim_one_hot": [col for col in self.stim_abs_cols(feature_df) if col != "stim_0"],
-            "abs_ILD_hot": self.abs_ild_hot_cols(feature_df),
-            "abs_ild_hot": self.abs_ild_hot_cols(feature_df),
+            "bias_hot": _infer_bias_hot_cols_from_df(feature_df),
+            "choice_lag": choice_lag_cols,
+            "at_choice_lag": choice_lag_cols,
+            "choice_lag_correct": numeric_prefixed(list(feature_df.columns), "choice_lag_corr_"),
+            "choice_lag_inc": numeric_prefixed(list(feature_df.columns), "choice_lag_inc_"),
+            "choice_lag_15_lags": numeric_prefixed(list(feature_df.columns), "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
+            "choice_lag_50_lags": numeric_prefixed(list(feature_df.columns), "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+            "choice_lag_100_lags": choice_lag_cols,
+            "at_choice_lag_15_lags": numeric_prefixed(list(feature_df.columns), "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
+            "at_choice_lag_50_lags": numeric_prefixed(list(feature_df.columns), "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+            "at_choice_lag_100_lags": choice_lag_cols,
+            "stim_hot": [col for col in stim_abs_cols if col != "stim_0"],
+            "stim_one_hot": [col for col in stim_abs_cols if col != "stim_0"],
+            "abs_ILD_hot": abs_ild_hot_cols,
+            "abs_ild_hot": abs_ild_hot_cols,
         }
         for col in requested:
             if col == "stim_strength":
                 if not dynamic_sf_cols:
                     raise ValueError(
                         "Requested emission col 'stim_strength', but no frame-level "
-                        f"'{_SF_COL_PREFIX}*' columns are available for {self.task_key}."
+                        f"'sf_*' columns are available for {self.task_key}."
                     )
                 resolved.extend(dynamic_sf_cols)
             else:
@@ -1816,26 +1223,14 @@ class TwoAFCAdapter(TaskAdapter):
         transition_cols: List[str] | None = None,
     ) -> Tuple[Any, Any, Any, Dict]:
         """Return ``(y, X, U, names)`` for the 2AFC task."""
-        requested_emission_cols = emission_cols if emission_cols is not None else self.default_emission_cols(df_sub)
-        include_stim_strength = "stim_strength" in requested_emission_cols or any(
-            col.startswith(_SF_COL_PREFIX) for col in requested_emission_cols
+        requested = emission_cols if emission_cols is not None else self.default_emission_cols()
+        include_stim_strength = "stim_strength" in requested or any(
+            str(col).startswith("sf_") for col in requested
         )
-        include_stim_param = _STIM_PARAM_COL in requested_emission_cols
-        include_bias_param = "bias_param" in requested_emission_cols
-        include_at_choice_param = "at_choice_param" in requested_emission_cols
-        include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested_emission_cols
-        include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested_emission_cols
-        include_choice_lag_param_correct = _CHOICE_LAG_PARAM_CORRECT_COL in requested_emission_cols
         feature_df = self._build_feature_df(
             df_sub,
             tau=tau,
             include_stim_strength=include_stim_strength,
-            include_stim_param=include_stim_param,
-            include_bias_param=include_bias_param,
-            include_at_choice_param=include_at_choice_param,
-            include_choice_lag_param=include_choice_lag_param,
-            include_choice_lag_param_2=include_choice_lag_param_2,
-            include_choice_lag_param_correct=include_choice_lag_param_correct,
         )
         return self.build_design_matrices(
             feature_df,
@@ -1850,71 +1245,15 @@ class TwoAFCAdapter(TaskAdapter):
         transition_cols: List[str] | None = None,
     ) -> Tuple[Any, Any, Any, Dict]:
         """Return ``(y, X, U, names)`` for the 2AFC task."""
-        requested_emission_cols = list(emission_cols) if emission_cols is not None else self.default_emission_cols(feature_df)
-        include_stim_strength = "stim_strength" in requested_emission_cols or any(
-            str(col).startswith(_SF_COL_PREFIX) for col in requested_emission_cols
-        )
-        include_stim_param = _STIM_PARAM_COL in requested_emission_cols
-        include_bias_param = "bias_param" in requested_emission_cols
-        include_at_choice_param = "at_choice_param" in requested_emission_cols
-        include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested_emission_cols
-        include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested_emission_cols
-        include_choice_lag_param_correct = _CHOICE_LAG_PARAM_CORRECT_COL in requested_emission_cols
-        missing_optional = (
-            (include_stim_strength and not any(str(col).startswith(_SF_COL_PREFIX) for col in feature_df.columns))
-            or (include_stim_param and _STIM_PARAM_COL not in feature_df.columns)
-            or (include_bias_param and "bias_param" not in feature_df.columns)
-            or (include_at_choice_param and "at_choice_param" not in feature_df.columns)
-            or (include_choice_lag_param and _CHOICE_LAG_PARAM_COL not in feature_df.columns)
-            or (include_choice_lag_param_2 and _CHOICE_LAG_PARAM_2_COL not in feature_df.columns)
-            or (include_choice_lag_param_correct and _CHOICE_LAG_PARAM_CORRECT_COL not in feature_df.columns)
-        )
-        if missing_optional:
-            raw_cols = [
-                col
-                for col in [
-                    "subject",
-                    "Trial",
-                    "Side",
-                    "Drug",
-                    "drug",
-                    "Choice",
-                    "Hit",
-                    "Punish",
-                    "Session",
-                    "ILD",
-                    "Filename",
-                    "Experiment",
-                    "Task",
-                    "P",
-                    "AW",
-                    "WarmUp",
-                    "Date",
-                    "condition",
-                ]
-                if col in feature_df.columns
-            ]
-            if raw_cols:
-                feature_df = feature_df.select(raw_cols)
-            feature_df = self._build_feature_df(
-                feature_df,
-                include_stim_strength=include_stim_strength,
-                include_stim_param=include_stim_param,
-                include_bias_param=include_bias_param,
-                include_at_choice_param=include_at_choice_param,
-                include_choice_lag_param=include_choice_lag_param,
-                include_choice_lag_param_2=include_choice_lag_param_2,
-                include_choice_lag_param_correct=include_choice_lag_param_correct,
-            )
         ecols = self._resolved_emission_cols(feature_df, emission_cols)
         ucols = transition_cols if transition_cols is not None else self.default_transition_cols()
         allowed_ecols = set(self.available_emission_cols(feature_df))
         ecols = _drop_unavailable_bias_hot_cols(list(ecols), allowed_ecols)
         bad_e = [c for c in ecols if c not in allowed_ecols]
         dynamic_ucols = [
-            *_reward_lag_cols(list(feature_df.columns)),
-            *_difficulty_hot_cols(list(feature_df.columns)),
-            *_prev_difficulty_hot_cols(list(feature_df.columns)),
+            *numeric_prefixed(list(feature_df.columns), "reward_lag_"),
+            *numeric_prefixed(list(feature_df.columns), "difficulty_hot_"),
+            *numeric_prefixed(list(feature_df.columns), "prev_difficulty_hot_"),
         ]
         allowed_ucols = list(dict.fromkeys([*self.available_transition_cols(), *dynamic_ucols]))
         bad_u = [c for c in ucols if c not in allowed_ucols]
@@ -1923,6 +1262,14 @@ class TwoAFCAdapter(TaskAdapter):
         if bad_u:
             raise ValueError(
                 f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
+            )
+        missing_e = [c for c in ecols if c not in feature_df.columns]
+        missing_u = [c for c in ucols if c not in feature_df.columns]
+        if missing_e or missing_u:
+            raise ValueError(
+                "Requested design columns are not present in feature_df. "
+                f"Missing emission columns: {missing_e}; missing transition columns: {missing_u}. "
+                "Build features through load_subject or build_feature_df before calling build_design_matrices."
             )
 
         y = jnp.asarray(feature_df["Choice"].to_numpy().astype(np.int32))
@@ -1943,21 +1290,16 @@ class TwoAFCAdapter(TaskAdapter):
     # ── column defaults ─────────────────────────────────────────────────────
 
     def default_emission_cols(self, df: pl.DataFrame | None = None) -> List[str]:
-        default_cols = [
-            c
-            for c in self.emission_cols
-            if c not in {
-                "stim_strength",
-                _STIM_PARAM_COL,
-                "bias_param",
-                "at_choice_param",
-                _CHOICE_LAG_PARAM_COL,
-                _CHOICE_LAG_PARAM_2_COL,
-                _CHOICE_LAG_PARAM_CORRECT_COL,
-            }
-        ]
+        default_cols = [col for col in self.emission_cols if col != "stim_strength"]
         if df is not None:
-            default_cols.extend(self.sf_cols(df))
+            columns = list(df.columns)
+            default_cols.extend(_infer_bias_hot_cols_from_df(df))
+            default_cols.extend(_infer_stim_abs_cols_from_df(df))
+            default_cols.extend(_infer_abs_ild_hot_cols_from_df(df))
+            default_cols.extend(numeric_prefixed(columns, "choice_lag_"))
+            default_cols.extend(numeric_prefixed(columns, "choice_lag_corr_"))
+            default_cols.extend(numeric_prefixed(columns, "choice_lag_inc_"))
+            default_cols.extend([c for c in columns if c.startswith("sf_")])
         return list(dict.fromkeys(default_cols))
 
     def default_transition_cols(self) -> List[str]:
@@ -1969,11 +1311,11 @@ class TwoAFCAdapter(TaskAdapter):
                 [
                     *self.default_transition_cols(),
                     *_LEGACY_TRANSITION_COLS,
-                    *_reward_lag_names(),
-                    *_prev_day_reward_lag_names(),
+                    *lag_names("reward_lag_", _NUM_REWARD_LAGS),
+                    *lag_names("prev_day_total_reward_lag_", _NUM_DAY_REWARD_LAGS),
                     *_all_difficulty_hot_names(),
                     *_all_prev_difficulty_hot_names(),
-                    *_prev_difficulty_lag_names(),
+                    *lag_names("prev_difficulty_lag_", _NUM_DIFFICULTY_LAGS),
                     *_all_prev_difficulty_lag_hot_names(),
                 ]
             )
@@ -1983,32 +1325,36 @@ class TwoAFCAdapter(TaskAdapter):
         available_cols = list(self.emission_cols)
         available_cols.extend(
             [
-                _CHOICE_LAG_15_ALIAS,
-                _CHOICE_LAG_50_ALIAS,
-                _CHOICE_LAG_100_ALIAS,
-                _CHOICE_LAG_CORRECT_ALIAS,
-                _CHOICE_LAG_INC_ALIAS,
-                _AT_CHOICE_LAG_15_ALIAS,
-                _AT_CHOICE_LAG_50_ALIAS,
-                _AT_CHOICE_LAG_100_ALIAS,
+                "choice_lag_15_lags",
+                "choice_lag_50_lags",
+                "choice_lag_100_lags",
+                "choice_lag_correct",
+                "choice_lag_inc",
+                "at_choice_lag_15_lags",
+                "at_choice_lag_50_lags",
+                "at_choice_lag_100_lags",
             ]
         )
-        available_cols.extend(self.choice_lag_cols(df))
         available_cols.extend(
-            _choice_lag_corr_cols(list(df.columns))
+            numeric_prefixed(list(df.columns), "choice_lag_")
             if df is not None
-            else _choice_lag_corr_names()
+            else lag_names("choice_lag_", 15)
         )
         available_cols.extend(
-            _choice_lag_inc_cols(list(df.columns))
+            numeric_prefixed(list(df.columns), "choice_lag_corr_")
             if df is not None
-            else _choice_lag_inc_names()
+            else lag_names("choice_lag_corr_", 15)
+        )
+        available_cols.extend(
+            numeric_prefixed(list(df.columns), "choice_lag_inc_")
+            if df is not None
+            else lag_names("choice_lag_inc_", 15)
         )
         if df is not None:
-            available_cols.extend(self.sf_cols(df))
-            available_cols.extend(self.stim_abs_cols(df))
-            available_cols.extend(self.abs_ild_hot_cols(df))
-            available_cols.extend(self.bias_hot_cols(df))
+            available_cols.extend([c for c in df.columns if c.startswith("sf_")])
+            available_cols.extend(_infer_stim_abs_cols_from_df(df))
+            available_cols.extend(_infer_abs_ild_hot_cols_from_df(df))
+            available_cols.extend(_infer_bias_hot_cols_from_df(df))
         return list(dict.fromkeys(available_cols))
 
     def resolve_design_names(
@@ -2023,67 +1369,47 @@ class TwoAFCAdapter(TaskAdapter):
         resolved_ecols: list[str] = []
         family_aliases = {}
         if df is not None:
+            choice_lag_cols = numeric_prefixed(list(df.columns), "choice_lag_")
+            stim_abs_cols = _infer_stim_abs_cols_from_df(df)
+            abs_ild_hot_cols = _infer_abs_ild_hot_cols_from_df(df)
             family_aliases = {
-                "bias_hot": self.bias_hot_cols(df),
-                "choice_lag": self.choice_lag_cols(df),
-                "at_choice_lag": self.choice_lag_cols(df),
-                _CHOICE_LAG_CORRECT_ALIAS: _choice_lag_corr_cols(list(df.columns)),
-                _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_cols(list(df.columns)),
-                _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_LEGACY_CHOICE_LAGS,
-                ),
-                _CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-                ),
-                _CHOICE_LAG_100_ALIAS: self.choice_lag_cols(df),
-                _AT_CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_LEGACY_CHOICE_LAGS,
-                ),
-                _AT_CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-                ),
-                _AT_CHOICE_LAG_100_ALIAS: self.choice_lag_cols(df),
-                "stim_hot": [col for col in self.stim_abs_cols(df) if col != "stim_0"],
-                "stim_one_hot": [col for col in self.stim_abs_cols(df) if col != "stim_0"],
-                "abs_ILD_hot": self.abs_ild_hot_cols(df),
-                "abs_ild_hot": self.abs_ild_hot_cols(df),
+                "bias_hot": _infer_bias_hot_cols_from_df(df),
+                "choice_lag": choice_lag_cols,
+                "at_choice_lag": choice_lag_cols,
+                "choice_lag_correct": numeric_prefixed(list(df.columns), "choice_lag_corr_"),
+                "choice_lag_inc": numeric_prefixed(list(df.columns), "choice_lag_inc_"),
+                "choice_lag_15_lags": numeric_prefixed(list(df.columns), "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
+                "choice_lag_50_lags": numeric_prefixed(list(df.columns), "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+                "choice_lag_100_lags": choice_lag_cols,
+                "at_choice_lag_15_lags": numeric_prefixed(list(df.columns), "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
+                "at_choice_lag_50_lags": numeric_prefixed(list(df.columns), "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+                "at_choice_lag_100_lags": choice_lag_cols,
+                "stim_hot": [col for col in stim_abs_cols if col != "stim_0"],
+                "stim_one_hot": [col for col in stim_abs_cols if col != "stim_0"],
+                "abs_ILD_hot": abs_ild_hot_cols,
+                "abs_ild_hot": abs_ild_hot_cols,
             }
         else:
+            choice_lag_cols = lag_names("choice_lag_", 15)
             family_aliases = {
-                "choice_lag": self.choice_lag_cols(df),
-                "at_choice_lag": self.choice_lag_cols(df),
-                _CHOICE_LAG_CORRECT_ALIAS: _choice_lag_corr_names(),
-                _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_names(),
-                _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_LEGACY_CHOICE_LAGS,
-                ),
-                _CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-                ),
-                _CHOICE_LAG_100_ALIAS: self.choice_lag_cols(df),
-                _AT_CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_LEGACY_CHOICE_LAGS,
-                ),
-                _AT_CHOICE_LAG_50_ALIAS: self.choice_lag_cols(
-                    df,
-                    max_lags=_NUM_MEDIUM_CHOICE_LAGS,
-                ),
-                _AT_CHOICE_LAG_100_ALIAS: self.choice_lag_cols(df),
+                "choice_lag": choice_lag_cols,
+                "at_choice_lag": choice_lag_cols,
+                "choice_lag_correct": lag_names("choice_lag_corr_", 15),
+                "choice_lag_inc": lag_names("choice_lag_inc_", 15),
+                "choice_lag_15_lags": lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS),
+                "choice_lag_50_lags": lag_names("choice_lag_", _NUM_MEDIUM_CHOICE_LAGS),
+                "choice_lag_100_lags": choice_lag_cols,
+                "at_choice_lag_15_lags": lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS),
+                "at_choice_lag_50_lags": lag_names("choice_lag_", _NUM_MEDIUM_CHOICE_LAGS),
+                "at_choice_lag_100_lags": choice_lag_cols,
             }
         for col in requested_ecols:
             if col == "stim_strength":
-                sf_cols = self.sf_cols(df) if df is not None else []
+                sf_cols = [c for c in df.columns if c.startswith("sf_")] if df is not None else []
                 if not sf_cols:
                     raise ValueError(
                         "Requested emission col 'stim_strength', but no frame-level "
-                        f"'{_SF_COL_PREFIX}*' columns are available without rebuilding features."
+                        f"'sf_*' columns are available without rebuilding features."
                     )
                 resolved_ecols.extend(sf_cols)
             else:
@@ -2094,12 +1420,12 @@ class TwoAFCAdapter(TaskAdapter):
         bad_e = [c for c in resolved_ecols if c not in allowed_ecols]
         dynamic_ucols: list[str] = []
         if df is not None:
-            dynamic_ucols.extend(_reward_lag_cols(list(df.columns)))
-            dynamic_ucols.extend(_prev_day_reward_lag_cols(list(df.columns)))
-            dynamic_ucols.extend(_difficulty_hot_cols(list(df.columns)))
-            dynamic_ucols.extend(_prev_difficulty_hot_cols(list(df.columns)))
-            dynamic_ucols.extend(_prev_difficulty_lag_cols(list(df.columns)))
-            dynamic_ucols.extend(_prev_difficulty_lag_hot_cols(list(df.columns)))
+            dynamic_ucols.extend(numeric_prefixed(list(df.columns), "reward_lag_"))
+            dynamic_ucols.extend(numeric_prefixed(list(df.columns), "prev_day_total_reward_lag_"))
+            dynamic_ucols.extend(numeric_prefixed(list(df.columns), "difficulty_hot_"))
+            dynamic_ucols.extend(numeric_prefixed(list(df.columns), "prev_difficulty_hot_"))
+            dynamic_ucols.extend(numeric_prefixed(list(df.columns), "prev_difficulty_lag_"))
+            dynamic_ucols.extend(lag_level_prefixed(list(df.columns), "prev_difficulty_lag_hot_"))
         allowed_ucols = list(dict.fromkeys([*self.available_transition_cols(), *dynamic_ucols]))
         bad_u = [c for c in requested_ucols if c not in allowed_ucols]
         if bad_e:
@@ -2109,146 +1435,6 @@ class TwoAFCAdapter(TaskAdapter):
                 f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
         return {"X_cols": list(resolved_ecols), "U_cols": list(requested_ucols)}
-
-    def sf_cols(self, df: pl.DataFrame) -> List[str]:
-        """Return any stimulus-frame (sf_*) columns present in *df*."""
-        return [c for c in df.columns if c.startswith(_SF_COL_PREFIX)]
-
-    def stim_abs_cols(self, df: pl.DataFrame) -> List[str]:
-        """Return signed one-hot columns for absolute ILD magnitudes."""
-        return _infer_stim_abs_cols_from_df(df)
-
-    def abs_ild_hot_cols(self, df: pl.DataFrame) -> List[str]:
-        """Return unsigned one-hot columns for absolute ILD magnitudes."""
-        return _infer_abs_ild_hot_cols_from_df(df)
-
-    def bias_hot_cols(self, df: pl.DataFrame) -> List[str]:
-        """Return subject-local session one-hot columns."""
-        return _infer_bias_hot_cols_from_df(df)
-
-    def choice_lag_cols(
-        self,
-        df: pl.DataFrame | None = None,
-        max_lags: int | None = None,
-    ) -> List[str]:
-        """Return the previous-choice one-hot lag columns."""
-        if df is not None:
-            existing = _choice_lag_cols(list(df.columns), max_lags=max_lags)
-            if existing:
-                return existing
-        return _choice_lag_names(max_lags=max_lags)
-
-    def weight_family_specs(self, weights_df=None) -> Dict[str, dict]:
-        df = to_pandas_df(weights_df) if weights_df is not None else None
-        feature_names = [] if df is None or df.empty or "feature" not in df.columns else pd.unique(df["feature"].astype(str)).tolist()
-        stim_cols = _stim_abs_cols(feature_names)
-        abs_ild_hot_cols = _abs_ild_hot_cols(feature_names)
-        choice_cols = _choice_lag_cols(feature_names)
-        choice_corr_cols = _choice_lag_corr_cols(feature_names)
-        choice_inc_cols = _choice_lag_inc_cols(feature_names)
-        choice_15_cols = _choice_lag_cols(feature_names, max_lags=_NUM_LEGACY_CHOICE_LAGS)
-        choice_50_cols = _choice_lag_cols(feature_names, max_lags=_NUM_MEDIUM_CHOICE_LAGS)
-        bias_cols = _bias_hot_cols(feature_names)
-        return {
-            "stim_hot": {
-                "title": "stim_hot",
-                "xlabel": "stimulus level",
-                "plot_kind": "box",
-                "feature_groups": [(col.removeprefix(_STIM_ABS_COL_PREFIX), [col]) for col in stim_cols],
-            },
-            "abs_ILD_hot": {
-                "title": "abs_ILD_hot",
-                "xlabel": "absolute ILD",
-                "plot_kind": "box",
-                "feature_groups": [(col.removeprefix(_ABS_ILD_HOT_COL_PREFIX), [col]) for col in abs_ild_hot_cols],
-            },
-            "choice_lag": {
-                "title": "choice_lag_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
-            },
-            _CHOICE_LAG_15_ALIAS: {
-                "title": "choice_lag_01-15",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_15_cols],
-            },
-            _CHOICE_LAG_50_ALIAS: {
-                "title": "choice_lag_01-50",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_50_cols],
-            },
-            _CHOICE_LAG_100_ALIAS: {
-                "title": "choice_lag_01-100",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
-            },
-            _CHOICE_LAG_CORRECT_ALIAS: {
-                "title": "choice_lag_corr_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_CORR_COL_PREFIX))), [col]) for col in choice_corr_cols],
-            },
-            _CHOICE_LAG_INC_ALIAS: {
-                "title": "choice_lag_inc_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_INC_COL_PREFIX))), [col]) for col in choice_inc_cols],
-            },
-            "at_choice_lag": {
-                "title": "choice_lag_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
-            },
-            _AT_CHOICE_LAG_15_ALIAS: {
-                "title": "choice_lag_01-15",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_15_cols],
-            },
-            _AT_CHOICE_LAG_50_ALIAS: {
-                "title": "choice_lag_01-50",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_50_cols],
-            },
-            _AT_CHOICE_LAG_100_ALIAS: {
-                "title": "choice_lag_01-100",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
-            },
-            "bias_hot": {
-                "title": "bias_hot",
-                "xlabel": "Session index",
-                "plot_kind": "line",
-                "feature_groups": [(col.removeprefix(_BIAS_HOT_COL_PREFIX), [col]) for col in bias_cols],
-            },
-        }
-
-    def prepare_weight_family_plot(
-        self,
-        weights_df,
-        family_key: str,
-        *,
-        variant: str | None = None,
-    ) -> PreparedWeightFamilyPlot | None:
-        del variant
-        spec = self.weight_family_specs(weights_df).get(family_key)
-        if spec is None:
-            return None
-        return prepare_grouped_weight_family_plot(
-            weights_df,
-            feature_groups=spec["feature_groups"],
-            title=spec["title"],
-            xlabel=spec["xlabel"],
-            plot_kind=spec["plot_kind"],
-            weight_row_indices=(0,),
-        )
 
     def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_emission_groups(list(available_cols))

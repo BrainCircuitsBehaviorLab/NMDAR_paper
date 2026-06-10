@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -67,6 +67,7 @@ def _():
         add_choice_lag_summary_regressor,
         attach_repeat_choice_evidence,
         display_regressor_name,
+        prepare_grouped_weight_family_plot,
     )
 
     def prepare_predictions_df(task_name, df):
@@ -113,6 +114,7 @@ def _():
         plot_prepared_weight_family,
         plot_regressor_net_impact,
         plt,
+        prepare_grouped_weight_family_plot,
         prepare_predictions_df,
         process_mcdr,
         resolve_selected_model_id,
@@ -465,13 +467,13 @@ def _(mo):
 
 @app.cell
 def _(
-    adapter,
     fig_size,
     fit_glm,
     np,
     pd,
     plot_prepared_weight_family,
     plt,
+    prepare_grouped_weight_family_plot,
     sns,
     task_name,
 ):
@@ -571,6 +573,38 @@ def _(
         if annotated:
             ax.set_ylim(y_bottom, max(y_top, max_y_text + 0.03 * y_span))
 
+    def _numeric_weight_family(
+        weights_df,
+        *,
+        prefix: str,
+        title: str,
+        xlabel: str,
+        plot_kind: str = "box",
+    ):
+        df_pd = weights_df.to_pandas() if hasattr(weights_df, "to_pandas") else weights_df
+        if df_pd is None or "feature" not in df_pd.columns:
+            return None
+        features = pd.unique(df_pd["feature"].astype(str)).tolist()
+        selected = sorted(
+            [
+                feature
+                for feature in features
+                if feature.startswith(prefix)
+                and feature.removeprefix(prefix).isdigit()
+            ],
+            key=lambda feature: int(feature.removeprefix(prefix)),
+        )
+        return prepare_grouped_weight_family_plot(
+            weights_df,
+            feature_groups=[
+                (str(int(feature.removeprefix(prefix))), [feature])
+                for feature in selected
+            ],
+            title=title,
+            xlabel=xlabel,
+            plot_kind=plot_kind,
+        )
+
     def plot_stim_hot_weights(
         weights_df,
         *,
@@ -578,7 +612,13 @@ def _(
         ax: plt.Axes | None = None,
         connect_subjects: bool = False,
     ) -> plt.Figure | None:
-        prepared = adapter.prepare_weight_family_plot(weights_df, "stim_hot", variant=mcdr_mode)
+        del mcdr_mode
+        prepared = _numeric_weight_family(
+            weights_df,
+            prefix="stim_",
+            title="stim_hot",
+            xlabel="stimulus level",
+        )
         fig = plot_prepared_weight_family(
             prepared,
             figsize=fig_size(2, 1),
@@ -602,10 +642,12 @@ def _(
         ax: plt.Axes | None = None,
         connect_subjects: bool = False,
     ) -> plt.Figure | None:
-        prepared = adapter.prepare_weight_family_plot(
+        del mcdr_mode
+        prepared = _numeric_weight_family(
             weights_df,
-            "choice_lag",
-            variant=mcdr_mode,
+            prefix="choice_lag_",
+            title="choice_lag_*",
+            xlabel="Lag",
         )
         fig = plot_prepared_weight_family(
             prepared,
@@ -622,7 +664,13 @@ def _(
         return fig
 
     def plot_bias_hot_weights(weights_df) -> plt.Figure | None:
-        prepared = adapter.prepare_weight_family_plot(weights_df, "bias_hot")
+        prepared = _numeric_weight_family(
+            weights_df,
+            prefix="bias_",
+            title="bias_hot",
+            xlabel="Session index",
+            plot_kind="line",
+        )
         fig = plot_prepared_weight_family(prepared)
         if task_name == "MCDR" and fig is not None:
             target_ax = fig.axes[0] if fig.axes else None

@@ -1,15 +1,21 @@
 """Task adapter for the Tiffany 2ADC drug/saline cohort."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pandas as pd
 import polars as pl
 
 from glmhmmt.tasks import _register
 
 from .two_adc import (
-    EMISSION_COLS as BASE_EMISSION_COLS,
-    TRANSITION_COLS as BASE_TRANSITION_COLS,
     TwoAFCDelayAdapter,
+    _BIAS_PARAM_SPEC as BASE_BIAS_PARAM_SPEC,
+    _CHOICE_LAG_PARAM_2_SPEC as BASE_CHOICE_LAG_PARAM_2_SPEC,
+    _CHOICE_LAG_PARAM_SPEC as BASE_CHOICE_LAG_PARAM_SPEC,
+    _DELAY_PARAM_SPEC as BASE_DELAY_PARAM_SPEC,
+    _STIM_PARAM_SPEC as BASE_STIM_PARAM_SPEC,
+    _STIM_X_DELAY_PARAM_SPEC as BASE_STIM_X_DELAY_PARAM_SPEC,
 )
 
 
@@ -30,8 +36,20 @@ DRUG_INTERACTION_COLS: list[str] = [
 DRUG_EMISSION_INTERACTION_COLS: list[str] = [
     f"drug_x_{source_col}" for source_col in _DRUG_EMISSION_INTERACTION_SOURCES
 ]
-EMISSION_COLS: list[str] = [*BASE_EMISSION_COLS, *DRUG_EMISSION_INTERACTION_COLS]
-TRANSITION_COLS: list[str] = [*BASE_TRANSITION_COLS, "drug_code", *DRUG_INTERACTION_COLS]
+EMISSION_COLS: list[str] = [*TwoAFCDelayAdapter.emission_cols, *DRUG_EMISSION_INTERACTION_COLS]
+TRANSITION_COLS: list[str] = [*TwoAFCDelayAdapter.transition_cols, "drug_code", *DRUG_INTERACTION_COLS]
+
+_BIAS_PARAM_SPEC = replace(
+    BASE_BIAS_PARAM_SPEC,
+    fit_task="2ADC_DRUG",
+    source_features=("bias",),
+    source_feature_prefixes=(),
+)
+_STIM_PARAM_SPEC = replace(BASE_STIM_PARAM_SPEC, fit_task="2ADC_DRUG")
+_DELAY_PARAM_SPEC = replace(BASE_DELAY_PARAM_SPEC, fit_task="2ADC_DRUG")
+_STIM_X_DELAY_PARAM_SPEC = replace(BASE_STIM_X_DELAY_PARAM_SPEC, fit_task="2ADC_DRUG")
+_CHOICE_LAG_PARAM_SPEC = replace(BASE_CHOICE_LAG_PARAM_SPEC, fit_task="2ADC_DRUG")
+_CHOICE_LAG_PARAM_2_SPEC = replace(BASE_CHOICE_LAG_PARAM_2_SPEC, fit_task="2ADC_DRUG")
 
 
 def _add_drug_interactions(feature_df: pl.DataFrame | pd.DataFrame) -> pl.DataFrame | pd.DataFrame:
@@ -70,6 +88,12 @@ class TwoADCDrugAdapter(TwoAFCDelayAdapter):
     task_label: str = "2ADC Drug"
     emission_cols: list[str] = EMISSION_COLS
     transition_cols: list[str] = TRANSITION_COLS
+    bias_param_spec = _BIAS_PARAM_SPEC
+    stim_param_spec = _STIM_PARAM_SPEC
+    delay_param_spec = _DELAY_PARAM_SPEC
+    stim_x_delay_param_spec = _STIM_X_DELAY_PARAM_SPEC
+    choice_lag_param_spec = _CHOICE_LAG_PARAM_SPEC
+    choice_lag_param_2_spec = _CHOICE_LAG_PARAM_2_SPEC
 
     def read_dataset(self) -> pl.DataFrame:
         df = super().read_dataset()

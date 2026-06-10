@@ -1167,7 +1167,7 @@ wheels = [
 
 [[package]]
 name = "marimo"
-version = "0.23.8"
+version = "0.23.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1190,9 +1190,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/fe/a1dec6111a660ee3bd26521c24788e7aef519a31c60cf37f767f29313454/marimo-0.23.8.tar.gz", hash = "sha256:8049df4ad263e7126e959d7d910b014e6181dffe49f540a89c3174e61a446a99", size = 38505767, upload-time = "2026-05-22T16:24:19.881Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/be/4a4c7bc1bc160d825c6ae1b4154add505a466532977a5516434ac57ce050/marimo-0.23.9.tar.gz", hash = "sha256:9fb7123aa0dacb202d53bc0989cecd1892435671efc4107b8d8491986b4a6bb9", size = 38538904, upload-time = "2026-06-04T23:06:06.505Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/76/51b57a2e521b9110f25ec935f2774412e2f3d678b3fdea7841987244fb2c/marimo-0.23.8-py3-none-any.whl", hash = "sha256:99a4035d035fb320c8f2dcefc2213e0d64e9de13e989bc3f2a973b19dc40542a", size = 38938839, upload-time = "2026-05-22T16:24:16.102Z" },
+    { url = "https://files.pythonhosted.org/packages/68/f4/ab8be4e65b37deb4d1d780df4a3555e983849ac280b0ec7967801fb438c8/marimo-0.23.9-py3-none-any.whl", hash = "sha256:2cbd50ce9a995c2a256b9a05cc1844f035060e070b8a85fdb32645719817dbdf", size = 38970788, upload-time = "2026-06-04T23:06:01.628Z" },
 ]
 
 [[package]]
@@ -1432,6 +1432,7 @@ dependencies = [
     { name = "numpy" },
     { name = "playwright" },
     { name = "plot-saver" },
+    { name = "statannotations" },
     { name = "statsmodels" },
     { name = "tensorflow-probability" },
     { name = "tfp-nightly" },
@@ -1450,12 +1451,13 @@ requires-dist = [
     { name = "altair", specifier = ">=6.1.0" },
     { name = "bottleneck", specifier = ">=1.6.0" },
     { name = "glmhmmt", specifier = "==0.3.8" },
-    { name = "marimo", specifier = "==0.23.8" },
+    { name = "marimo", specifier = "==0.23.9" },
     { name = "marimo-toml-editor", specifier = ">=0.1.1" },
     { name = "numexpr", specifier = ">=2.14.1" },
     { name = "numpy", specifier = "==2.4.4" },
     { name = "playwright", specifier = ">=1.58.0" },
     { name = "plot-saver", specifier = "==0.1.7" },
+    { name = "statannotations", specifier = ">=0.7.2" },
     { name = "statsmodels", specifier = ">=0.14.6" },
     { name = "tensorflow-probability", specifier = "==0.25.0" },
     { name = "tfp-nightly", specifier = "==0.26.0.dev20260205" },
@@ -2445,6 +2447,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/81/69/17425771797c36cded50b7fe44e850315d039f28b15901ab44839e70b593/starlette-1.0.0.tar.gz", hash = "sha256:6a4beaf1f81bb472fd19ea9b918b50dc3a77a6f2e190a12954b25e6ed5eea149", size = 2655289, upload-time = "2026-03-22T18:29:46.779Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/c9/584bc9651441b4ba60cc4d557d8a547b5aff901af35bda3a4ee30c819b82/starlette-1.0.0-py3-none-any.whl", hash = "sha256:d3ec55e0bb321692d275455ddfd3df75fff145d009685eb40dc91fc66b03d38b", size = 72651, upload-time = "2026-03-22T18:29:45.111Z" },
+]
+
+[[package]]
+name = "statannotations"
+version = "0.7.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "scipy" },
+    { name = "seaborn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/07/6d/9f851b0ca42eb429f1b044634d63ff07bc4f6bbfb52639ceb7e03a5a46eb/statannotations-0.7.2.tar.gz", hash = "sha256:a93e428682d66c9fca5a399d5bd3fe7c9cef0500f53840c6f5362526b4501e93", size = 46629, upload-time = "2025-03-22T13:27:14.706Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/ef/19390fa617d0417dd432d14a10eb5735a5513d7b6aebb357b10900d42af8/statannotations-0.7.2-py3-none-any.whl", hash = "sha256:61cd63c9bcdffe37dad30bb2a33aa6aa03f28df9636eda8deae1548f91be8580", size = 39684, upload-time = "2025-03-22T13:27:13.19Z" },
 ]
 
 [[package]]

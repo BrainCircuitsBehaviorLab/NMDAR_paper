@@ -95,6 +95,65 @@ def prepare_predictions_df(df_pred: pl.DataFrame) -> pl.DataFrame:
     return process.prepare_predictions_df(df_pred, cfg=cfg)
 
 
+def _softmax_rows(logits: np.ndarray) -> np.ndarray:
+    shifted = logits - np.nanmax(logits, axis=1, keepdims=True)
+    exp_logits = np.exp(shifted)
+    return exp_logits / np.nansum(exp_logits, axis=1, keepdims=True)
+
+
+def _attach_map_state_correct_from_views(df: pl.DataFrame, views: dict | None) -> pl.DataFrame:
+    if not views or "subject" not in df.columns or "stimulus" not in df.columns:
+        return df
+
+    frames = []
+    for subject, df_subject in df.partition_by("subject", as_dict=True).items():
+        subject_key = subject[0] if isinstance(subject, tuple) else subject
+        view = views.get(subject_key) or views.get(str(subject_key))
+        if view is None:
+            frames.append(df_subject)
+            continue
+
+        row_count = df_subject.height
+        if row_count > int(view.T):
+            frames.append(df_subject)
+            continue
+
+        row_idx = np.arange(row_count)
+        if "state_idx" in df_subject.columns:
+            map_k = df_subject["state_idx"].to_numpy().astype(int)
+        else:
+            map_k = view.map_states()[row_idx]
+
+        W = np.asarray(view.emission_weights, dtype=float)
+        X = np.asarray(view.X, dtype=float)[row_idx]
+        if W.ndim != 3 or X.ndim != 2 or W.shape[2] != X.shape[1]:
+            frames.append(df_subject)
+            continue
+
+        explicit_logits = np.einsum("tcf,tf->tc", W[map_k], X)
+        num_classes = explicit_logits.shape[1] + 1
+        baseline_class_idx = 1 if num_classes == 3 else num_classes - 1
+        zeros = np.zeros((row_count, 1), dtype=float)
+        logits = np.concatenate(
+            [
+                explicit_logits[:, :baseline_class_idx],
+                zeros,
+                explicit_logits[:, baseline_class_idx:],
+            ],
+            axis=1,
+        )
+        probs = _softmax_rows(logits)
+        correct_class = df_subject["stimulus"].to_numpy().astype(int)
+        valid = (correct_class >= 0) & (correct_class < probs.shape[1])
+        p_correct = np.full(row_count, np.nan, dtype=float)
+        p_correct[valid] = probs[np.arange(row_count)[valid], correct_class[valid]]
+        if "p_model_correct" in df_subject.columns:
+            df_subject = df_subject.drop("p_model_correct")
+        frames.append(df_subject.with_columns(pl.Series("p_model_correct", p_correct)))
+
+    return pl.concat(frames, how="vertical") if frames else df
+
+
 def plot_cat_panel(ax, df, group_col, order, title, xlabel, ylabel=None, palette=None, labels=None):
     subj = (
         df.filter(pl.col(group_col).is_in(order))
@@ -260,6 +319,8 @@ def plot_categorical_performance_by_state(
     )
     if not isinstance(df, pl.DataFrame):
         df = pl.from_pandas(df)
+
+    df = _attach_map_state_correct_from_views(df, views)
 
     if "state_rank" not in df.columns:
         raise ValueError("df must contain 'state_rank' (from build_trial_df).")

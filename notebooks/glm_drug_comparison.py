@@ -49,7 +49,11 @@ def _():
     from src.process import two_afc as process_two_afc
     from src.process import two_adc as process_two_adc
     from src.plots.common import plot_mean_over_data
-    from src.process.common import add_choice_lag_summary_regressor, attach_signed_delay_columns
+    from src.process.common import (
+        add_choice_lag_summary_regressor,
+        adapter_behavioral_column,
+        attach_signed_delay_columns,
+    )
     from src.utils import fig_size
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
@@ -74,6 +78,7 @@ def _():
         Line2D,
         TASK_OPTIONS,
         add_choice_lag_summary_regressor,
+        adapter_behavioral_column,
         attach_signed_delay_columns,
         build_emission_weights_df,
         build_trial_df,
@@ -593,6 +598,8 @@ def _(
     CONDITION_PALETTE,
     Line2D,
     TASK_NAME,
+    adapter,
+    adapter_behavioral_column,
     attach_signed_delay_columns,
     drug_plot_df,
     fig_overlay,
@@ -626,10 +633,7 @@ def _(
 
     def add_p_right(pdf):
         pdf = pdf.copy()
-        choice_col = next(
-            (col for col in ["Choice", "choice", "choices", "response"] if col in pdf.columns),
-            None,
-        )
+        choice_col = adapter_behavioral_column(adapter, pdf, "response", "response", "Choice", "choice", "choices")
         if choice_col is None:
             return pdf
         choice = pd.to_numeric(pdf[choice_col], errors="coerce")
@@ -1551,13 +1555,16 @@ def _(
             return None
         _feature_labels = {
             "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
-            "stim_x_delay_param": r"$\mathrm{Stim:delay}_{\mathrm{param}}$",
+            # "stim_x_delay_param": r"$\mathrm{Stim:delay}_{\mathrm{param}}$",
+            "stim_x_delay_param": r"$\mathrm{Stim:delay}$",
             "delay_param": r"$\mathrm{Delay}_{\mathrm{param}}$",
             "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
             "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
             "at_choice_param": r"$\mathrm{A}_t$",
             "at_choice": r"$\mathrm{A}_t$",
             "choice_lag_param": r"$\mathrm{A}$",
+            "choice_lag_param_2": r"$\mathrm{A}$",
+            "prev_choice": r"$choice_{-1}$",
             "choice_param": r"$\mathrm{A}$",
         }
         _feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))

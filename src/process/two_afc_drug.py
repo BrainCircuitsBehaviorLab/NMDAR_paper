@@ -1,32 +1,48 @@
 """Task adapter for the 2AFC drug/saline cohort."""
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import polars as pl
 
 from glmhmmt.tasks import _register
 from glmhmmt.tasks.fitted_regressors import (
+    mean_feature_weights_from_fit,
     resolved_source_features,
     weighted_sum_regressor,
 )
 from glmhmmt.runtime import get_data_dir
 
 from .two_afc import (
-    EMISSION_COLS as BASE_EMISSION_COLS,
-    TRANSITION_COLS as BASE_TRANSITION_COLS,
     TwoAFCAdapter,
-    _AT_CHOICE_PARAM_SPEC as BASE_AT_CHOICE_PARAM_SPEC,
-    _BIAS_PARAM_SPEC as BASE_BIAS_PARAM_SPEC,
+    _CHOICE_LAG_PARAM_CORRECT_COL,
     _CHOICE_LAG_PARAM_COL,
     _CHOICE_LAG_PARAM_2_COL,
-    _CHOICE_LAG_PARAM_2_SPEC as BASE_CHOICE_LAG_PARAM_2_SPEC,
-    _CHOICE_LAG_PARAM_SPEC as BASE_CHOICE_LAG_PARAM_SPEC,
     _KEEP_EXPERIMENTS,
-    _SF_COL_PREFIX,
     _STIM_PARAM_COL,
-    _STIM_PARAM_SPEC as BASE_STIM_PARAM_SPEC,
+    _at_choice_param_spec,
+    _bias_param_spec,
+    _choice_lag_param_2_spec,
+    _choice_lag_param_correct_spec,
+    _choice_lag_param_spec,
+    _stim_param_spec,
 )
 
+
+# Simple switch for the existing *_param regressors in this adapter.
+# "2AFC_DRUG": use the drug-cohort fitted weights.
+# "2AFC": use the pooled mean fitted weights from the base 2AFC fits.
+PARAM_WEIGHT_SOURCE = "2AFC_DRUG"
+# PARAM_WEIGHT_SOURCE = "2AFC"
+
+if PARAM_WEIGHT_SOURCE not in {"2AFC_DRUG", "2AFC"}:
+    raise ValueError("PARAM_WEIGHT_SOURCE must be '2AFC_DRUG' or '2AFC'.")
+
+_USE_POOLED_BASE_2AFC_PARAM_WEIGHTS = PARAM_WEIGHT_SOURCE == "2AFC"
+_PARAM_FIT_TASK = "2AFC" if _USE_POOLED_BASE_2AFC_PARAM_WEIGHTS else "2AFC_DRUG"
+_STIM_PARAM_SALINE_COL = "stim_param_saline"
+_STIM_PARAM_DRUG_COL = "stim_param_drug"
+_CONDITION_STIM_PARAM_COLS = (_STIM_PARAM_SALINE_COL, _STIM_PARAM_DRUG_COL)
 
 _DRUG_INTERACTION_SOURCES: tuple[str, ...] = (
     "cumulative_reward",
@@ -45,8 +61,87 @@ DRUG_INTERACTION_COLS: list[str] = [
 DRUG_EMISSION_INTERACTION_COLS: list[str] = [
     f"drug_x_{source_col}" for source_col in _DRUG_EMISSION_INTERACTION_SOURCES
 ]
-EMISSION_COLS: list[str] = [*BASE_EMISSION_COLS, "Drug", *DRUG_EMISSION_INTERACTION_COLS]
-TRANSITION_COLS: list[str] = [*BASE_TRANSITION_COLS, "Drug", *DRUG_INTERACTION_COLS]
+EMISSION_COLS: list[str] = [
+    *TwoAFCAdapter.emission_cols,
+    *_CONDITION_STIM_PARAM_COLS,
+    "Drug",
+    *DRUG_EMISSION_INTERACTION_COLS,
+]
+TRANSITION_COLS: list[str] = [*TwoAFCAdapter.transition_cols, "Drug", *DRUG_INTERACTION_COLS]
+
+_STIM_PARAM_SPEC = _stim_param_spec(fit_task=_PARAM_FIT_TASK)
+_BIAS_PARAM_SPEC = _bias_param_spec(fit_task=_PARAM_FIT_TASK)
+_AT_CHOICE_PARAM_SPEC = _at_choice_param_spec(fit_task=_PARAM_FIT_TASK)
+_CHOICE_LAG_PARAM_SPEC = _choice_lag_param_spec(fit_task=_PARAM_FIT_TASK)
+_CHOICE_LAG_PARAM_2_SPEC = _choice_lag_param_2_spec(fit_task=_PARAM_FIT_TASK)
+_CHOICE_LAG_PARAM_CORRECT_SPEC = _choice_lag_param_correct_spec(fit_task=_PARAM_FIT_TASK)
+_STIM_PARAM_SALINE_SPEC = _stim_param_spec(
+    target_name=_STIM_PARAM_SALINE_COL,
+    fit_task="2AFC_DRUG",
+    fit_model_id="one hot saline",
+)
+_STIM_PARAM_DRUG_SPEC = _stim_param_spec(
+    target_name=_STIM_PARAM_DRUG_COL,
+    fit_task="2AFC_DRUG",
+    fit_model_id="one hot drug",
+)
+
+
+def _weighted_sum_regressor_zero_fill(
+    part: pd.DataFrame,
+    spec,
+    *,
+    pooled_mean: bool = False,
+) -> np.ndarray:
+    """Project onto fitted weights, treating absent fitted columns as zero."""
+    source_features = resolved_source_features(spec)
+    missing_cols = [col for col in source_features if col not in part.columns]
+    if missing_cols:
+        part = part.copy()
+        for col in missing_cols:
+            part[col] = np.float32(0.0)
+
+    if not pooled_mean:
+        return weighted_sum_regressor(part, spec, dtype=np.float32)
+
+    weights = mean_feature_weights_from_fit(spec)
+    out = np.zeros(len(part), dtype=np.float32)
+    for feat in source_features:
+        out += np.asarray(part[feat], dtype=np.float32) * np.float32(weights[feat])
+    return out
+
+
+def _normalize_condition_stim_params(
+    feature_df: pl.DataFrame | pd.DataFrame,
+) -> pl.DataFrame | pd.DataFrame:
+    """Normalize condition-specific stimulus params by their column maxima."""
+    present_cols = [
+        col for col in _CONDITION_STIM_PARAM_COLS if col in feature_df.columns
+    ]
+    if not present_cols:
+        return feature_df
+
+    if isinstance(feature_df, pl.DataFrame):
+        exprs = []
+        for col in present_cols:
+            max_value = feature_df.select(
+                pl.col(col).cast(pl.Float32, strict=False).max()
+            ).item()
+            if max_value is None or not np.isfinite(float(max_value)) or float(max_value) == 0.0:
+                continue
+            exprs.append(
+                (pl.col(col).cast(pl.Float32, strict=False) / float(max_value)).alias(col)
+            )
+        return feature_df.with_columns(exprs) if exprs else feature_df
+
+    df_pd = feature_df.copy()
+    for col in present_cols:
+        values = pd.to_numeric(df_pd[col], errors="coerce")
+        max_value = float(values.max())
+        if not np.isfinite(max_value) or max_value == 0.0:
+            continue
+        df_pd[col] = (values / max_value).astype("float32")
+    return df_pd
 
 
 def _add_drug_interactions(feature_df: pl.DataFrame | pd.DataFrame) -> pl.DataFrame | pd.DataFrame:
@@ -86,11 +181,14 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
     data_file: str = "df_alexis_drug_combined.parquet"
     emission_cols: list[str] = EMISSION_COLS
     transition_cols: list[str] = TRANSITION_COLS
-    stim_param_spec = BASE_STIM_PARAM_SPEC
-    bias_param_spec = BASE_BIAS_PARAM_SPEC
-    at_choice_param_spec = BASE_AT_CHOICE_PARAM_SPEC
-    choice_lag_param_spec = BASE_CHOICE_LAG_PARAM_SPEC
-    choice_lag_param_2_spec = BASE_CHOICE_LAG_PARAM_2_SPEC
+    stim_param_spec = _STIM_PARAM_SPEC
+    bias_param_spec = _BIAS_PARAM_SPEC
+    at_choice_param_spec = _AT_CHOICE_PARAM_SPEC
+    choice_lag_param_spec = _CHOICE_LAG_PARAM_SPEC
+    choice_lag_param_2_spec = _CHOICE_LAG_PARAM_2_SPEC
+    choice_lag_param_correct_spec = _CHOICE_LAG_PARAM_CORRECT_SPEC
+    stim_param_saline_spec = _STIM_PARAM_SALINE_SPEC
+    stim_param_drug_spec = _STIM_PARAM_DRUG_SPEC
 
     def read_dataset(self) -> pl.DataFrame:
         """Return all Alexis 2AFC batches with a unified ``Drug`` column.
@@ -176,15 +274,66 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
         return df_pd.loc[values == target].copy()
 
     def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
-        feature_df = self._build_feature_df(
-            df_sub,
-            tau=tau,
-            include_stim_strength=False,
-            include_stim_param=False,
-            include_bias_param=False,
-            include_at_choice_param=False,
-        )
+        feature_df = super().build_feature_df(df_sub, tau=tau)
+        feature_df = _normalize_condition_stim_params(feature_df)
         return _add_drug_interactions(feature_df)
+
+    def load_subject(
+        self,
+        df_sub,
+        tau: float = 50.0,
+        emission_cols=None,
+        transition_cols=None,
+    ):
+        feature_df = self.build_feature_df(df_sub, tau=tau)
+        return self.build_design_matrices(
+            feature_df,
+            emission_cols=emission_cols,
+            transition_cols=transition_cols,
+        )
+
+    def default_emission_cols(self, df: pl.DataFrame | None = None) -> list[str]:
+        default_cols = super().default_emission_cols(df)
+        return [col for col in default_cols if col not in _CONDITION_STIM_PARAM_COLS]
+
+    def available_emission_cols(self, df: pl.DataFrame | None = None) -> list[str]:
+        return list(
+            dict.fromkeys(
+                [
+                    *super().available_emission_cols(df),
+                    *_CONDITION_STIM_PARAM_COLS,
+                ]
+            )
+        )
+
+    def build_emission_groups(self, available_cols: list[str]) -> list[dict]:
+        groups = [
+            group
+            for group in super().build_emission_groups(available_cols)
+            if not any(
+                member in _CONDITION_STIM_PARAM_COLS
+                for member in group.get("members", {}).values()
+            )
+        ]
+        available = set(available_cols)
+        extra_groups = [
+            {
+                "key": _STIM_PARAM_SALINE_COL,
+                "label": "stim param saline",
+                "members": {"N": _STIM_PARAM_SALINE_COL},
+            },
+            {
+                "key": _STIM_PARAM_DRUG_COL,
+                "label": "stim param drug",
+                "members": {"N": _STIM_PARAM_DRUG_COL},
+            },
+        ]
+        groups.extend(
+            group
+            for group in extra_groups
+            if next(iter(group["members"].values())) in available
+        )
+        return groups
 
     def build_design_matrices(
         self,
@@ -198,24 +347,36 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
             else self.default_emission_cols(feature_df)
         )
         include_stim_strength = "stim_strength" in requested or any(
-            str(col).startswith(_SF_COL_PREFIX) for col in requested
+            str(col).startswith("sf_") for col in requested
         )
         include_stim_param = (
             _STIM_PARAM_COL in requested
             or "drug_x_stim_param" in requested
         )
+        include_stim_param_saline = _STIM_PARAM_SALINE_COL in requested
+        include_stim_param_drug = _STIM_PARAM_DRUG_COL in requested
         include_bias_param = "bias_param" in requested
         include_at_choice_param = "at_choice_param" in requested
-        include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested
+        include_choice_lag_param = (
+            _CHOICE_LAG_PARAM_COL in requested
+            or "drug_x_choice_lag_param" in requested
+        )
         include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested
+        include_choice_lag_param_correct = _CHOICE_LAG_PARAM_CORRECT_COL in requested
 
         missing_optional = (
-            (include_stim_strength and not any(str(col).startswith(_SF_COL_PREFIX) for col in feature_df.columns))
+            (include_stim_strength and not any(str(col).startswith("sf_") for col in feature_df.columns))
             or (include_stim_param and _STIM_PARAM_COL not in feature_df.columns)
+            or (include_stim_param_saline and _STIM_PARAM_SALINE_COL not in feature_df.columns)
+            or (include_stim_param_drug and _STIM_PARAM_DRUG_COL not in feature_df.columns)
             or (include_bias_param and "bias_param" not in feature_df.columns)
             or (include_at_choice_param and "at_choice_param" not in feature_df.columns)
             or (include_choice_lag_param and _CHOICE_LAG_PARAM_COL not in feature_df.columns)
             or (include_choice_lag_param_2 and _CHOICE_LAG_PARAM_2_COL not in feature_df.columns)
+            or (
+                include_choice_lag_param_correct
+                and _CHOICE_LAG_PARAM_CORRECT_COL not in feature_df.columns
+            )
         )
         if missing_optional:
             raw_cols = [
@@ -243,31 +404,43 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
             ]
             if raw_cols:
                 feature_df = feature_df.select(raw_cols)
-            feature_df = self._build_feature_df(
+            feature_df = super()._build_feature_df(
                 feature_df,
                 include_stim_strength=include_stim_strength,
-                include_stim_param=include_stim_param,
-                include_bias_param=False,
-                include_at_choice_param=False,
-                include_choice_lag_param=include_choice_lag_param,
-                include_choice_lag_param_2=include_choice_lag_param_2,
             )
-            if include_bias_param or include_at_choice_param:
+            if (
+                include_stim_param
+                or include_stim_param_saline
+                or include_stim_param_drug
+                or include_bias_param
+                or include_at_choice_param
+                or include_choice_lag_param
+                or include_choice_lag_param_2
+                or include_choice_lag_param_correct
+            ):
                 feature_pd = feature_df.to_pandas()
                 for spec in [
+                    self.stim_param_spec if include_stim_param else None,
+                    self.stim_param_saline_spec if include_stim_param_saline else None,
+                    self.stim_param_drug_spec if include_stim_param_drug else None,
                     self.bias_param_spec if include_bias_param else None,
                     self.at_choice_param_spec if include_at_choice_param else None,
+                    self.choice_lag_param_spec if include_choice_lag_param else None,
+                    self.choice_lag_param_2_spec if include_choice_lag_param_2 else None,
+                    self.choice_lag_param_correct_spec if include_choice_lag_param_correct else None,
                 ]:
                     if spec is None or spec.target_name in feature_pd.columns:
                         continue
-                    for source_col in resolved_source_features(spec):
-                        if source_col not in feature_pd.columns:
-                            feature_pd[source_col] = 0.0
-                    feature_pd[spec.target_name] = weighted_sum_regressor(
+                    feature_pd[spec.target_name] = _weighted_sum_regressor_zero_fill(
                         feature_pd,
                         spec,
+                        pooled_mean=(
+                            _USE_POOLED_BASE_2AFC_PARAM_WEIGHTS
+                            and spec.fit_task == "2AFC"
+                        ),
                     )
                 feature_df = pl.from_pandas(feature_pd)
+        feature_df = _normalize_condition_stim_params(feature_df)
         feature_df = _add_drug_interactions(feature_df)
         return super().build_design_matrices(
             feature_df,

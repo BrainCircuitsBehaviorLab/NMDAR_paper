@@ -16,10 +16,8 @@ from glmhmmt.tasks.fitted_regressors import (
 )
 from glmhmmt.tasks import TaskAdapter, _register
 from src.process.common import (
-    PreparedWeightFamilyPlot,
     binned_feature_summary,
     label_states_by_regressor,
-    prepare_grouped_weight_family_plot,
     to_pandas_df,
 )
 
@@ -41,7 +39,6 @@ except ImportError:
         return result
 
 _NUM_STIM_BINS = 9
-_NUM_CHOICE_LAGS = 15
 _STIM_BIN_PREFIX = "stim_bin_"
 _CHOICE_LAG_PREFIX = "choice_lag_"
 _REWARD_LAG_PREFIX = "reward_lag_"
@@ -51,7 +48,6 @@ _PREV_DIFFICULTY_HOT_PREFIX = "prev_difficulty_hot_"
 _PREV_DIFFICULTY_LAG_PREFIX = "prev_difficulty_lag_"
 _PREV_DIFFICULTY_LAG_HOT_PREFIX = "prev_difficulty_lag_hot_"
 _PREV_DAY_REWARD_LAG_PREFIX = "prev_day_total_reward_lag_"
-_BIAS_HOT_COL_PREFIX = "bias_"
 _STIM_PARAM_COL = "stim_param"
 _EVIDENCE_PARAM_COL = "evidence_param"
 _DIFFICULTY_PARAM_COL = "difficulty_param"
@@ -77,11 +73,11 @@ def _stim_bin_names() -> list[str]:
 
 
 def _choice_lag_names() -> list[str]:
-    return [f"{_CHOICE_LAG_PREFIX}{idx:02d}" for idx in range(1, _NUM_CHOICE_LAGS + 1)]
+    return [f"{_CHOICE_LAG_PREFIX}{idx:02d}" for idx in range(1, 15 + 1)]
 
 
 def _reward_lag_names() -> list[str]:
-    return [f"{_REWARD_LAG_PREFIX}{idx:02d}" for idx in range(1, _NUM_CHOICE_LAGS + 1)]
+    return [f"{_REWARD_LAG_PREFIX}{idx:02d}" for idx in range(1, 15 + 1)]
 
 
 def _zscore_sequence(values: list[float]) -> list[float]:
@@ -190,7 +186,7 @@ _BIAS_PARAM_SPEC = FittedWeightRegressorSpec(
     fit_model_kind="glm",
     fit_model_id="one hot lapses",
     arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=(_BIAS_HOT_COL_PREFIX,),
+    source_feature_prefixes=("bias_",),
 )
 
 _DIFFICULTY_PARAM_SPEC = FittedWeightRegressorSpec(
@@ -429,7 +425,7 @@ def _safe_weighted_sum_regressor(part, spec: FittedWeightRegressorSpec) -> np.nd
 
 
 def _bias_hot_sort_key(name: str) -> tuple[int, str]:
-    suffix = name.removeprefix(_BIAS_HOT_COL_PREFIX)
+    suffix = name.removeprefix("bias_")
     return (int(suffix), name) if suffix.isdigit() else (10**9, name)
 
 
@@ -438,15 +434,15 @@ def _bias_hot_cols(columns: list[str]) -> list[str]:
         [
             col
             for col in columns
-            if col.startswith(_BIAS_HOT_COL_PREFIX)
-            and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+            if col.startswith("bias_")
+            and col.removeprefix("bias_").isdigit()
         ],
         key=_bias_hot_sort_key,
     )
 
 
 def _is_bias_hot_col(col: str) -> bool:
-    return col.startswith(_BIAS_HOT_COL_PREFIX) and col.removeprefix(_BIAS_HOT_COL_PREFIX).isdigit()
+    return col.startswith("bias_") and col.removeprefix("bias_").isdigit()
 
 
 def _drop_unavailable_bias_hot_cols(cols: list[str], available_cols: set[str]) -> list[str]:
@@ -471,7 +467,7 @@ def _infer_bias_hot_cols_from_df(df: pl.DataFrame) -> list[str]:
     existing = _bias_hot_cols(list(df.columns))
     if existing:
         return existing
-    return [f"{_BIAS_HOT_COL_PREFIX}{idx}" for idx in range(_max_sessions_from_df(df))]
+    return [f"bias_{idx}" for idx in range(_max_sessions_from_df(df))]
 
 
 def _stim_param_weight_map() -> dict[str, float]:
@@ -782,7 +778,7 @@ class NuoAuditoryAdapter(TaskAdapter):
         session_idx_np = df_sub["_session_idx"].to_numpy().astype(np.int32)
         bias_hot_exprs = [
             pl.Series(
-                f"{_BIAS_HOT_COL_PREFIX}{idx}",
+                f"bias_{idx}",
                 (session_idx_np == idx).astype(np.float32),
             )
             for idx in range(len(session_order))
@@ -1121,79 +1117,6 @@ class NuoAuditoryAdapter(TaskAdapter):
 
     def build_transition_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_transition_groups(list(available_cols))
-
-    def weight_family_specs(self, weights_df=None) -> Dict[str, dict]:
-        df = to_pandas_df(weights_df) if weights_df is not None else None
-        feature_names = [] if df is None or df.empty or "feature" not in df.columns else pd.unique(df["feature"].astype(str)).tolist()
-        stim_cols = [col for col in feature_names if col in _STIM_BIN_COLS]
-        difficulty_cols = [col for col in feature_names if col in _DIFFICULTY_COLS]
-        choice_cols = [col for col in feature_names if col in _CHOICE_LAG_COLS]
-        bias_cols = _bias_hot_cols(feature_names)
-        stim_groups = [
-            (str(idx), [col])
-            for idx, col in enumerate(stim_cols)
-        ]
-        return {
-            "stim_hot": {
-                "title": "stim_hot",
-                "xlabel": "stimulus bin",
-                "plot_kind": "box",
-                "feature_groups": stim_groups,
-            },
-            "evidence_one_hot": {
-                "title": "evidence one-hot",
-                "xlabel": "stimulus bin",
-                "plot_kind": "box",
-                "feature_groups": stim_groups,
-            },
-            "difficulty_hot": {
-                "title": "difficulty_hot",
-                "xlabel": "Difficulty",
-                "plot_kind": "box",
-                "feature_groups": [
-                    (col.removeprefix(_DIFFICULTY_COL_PREFIX), [col])
-                    for col in difficulty_cols
-                ],
-            },
-            "choice_lag": {
-                "title": "choice_lag_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_PREFIX))), [col]) for col in choice_cols],
-            },
-            "at_choice_lag": {
-                "title": "choice_lag_*",
-                "xlabel": "Lag",
-                "plot_kind": "box",
-                "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_PREFIX))), [col]) for col in choice_cols],
-            },
-            "bias_hot": {
-                "title": "bias_hot",
-                "xlabel": "Session index",
-                "plot_kind": "line",
-                "feature_groups": [(col.removeprefix(_BIAS_HOT_COL_PREFIX), [col]) for col in bias_cols],
-            },
-        }
-
-    def prepare_weight_family_plot(
-        self,
-        weights_df,
-        family_key: str,
-        *,
-        variant: str | None = None,
-    ) -> PreparedWeightFamilyPlot | None:
-        del variant
-        spec = self.weight_family_specs(weights_df).get(family_key)
-        if spec is None:
-            return None
-        return prepare_grouped_weight_family_plot(
-            weights_df,
-            feature_groups=spec["feature_groups"],
-            title=spec["title"],
-            xlabel=spec["xlabel"],
-            plot_kind=spec["plot_kind"],
-            weight_row_indices=(0,),
-        )
 
     def resolve_design_names(
         self,

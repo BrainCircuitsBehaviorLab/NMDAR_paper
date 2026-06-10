@@ -34,9 +34,6 @@ from src.process.common import (
 
 # ── state colour palette ──────────────────────────────────────────────────────
 
-_SESSION_COL = "session"
-_SORT_COL = "trial_idx"
-
 def _state_colors(K: int) -> List[str]:
     return get_state_palette(K)[:K]
 

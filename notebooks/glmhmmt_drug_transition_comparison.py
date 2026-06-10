@@ -62,7 +62,12 @@ def _():
     from scipy.stats import ttest_rel
     from src.process import two_afc as process_two_afc
     from src.process import two_adc as process_two_adc
-    from src.process.common import add_choice_lag_summary_regressor, attach_signed_delay_columns
+    from src.process.common import (
+        add_choice_lag_summary_regressor,
+        adapter_behavioral_column,
+        attach_signed_delay_columns,
+        pick_existing_column,
+    )
     from src.plots.common import plot_mean_over_data
     from src.utils import fig_size
 
@@ -73,7 +78,6 @@ def _():
     sns.set_context("notebook")
 
     TASK_OPTIONS = ["2AFC_DRUG", "2ADC_DRUG"]
-    DRUG_COL_BY_TASK = {"2AFC_DRUG": "Drug", "2ADC_DRUG": "drug_code"}
     CONDITION_LABELS = {0: "saline", 1: "drug"}
     CONDITION_PALETTE = {
         "saline": "tab:gray",
@@ -85,7 +89,6 @@ def _():
     return (
         CONDITION_LABELS,
         CONDITION_PALETTE,
-        DRUG_COL_BY_TASK,
         Line2D,
         ParamsInputDrivenTransitions,
         ParamsSoftmaxGLMHMM,
@@ -94,6 +97,7 @@ def _():
         SoftmaxGLMHMM,
         TASK_OPTIONS,
         add_choice_lag_summary_regressor,
+        adapter_behavioral_column,
         attach_signed_delay_columns,
         build_transition_matrix_payload,
         build_transition_weights_df,
@@ -114,6 +118,7 @@ def _():
         paths,
         pd,
         pl,
+        pick_existing_column,
         plot_mean_over_data,
         plt,
         process_two_adc,
@@ -132,11 +137,15 @@ def _(TASK_OPTIONS, mo):
 
 
 @app.cell
-def _(DRUG_COL_BY_TASK, get_adapter, pl, ui_task):
+def _(get_adapter, pick_existing_column, pl, ui_task):
     task_name = ui_task.value
-    drug_col = DRUG_COL_BY_TASK[task_name]
     adapter = get_adapter(task_name)
     df_all = adapter.subject_filter(adapter.read_dataset())
+    drug_col = (
+        adapter.drug_condition_col(df_all)
+        if hasattr(adapter, "drug_condition_col")
+        else pick_existing_column(df_all, ["drug_code", "Drug", "drug"])
+    )
     plots = adapter.get_plots()
     condition_counts = (
         df_all.group_by("condition")
@@ -552,10 +561,10 @@ def _(mo, plot_dfs, plots):
 
 @app.cell
 def _(
+    adapter,
     CONDITION_LABELS,
     CONDITION_PALETTE,
     Line2D,
-    adapter,
     choice_history_regressor,
     conditioned_views,
     plot_dfs,
@@ -679,6 +688,8 @@ def _(
 
 @app.cell
 def _(
+    adapter,
+    adapter_behavioral_column,
     CONDITION_LABELS,
     CONDITION_PALETTE,
     Line2D,
@@ -711,10 +722,7 @@ def _(
 
     def add_p_right(pdf):
         pdf = pdf.copy()
-        choice_col = next(
-            (col for col in ["Choice", "choice", "choices", "response"] if col in pdf.columns),
-            None,
-        )
+        choice_col = adapter_behavioral_column(adapter, pdf, "response", "response", "Choice", "choice", "choices")
         if choice_col is None:
             return pdf
         choice = pd.to_numeric(pdf[choice_col], errors="coerce")
