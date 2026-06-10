@@ -174,12 +174,10 @@ def _():
 
     return (
         Annotator,
-        CoefficientEditorWidget,
         ModelCfg,
         ModelManagerWidget,
         adapter_behavioral_column,
         build_change_triggered_posteriors_payload,
-        build_editor_payload,
         build_session_deepdive_payload,
         build_session_trajectories_payload,
         build_state_accuracy_payload,
@@ -188,7 +186,6 @@ def _():
         build_state_posterior_count_payload,
         build_transition_matrix_payload,
         build_trial_and_weights_df,
-        build_trial_df,
         build_views,
         fig_size,
         fit_main,
@@ -206,7 +203,6 @@ def _():
         project_root,
         put_figure_legend_at_bottom,
         resolve_selected_model_id,
-        select_subject_behavior_df,
         sns,
         wrap_anywidget,
     )
@@ -489,7 +485,7 @@ def _(K, adapter, arrays_store, build_views, mo, selected, ui_scoring_key):
     views = build_views(arrays_store, adapter, K, selected)
     editor_views = views.copy()
     state_labels = {s: v.state_name_by_idx for s, v in views.items()}
-    return editor_views, state_labels, views
+    return state_labels, views
 
 
 @app.cell
@@ -657,6 +653,7 @@ def _(
             [x - 0.2, x + 0.2],
             [row[state_order[0]], row[state_order[1]]],
             color="0.75",
+            linewidth = 0.5,
             zorder=0,
         )
 
@@ -974,346 +971,77 @@ def _(adapter, fig_size, mo, panel, plot_df_all, plots, plt, views_sel):
 
 
 @app.cell
-def _(fig_size, mo, np, pd, plot_df_all, plt, save_plot):
-
-    _stim_col = (
-        "stim_x_delay"
-        if "stim_x_delay" in plot_df_all.columns
-        else "ILD"
-        if "ILD" in plot_df_all.columns
-        else "ild"
-    )
-    mo.stop(
-        _stim_col not in plot_df_all.columns or "choice_lag_param" not in plot_df_all.columns,
-        mo.md("Need `choice_lag_param` and raw `ILD`/`stim_x_delay` columns for conditional p(right) plots."),
-    )
-
-    def _response_right(_df):
-        _response = pd.to_numeric(_df["response"], errors="coerce")
-        if next(iter(_views_sel.values())).num_classes == 3:
-            return (_response == 2).astype(float)
-        return (_response > 0).astype(float)
-
-    def _summary(_df, *, x_col, line_col, x_quantile=False, line_quantile=False):
-        _df = _df.to_pandas().copy() if hasattr(_df, "to_pandas") else pd.DataFrame(_df).copy()
-        _df["_response_right"] = _response_right(_df)
-        _df["_x"] = pd.to_numeric(_df[x_col], errors="coerce")
-        _df["_line_value"] = pd.to_numeric(_df[line_col], errors="coerce")
-        _df["_p_right"] = pd.to_numeric(_df["pR"], errors="coerce")
-        _df = _df.dropna(subset=["subject", "_response_right", "_x", "_line_value", "_p_right"])
-        if _df.empty or _df["_x"].nunique() < 2 or _df["_line_value"].nunique() < 2:
-            return None
-        _df["_line"] = (
-            pd.qcut(_df["_line_value"], q=min(4, _df["_line_value"].nunique()), labels=False, duplicates="drop")
-            if line_quantile
-            else _df["_line_value"]
-        )
-        _df["_xbin"] = (
-            pd.qcut(_df["_x"], q=min(10, _df["_x"].nunique()), labels=False, duplicates="drop")
-            if x_quantile
-            else _df["_x"]
-        )
-        _df = _df.dropna(subset=["_line", "_xbin"])
-        _subject = (
-            _df.groupby(["_line", "subject", "_xbin"], observed=True)
-            .agg(data=("_response_right", "mean"), model=("_p_right", "mean"), x=("_x", "mean"))
-            .reset_index()
-        )
-        _out = (
-            _subject.groupby(["_line", "_xbin"], observed=True)
-            .agg(data_mean=("data", "mean"), data_std=("data", "std"), n=("data", "count"), model_mean=("model", "mean"), x=("x", "mean"))
-            .reset_index()
-            .sort_values(["_line", "x"])
-        )
-        _out["data_sem"] = _out["data_std"].fillna(0) / np.sqrt(_out["n"].clip(lower=1))
-        return _out
-
-    def _plot(_ax, _summary_df, *, legend_title, line_quantile, palette_name):
-        if _summary_df is None or _summary_df.empty:
-            _ax.set_axis_off()
-            return False
-        _order = sorted(_summary_df["_line"].dropna().unique().tolist())
-        _colors = plt.get_cmap(palette_name)(np.linspace(0.15, 0.85, len(_order)))
-        for _line, _color in zip(_order, _colors, strict=False):
-            _sub = _summary_df[_summary_df["_line"] == _line]
-            _label = f"Q{int(_line) + 1}" if line_quantile else f"{float(_line):g}"
-            _ax.plot(_sub["x"], _sub["model_mean"], "-", color=_color, lw=2, label=_label)
-            _ax.errorbar(_sub["x"], _sub["data_mean"], yerr=_sub["data_sem"], fmt="o", color=_color, ecolor=_color, ms=4, capsize=3)
-        _ax.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.5)
-        _ax.set_ylim(0, 1)
-        _ax.set_ylabel(r"$p(\mathrm{right})$")
-        _ax.legend(title=legend_title, frameon=False, fontsize=8)
-        return True
-
-    _fig_conditional, (_ax_stim_by_a, _ax_a_by_stim) = plt.subplots(1, 2, figsize=fig_size(1, 2), layout="constrained")
-    _drawn_1 = _plot(
-        _ax_stim_by_a,
-        _summary(plot_df_all, x_col=_stim_col, line_col="choice_lag_param", line_quantile=True),
-        legend_title=r"$A$",
-        line_quantile=True,
-        palette_name="RdBu",
-    )
-    _ax_stim_by_a.set_xlabel(_stim_col)
-    _drawn_2 = _plot(
-        _ax_a_by_stim,
-        _summary(plot_df_all, x_col="choice_lag_param", line_col=_stim_col, x_quantile=True),
-        legend_title="Stim.",
-        line_quantile=False,
-        palette_name="viridis",
-    )
-    _ax_a_by_stim.set_xlabel(r"$A$")
-    mo.stop(not (_drawn_1 or _drawn_2), mo.md("No conditional p(right) plots could be drawn."))
-
-    mo.vstack(
-        [
-            _fig_conditional,
-            save_plot(
-                _fig_conditional,
-                "conditional psychometrics by action and stimulus",
-                stem="pright_conditional_action_stimulus",
-            ),
-        ],
-        align="center",
-    )
-    return
-
-
-@app.cell
-def _(
-    fig_size,
-    mo,
-    np,
-    pd,
-    plot_df_all,
-    plt,
-    save_plot,
-    selected,
-    sns,
-    task_name,
-    views,
-):
-    from glmhmmt.views import get_state_color
-    from src.process.common import attach_repeat_choice_evidence
-
-    _views_sel = {s: views[s] for s in selected}
-    mo.stop(not _views_sel, mo.md("No fitted arrays found -- run the fit first."))
-
-    _repeat_state_df = attach_repeat_choice_evidence(
-        plot_df_all,
-        views=_views_sel,
-        is_mcdr=task_name == "MCDR",
-    )
-    mo.stop(_repeat_state_df.empty, mo.md("No repeat evidence data available."))
-    mo.stop(
-        "subject" not in _repeat_state_df.columns or "_repeat_choice_evidence" not in _repeat_state_df.columns,
-        mo.md("No repeat evidence data available for the selected task/features."),
-    )
-    mo.stop(
-        "state_idx" not in _repeat_state_df.columns and "state_rank" not in _repeat_state_df.columns,
-        mo.md("No state assignment column available for repeat evidence distributions."),
-    )
-
-    _repeat_state_df = _repeat_state_df.copy().reset_index(drop=True)
-    _repeat_state_df["_repeat_choice_evidence"] = pd.to_numeric(
-        _repeat_state_df["_repeat_choice_evidence"],
-        errors="coerce",
-    )
-
-    if "state_rank" in _repeat_state_df.columns:
-        _repeat_state_df["_state_rank"] = pd.to_numeric(_repeat_state_df["state_rank"], errors="coerce")
-    else:
-        _repeat_state_df["_state_rank"] = np.nan
-        for _subject, _idx in _repeat_state_df.groupby("subject", observed=True).groups.items():
-            _view = _views_sel.get(_subject) or _views_sel.get(str(_subject))
-            if _view is None:
-                continue
-            _rank_by_raw = {int(_raw_idx): int(_rank) for _raw_idx, _rank in _view.state_rank_by_idx.items()}
-            _raw_state = pd.to_numeric(_repeat_state_df.loc[_idx, "state_idx"], errors="coerce")
-            _repeat_state_df.loc[_idx, "_state_rank"] = _raw_state.map(_rank_by_raw).to_numpy(dtype=float)
-
-    _repeat_state_df = _repeat_state_df.dropna(subset=["_repeat_choice_evidence", "_state_rank"]).copy()
-    mo.stop(_repeat_state_df.empty, mo.md("No finite repeat evidence values available by state."))
-
-    _repeat_state_df["_state_rank"] = _repeat_state_df["_state_rank"].astype(int)
-    _state_labels = {}
-    for _view in _views_sel.values():
-        for _raw_idx, _label in _view.state_name_by_idx.items():
-            _rank = int(_view.state_rank_by_idx.get(int(_raw_idx), int(_raw_idx)))
-            _state_labels.setdefault(_rank, _label)
-
-    _state_order = sorted(_repeat_state_df["_state_rank"].unique().tolist())
-    _label_by_rank = {_rank: _state_labels.get(_rank, f"State {_rank}") for _rank in _state_order}
-    _repeat_state_df["_state_label"] = _repeat_state_df["_state_rank"].map(_label_by_rank)
-    _label_order = [_label_by_rank[_rank] for _rank in _state_order]
-    _K = int(next(iter(_views_sel.values())).K) if _views_sel else len(_state_order)
-    _palette = {
-        _label_by_rank[_rank]: get_state_color(_label_by_rank[_rank], _rank, K=_K)
-        for _rank in _state_order
-    }
-
-    _fig_repeat_state_dist, _ax_repeat_state_dist = plt.subplots(
-        figsize=fig_size(3, 1),
-        layout="constrained",
-    )
-    _kde_drawn = False
-    for _label in _label_order:
-        _values = _repeat_state_df.loc[
-            _repeat_state_df["_state_label"] == _label,
-            "_repeat_choice_evidence",
-        ].to_numpy(dtype=float)
-        _values = _values[np.isfinite(_values)]
-        if _values.size >= 2 and np.nanstd(_values) > 0:
-            sns.kdeplot(
-                x=_values,
-                ax=_ax_repeat_state_dist,
-                label=_label,
-                color=_palette[_label],
-                fill=False,
-                linewidth=1.8,
-            )
-            _kde_drawn = True
-
-    if not _kde_drawn:
-        sns.stripplot(
-            data=_repeat_state_df,
-            x="_repeat_choice_evidence",
-            y="_state_label",
-            order=_label_order,
-            palette=_palette,
-            ax=_ax_repeat_state_dist,
-            size=2.5,
-            alpha=0.45,
-        )
-        _ax_repeat_state_dist.set_ylabel("")
-    else:
-        _ax_repeat_state_dist.legend(title="State", frameon=False)
-        _ax_repeat_state_dist.set_ylabel("Density")
-
-    _ax_repeat_state_dist.axvline(0, color="black", linestyle="--", linewidth=0.8)
-    _ax_repeat_state_dist.set_xlabel("Rep. Evidence")
-    _ax_repeat_state_dist.set_title("Repeat evidence distribution by state")
-    sns.despine(ax=_ax_repeat_state_dist)
-
-    mo.vstack(
-        [
-            _fig_repeat_state_dist,
-            save_plot(
-                _fig_repeat_state_dist,
-                "repeat evidence distribution by state",
-                stem="repeat_evidence_distribution_by_state",
-            ),
-        ],
-        align="center",
-    )
-    return
-
-
-@app.cell
-def _(fig_size, mo, plot_df_all, plots, plt, save_plot):
-    _choice_history_regressor = (
+def _(fig_size, mo, panel, plot_df_all, plots, plt):
+    regressor = (
         "choice_lag_param_2"
         if "choice_lag_param_2" in plot_df_all.columns
-        else "choice_lag_param"
+        else (
+            "choice_lag_param"
+            if "choice_lag_param" in plot_df_all.columns
+            else None
+        )
     )
     mo.stop(
-        _choice_history_regressor not in plot_df_all.columns,
+        regressor is None,
         mo.md("No choice-history regressor available for p(right) by regressor."),
     )
 
-    fig_right, ax_right = plt.subplots(figsize=fig_size(2,1))
-    _ax_right_regressor = plots.plot_right_by_regressor(
-        plot_df_all,
-        regressor_col=_choice_history_regressor,
-        title=None,
-        ax=ax_right,
-    )
-    _ax_right_regressor.set_xlabel(r"$A$")
-    mo.stop(
-        _ax_right_regressor is None,
-        mo.md("No p(right) by choice-history regressor plot available."),
-    )
+    fig, ax = plt.subplots(figsize=fig_size(2, 1))
+    plots.plot_right_by_regressor(plot_df_all, regressor_col=regressor, title=None, ax=ax)
+    ax.set_xlabel(r"$A$")
 
-    mo.vstack(
-        [
-            fig_right,
-            save_plot(
-                fig_right,
-                "p(right) by choice history",
-                stem=f"right_by_{_choice_history_regressor}",
-            ),
-        ],
-        align="center",
-    )
-    return
+    panel("p(right) by choice history", fig, f"right_by_{regressor}", "p(right) by choice history")
+    return (regressor,)
 
 
 @app.cell
-def _(fig_size, mo, plot_df_all, plots, plt, save_plot):
+def _(fig_size, mo, panel, plot_df_all, plots, plt, regressor):
     mo.stop(
-        not hasattr(plots, "plot_right_integration_map"),
-        mo.md("No p(right) integration map helper is available for this task."),
+        regressor is None,
+        mo.md("No choice-history regressor available for p(right) by regressor."),
     )
-    _map_w, _map_h = fig_size(2, 1)
-    _fig_integration_data_base, (_ax_integration_data, _cax_integration_data) = plt.subplots(
-        1,
-        2,
-        figsize=(_map_w * 1.12, _map_h),
-        gridspec_kw={"width_ratios": [1.0, 0.08], "wspace": 0.12},
+    map_w, map_h = fig_size(2, 1)
+
+    fig_data, (ax_data, cax_data) = plt.subplots(
+        1, 2,
+        figsize=(map_w * 1.12, map_h),
+        gridspec_kw={"width_ratios": [1, 0.08], "wspace": 0.12},
     )
-    _integration_data_result = plots.plot_right_integration_map(
+    plots.plot_right_integration_map(
         plot_df_all,
         panel="data",
-        ax=_ax_integration_data,
-        cbar_ax=_cax_integration_data,
+        ax=ax_data,
+        cbar_ax=cax_data,
     )
-    _ax_integration_data.set_ylabel(r"$A$")
-    _fig_integration_data = None if _integration_data_result is None else _integration_data_result[0]
+    ax_data.set_ylabel(r"$A$")
 
-    _fig_integration_model_base, (_ax_integration_model, _cax_integration_model) = plt.subplots(
-        1,
-        2,
-        figsize=(_map_w * 1.12, _map_h),
-        gridspec_kw={"width_ratios": [1.0, 0.08], "wspace": 0.12},
+    fig_model, (ax_model, cax_model) = plt.subplots(
+        1, 2,
+        figsize=(map_w * 1.12, map_h),
+        gridspec_kw={"width_ratios": [1, 0.08], "wspace": 0.12},
     )
-    _integration_model_result = plots.plot_right_integration_map(
+    plots.plot_right_integration_map(
         plot_df_all,
         panel="model",
-        ax=_ax_integration_model,
-        cbar_ax=_cax_integration_model,
-    )
-    _fig_integration_model = None if _integration_model_result is None else _integration_model_result[0]
-
-    mo.stop(
-        _fig_integration_data is None and _fig_integration_model is None,
-        mo.md("No p(right) integration map available for the selected task/features."),
+        ax=ax_model,
+        cbar_ax=cax_model,
     )
 
-    _integration_items = []
-    if _fig_integration_data is not None:
-        _integration_items.extend(
-            [
-                _fig_integration_data,
-                save_plot(
-                    _fig_integration_data,
-                    "p(right) integration map data",
-                    stem="right_integration_map_data",
-                ),
-            ]
-        )
-    if _fig_integration_model is not None:
-        _integration_items.extend(
-            [
-                _fig_integration_model,
-                save_plot(
-                    _fig_integration_model,
-                    "p(right) integration map model",
-                    stem="right_integration_map_model",
-                ),
-            ]
-        )
-
-    mo.vstack(
-        _integration_items,
+    mo.hstack(
+        [
+            panel(
+                "p(right) integration map (data)",
+                fig_data,
+                "right_integration_map_data",
+                "p(right) integration map data",
+            ),
+            panel(
+                "p(right) integration map (model)",
+                fig_model,
+                "right_integration_map_model",
+                "p(right) integration map model",
+            ),
+        ],
         align="center",
     )
     return
@@ -1324,157 +1052,43 @@ def _(
     adapter,
     fig_size,
     mo,
+    panel,
     plot_df_all,
     plots,
     plt,
-    save_plot,
-    selected,
-    views,
+    regressor,
+    views_sel,
 ):
-    _choice_history_regressor = (
-        "choice_lag_param_2"
-        if "choice_lag_param_2" in plot_df_all.columns
-        else "choice_lag_param"
-    )
     mo.stop(
-        _choice_history_regressor not in plot_df_all.columns,
-        mo.md("No choice-history regressor available for binned accuracy."),
+        regressor is None,
+        mo.md("No choice-history regressor available for p(right) by regressor."),
     )
-    _views_sel = {s: views[s] for s in selected}
-    _bin_w, _bin_h = fig_size(2, 1)
-    _fig_binned_base, (_ax_binned, _ax_binned_legend) = plt.subplots(
+    bin_w, bin_h = fig_size(2, 1)
+    fig_binned, (ax_binned, ax_binned_legend) = plt.subplots(
         1,
         2,
-        figsize=(_bin_w * 1.45, _bin_h),
-        gridspec_kw={"width_ratios": [1.0, 0.45], "wspace": 0.02},
+        figsize=(bin_w * 1.45, bin_h),
+        gridspec_kw={"width_ratios": [1, 0.45], "wspace": 0.02},
     )
-    _binned_result = plots.plot_binned_accuracy_figure(
+
+    plots.plot_binned_accuracy_figure(
         plot_df_all,
-        regressor_col=_choice_history_regressor,
+        regressor_col=regressor,
         adapter=adapter,
-        views=_views_sel,
+        views=views_sel,
         max_panels=1,
-        ax=_ax_binned,
-        legend_ax=_ax_binned_legend,
-    )
-    _binned_legend = _ax_binned_legend.get_legend()
-    if _binned_legend is not None:
-        _binned_legend.set_title(r"$A$")
-
-    _fig_binned = None if _binned_result is None else _binned_result[0]
-    mo.stop(
-        _fig_binned is None,
-        mo.md("No binned accuracy plot available for the choice-history regressor."),
+        ax=ax_binned,
+        legend_ax=ax_binned_legend,
     )
 
-    mo.vstack(
-        [
-            _fig_binned,
-            save_plot(
-                _fig_binned,
-                "binned accuracy by choice history",
-                stem=f"accuracy_binned_{_choice_history_regressor}",
-            ),
-        ],
-        align="center",
-    )
-    return
+    if ax_binned_legend.get_legend():
+        ax_binned_legend.get_legend().set_title(r"$A$")
 
-
-@app.cell
-def _(mo):
-    ui_run_glmhmm_autocorr_simulations = mo.ui.run_button(
-        label="Run fitted GLM-HMM autocorrelogram simulations",
-    )
-    ui_glmhmm_autocorr_n_simulations = mo.ui.slider(
-        start=1,
-        stop=50,
-        step=1,
-        value=5,
-        label="GLM-HMM simulations",
-    )
-    mo.hstack([ui_run_glmhmm_autocorr_simulations, ui_glmhmm_autocorr_n_simulations], align="center")
-    return ui_glmhmm_autocorr_n_simulations, ui_run_glmhmm_autocorr_simulations
-
-
-@app.cell
-def _(
-    fig_size,
-    mo,
-    plot_df_all,
-    plt,
-    save_plot,
-    ui_glmhmm_autocorr_n_simulations,
-    ui_run_glmhmm_autocorr_simulations,
-):
-    from src.process.common import (
-        prepare_corrected_behavior_autocorrelograms,
-        prepare_model_simulated_corrected_behavior_autocorrelograms,
-    )
-    from src.plots.common import plot_corrected_behavior_autocorrelograms
-
-    _trial_col = "trial_idx" if "trial_idx" in plot_df_all.columns else ("trial" if "trial" in plot_df_all.columns else None)
-    _autocorr_sort_cols = ["subject", "session"] + ([_trial_col] if _trial_col is not None else [])
-    _autocorr_df = plot_df_all.sort(_autocorr_sort_cols)
-    _data_autocorr = prepare_corrected_behavior_autocorrelograms(
-        _autocorr_df,
-        subject_col="subject",
-        session_col="session",
-        choice_col="response",
-        outcome_col="performance",
-        trial_index_col=_trial_col,
-        max_lag=50,
-        min_cross_pairs=20,
-        max_cross_pairs=80,
-        seed=0,
-    )
-    if ui_run_glmhmm_autocorr_simulations.value:
-        _model_autocorr = prepare_model_simulated_corrected_behavior_autocorrelograms(
-            _autocorr_df,
-            subject_col="subject",
-            session_col="session",
-            trial_index_col=_trial_col,
-            response_col="response",
-            performance_col="performance",
-            n_simulations=int(ui_glmhmm_autocorr_n_simulations.value),
-            max_lag=50,
-            min_cross_pairs=20,
-            max_cross_pairs=80,
-            seed=1,
-        )
-        _model_autocorr_df = _model_autocorr["autocorr"]
-    else:
-        _model_autocorr_df = None
-    def _style_autocorr_axis(_ax):
-        _ax.set_ylim(-0.075, 0.2)
-        _ax.set_title("")
-
-    _fig_choice_autocorr, _ax_choice_autocorr = plt.subplots(figsize=fig_size(2, 1.5))
-    _fig_choice_autocorr, _ = plot_corrected_behavior_autocorrelograms(
-        _data_autocorr,
-        axes=[_ax_choice_autocorr],
-        model_autocorr=_model_autocorr_df,
-        model_label="Fitted GLM-HMM",
-        signals=("Outcome",),
-        figsize=fig_size(2, 1),
-    )
-    _style_autocorr_axis(_ax_choice_autocorr)
-    _fig_repeat_autocorr, _ax_repeat_autocorr = plt.subplots(figsize=fig_size(2, 1.25))
-    _fig_repeat_autocorr, _ = plot_corrected_behavior_autocorrelograms(
-        _data_autocorr,
-        axes=[_ax_repeat_autocorr],
-        model_autocorr=_model_autocorr_df,
-        model_label="Fitted GLM-HMM",
-        signals=("Repetition",),
-        figsize=fig_size(2, 1.25),
-    )
-    _style_autocorr_axis(_ax_repeat_autocorr)
-    mo.hstack(
-        [
-            mo.vstack([_fig_choice_autocorr, save_plot(_fig_choice_autocorr, "GLM-HMM choice autocorrelogram", stem="glmhmm_choice_autocorrelogram")], align="center"),
-            mo.vstack([_fig_repeat_autocorr, save_plot(_fig_repeat_autocorr, "GLM-HMM repeat autocorrelogram", stem="glmhmm_repeat_autocorrelogram")], align="center"),
-        ],
-        align="center",
+    panel(
+        "Binned accuracy by choice history",
+        fig_binned,
+        f"accuracy_binned_{regressor}",
+        "binned accuracy by choice history",
     )
     return
 
@@ -1518,207 +1132,36 @@ def _(mo, task_name):
 def _(
     build_action_trace_model_prediction_rb,
     mo,
+    panel,
     plot_action_trace_parameter_fixed_lag_match,
     plot_action_trace_parameter_fixed_rb,
     plot_action_trace_parameter_fixed_subject_scatter,
     plot_df_all,
-    save_plot,
     task_name,
     ui_glmhmm_model_rb_max_lag,
 ):
-    mo.stop(
-        task_name not in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"},
-    )
+    mo.stop(task_name not in {"2AFC", "2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"})
 
-    _summary, _lag_summary, _subject_scatter, _meta = build_action_trace_model_prediction_rb(
+    summary, lag_summary, subject_scatter, meta = build_action_trace_model_prediction_rb(
         plot_df_all,
         task_name=task_name,
         max_history_lag=int(ui_glmhmm_model_rb_max_lag.value),
     )
-    mo.stop(
-        _summary.empty,
-        mo.md("No trial-level model repetition-bias result; check pR/p_pred and previous choices."),
-    )
 
-    _fig_model_rb, _ax_model_rb = plot_action_trace_parameter_fixed_rb(
-        _summary,
-        _meta,
-    )
-    _fig_model_lag, _ax_model_lag = plot_action_trace_parameter_fixed_lag_match(
-        _lag_summary,
-        _meta,
-    )
-    _fig_model_scatter, _ax_model_scatter = plot_action_trace_parameter_fixed_subject_scatter(
-        _subject_scatter,
-        _meta,
-    )
+    mo.stop(summary.empty, mo.md("No trial-level model repetition-bias result."))
 
-    mo.vstack(
+    fig_model_rb, ax_model_rb = plot_action_trace_parameter_fixed_rb(summary, meta)
+    fig_model_lag, ax_model_lag = plot_action_trace_parameter_fixed_lag_match(lag_summary, meta)
+    fig_model_scatter, ax_model_scatter = plot_action_trace_parameter_fixed_subject_scatter(subject_scatter, meta)
+
+    mo.hstack(
         [
-            mo.md("#### Trial-level full-model repetition bias"),
-            _fig_model_rb,
-            save_plot(
-                _fig_model_rb,
-                "glmhmm trial-level full-model repetition bias",
-                stem="glmhmm_trial_model_rb",
-            ),
-            _fig_model_lag,
-            save_plot(
-                _fig_model_lag,
-                "glmhmm trial-level full-model lag match",
-                stem="glmhmm_trial_model_lag_match",
-            ),
-            _fig_model_scatter,
-            save_plot(
-                _fig_model_scatter,
-                "glmhmm trial-level full-model repetition bias by animal",
-                stem="glmhmm_trial_model_rb_by_animal",
-            ),
-            mo.md(
-                "Full fitted uses each trial's inferred model P(right), compares it with the same animal's empirical previous choice, "
-                "and aggregates RB conditional on previous choice side within animal. No refit or choice simulation is run."
-            ),
+            panel("Repetition bias", fig_model_rb, "glmhmm_trial_model_rb", "glmhmm trial-level full-model repetition bias"),
+            panel("Lag match", fig_model_lag, "glmhmm_trial_model_lag_match", "glmhmm trial-level full-model lag match"),
+            panel("By animal", fig_model_scatter, "glmhmm_trial_model_rb_by_animal", "glmhmm trial-level full-model repetition bias by animal"),
         ],
         align="center",
     )
-    return
-
-
-@app.cell
-def _(editor_views, mo):
-    _subjects = sorted(editor_views.keys(), key=str)
-    mo.stop(not _subjects, mo.md("No fitted subjects available for coefficient editing."))
-    ui_editor_subject = mo.ui.dropdown(
-        options=_subjects,
-        value=_subjects[0],
-        label="Subject",
-    )
-    ui_editor_subject
-    return (ui_editor_subject,)
-
-
-@app.cell
-def _(editor_views, mo, ui_editor_subject):
-    _view = editor_views[ui_editor_subject.value]
-    _state_options = [f"{_k} — {_view.state_name_by_idx.get(_k, f'State {_k}')}" for _k in _view.state_idx_order]
-    ui_editor_state = mo.ui.dropdown(
-        options=_state_options,
-        value=_state_options[0],
-        label="State",
-    )
-    ui_editor_state
-    return (ui_editor_state,)
-
-
-@app.cell
-def _(adapter, mo):
-    if adapter.num_classes != 2:
-        ui_editor_side = None
-    else:
-        _choices = [str(label) for label in adapter.choice_labels]
-        ui_editor_side = mo.ui.dropdown(
-            options=_choices,
-            value=_choices[0],
-            label="Side",
-        )
-    ui_editor_side
-    return (ui_editor_side,)
-
-
-@app.cell
-def _(
-    CoefficientEditorWidget,
-    adapter,
-    build_editor_payload,
-    editor_views,
-    mo,
-    np,
-    ui_editor_side,
-    ui_editor_state,
-    ui_editor_subject,
-    wrap_anywidget,
-):
-    _subj = ui_editor_subject.value
-    _view = editor_views[_subj]
-    coef_state_idx = int(ui_editor_state.value.split(" — ", 1)[0])
-    coef_state_label = _view.state_name_by_idx.get(coef_state_idx, f"State {coef_state_idx}")
-    _stored_weights = np.asarray(_view.emission_weights[coef_state_idx], dtype=float)
-    _choice_labels = [str(label) for label in adapter.choice_labels]
-    _stored_class_indices = list(range(_view.num_classes - 1))
-    _reference_class_idx = _view.num_classes - 1
-    if _view.num_classes == 2 and ui_editor_side is not None:
-        _display_class_idx = _choice_labels.index(ui_editor_side.value)
-        _display_reference_class_idx = next(idx for idx in range(_view.num_classes) if idx != _display_class_idx)
-    else:
-        _display_reference_class_idx = 1 if _view.num_classes == 3 else _reference_class_idx
-    _payload = build_editor_payload(
-        _stored_weights,
-        choice_labels=_choice_labels,
-        stored_class_indices=_stored_class_indices,
-        reference_class_idx=_reference_class_idx,
-        display_reference_class_idx=_display_reference_class_idx,
-    )
-
-    coef_editor = wrap_anywidget(
-        CoefficientEditorWidget(
-            title="Coefficient editor",
-            subtitle=_payload["subtitle"],
-            features=list(_view.feat_names),
-            channel_labels=_payload["channel_labels"],
-            weights=_payload["weights"].tolist(),
-            original_weights=_payload["weights"].tolist(),
-            slider_min=-6.0,
-            slider_max=6.0,
-            slider_step=0.05,
-        )
-    )
-    _controls = [ui_editor_subject, ui_editor_state]
-    if ui_editor_side is not None:
-        _controls.append(ui_editor_side)
-
-    coef_editor_panel = mo.vstack(
-        [
-            mo.md("### Interactive coefficient editor"),
-            mo.md(
-                "Only the selected state's emission coefficients are edited. "
-                "The overall and per-state categorical plots update using the edited state."
-            ),
-            mo.hstack(_controls),
-            coef_editor,
-        ],
-        align="center",
-    )
-    coef_editor_panel
-    coef_editor_explicit_class_indices = _payload["explicit_class_indices"]
-    coef_editor_reference_class_idx = _payload["reference_class_idx"]
-    coef_editor_stored_class_indices = _payload["stored_class_indices"]
-    coef_editor_stored_reference_class_idx = _payload["stored_reference_class_idx"]
-    return
-
-
-@app.cell
-def _(
-    adapter,
-    build_trial_df,
-    df_all,
-    editor_views,
-    mo,
-    select_subject_behavior_df,
-    ui_editor_subject,
-):
-    _subj = ui_editor_subject.value
-    _view = editor_views[_subj]
-
-    _df_sub = select_subject_behavior_df(
-        df_all,
-        subject=_subj,
-        sort_col=adapter.sort_col,
-        session_col=adapter.session_col,
-        min_session_length=2,
-    )
-    mo.stop(_df_sub.height != _view.T, mo.md(f"Subject {_subj} does not match the loaded fit arrays."))
-    editor_trial_df = build_trial_df(_view, adapter, _df_sub, adapter.behavioral_cols)
-    editor_view = _view
     return
 
 
@@ -2051,9 +1494,9 @@ def _(
     fig_size,
     mo,
     np,
+    panel,
     pd,
     plt,
-    save_plot,
     state_order,
     state_palette,
     ui_behavior_random_session,
@@ -2085,11 +1528,15 @@ def _(
         _ax_ecdf.legend(frameon=False, loc="lower right")
 
     mo.vstack([
-        mo.md("#### Example session RT/lick cumulative distributions"),
-        mo.hstack([ui_behavior_random_session, ui_behavior_session_subj, ui_behavior_session_id]),
-        fig_ecdf,
-        save_plot(fig_ecdf, "example session behavioral ECDF by state", stem="example_session_behavior_ecdf_by_state"),
-    ], align="center")
+            mo.hstack([ui_behavior_random_session, ui_behavior_session_subj, ui_behavior_session_id]),
+            panel(
+                "Example session RT/lick cumulative distributions",
+                fig_ecdf,
+                "example_session_behavior_ecdf_by_state",
+            ),
+        ],
+        align="center",
+    )
     return
 
 
