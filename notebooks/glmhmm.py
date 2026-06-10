@@ -44,12 +44,7 @@ def _():
     import matplotlib.pyplot as plt
     import seaborn as sns
     import pandas as pd
-    try:
-        from glmhmmt.cli.fit_glmhmm import main as fit_main
-        _FITTING_AVAILABLE = True
-    except ImportError:
-        fit_main = None
-        _FITTING_AVAILABLE = False
+    from glmhmmt.cli.fit_glmhmm import main as fit_main
     from glmhmmt.tasks import get_adapter
     from glmhmmt.views import build_views
     from glmhmmt.postprocess import (
@@ -83,12 +78,6 @@ def _():
             return process_two_adc.prepare_predictions_df(df)
         return process_two_afc.prepare_predictions_df(df)
 
-    # Set boxplot_tick_rotation to 35 to restore rotated labels.
-    # Set boxplot_fixed_panel to False to let matplotlib choose panel bounds.
-    boxplot_tick_rotation = 0
-    boxplot_fixed_panel = True
-    boxplot_figsize = (4, 3)
-    boxplot_panel_bounds = (0.16, 0.22, 0.80, 0.70)
 
     def put_legend_inside_panel(ax, *, loc="upper right", anchor=(0.98, 0.98)):
         legend = ax.get_legend()
@@ -171,21 +160,8 @@ def _():
         )
         fig.subplots_adjust(bottom=bottom)
 
-    def format_boxplot_panel(ax):
-        ax.figure.set_size_inches(*boxplot_figsize, forward=True)
-        plt.setp(
-            ax.get_xticklabels(),
-            rotation=boxplot_tick_rotation,
-            ha="right" if boxplot_tick_rotation else "center",
-        )
-        if boxplot_fixed_panel:
-            ax.set_position(boxplot_panel_bounds)
 
-    def make_boxplot_axis():
-        fig, ax = plt.subplots(figsize=boxplot_figsize)
-        if boxplot_fixed_panel:
-            ax.set_position(boxplot_panel_bounds)
-        return fig, ax
+    from statannotations.Annotator import Annotator
 
     project_root = _PROJECT_ROOT
     configure_paths(config_path=project_root / "config.toml")
@@ -194,43 +170,34 @@ def _():
     sns.set_context("paper")
     paths = get_runtime_paths()
     from src.process.common import adapter_behavioral_column
-    from src.plots.common import paper_boxplot
     from src.utils import fig_size
 
     return (
+        Annotator,
         CoefficientEditorWidget,
         ModelCfg,
         ModelManagerWidget,
         adapter_behavioral_column,
-        apply_state_tweak_to_trial_df,
-        apply_state_tweak_to_view,
-        boxplot_figsize,
-        boxplot_tick_rotation,
         build_change_triggered_posteriors_payload,
         build_editor_payload,
-        build_emission_weights_df,
         build_session_deepdive_payload,
         build_session_trajectories_payload,
         build_state_accuracy_payload,
         build_state_dwell_times_payload,
         build_state_occupancy_payload,
         build_state_posterior_count_payload,
-        build_transition_matrix_by_subject_payload,
         build_transition_matrix_payload,
         build_trial_and_weights_df,
         build_trial_df,
         build_views,
         fig_size,
         fit_main,
-        format_boxplot_panel,
         get_adapter,
         load_fit_arrays,
-        make_boxplot_axis,
         make_plot_saver,
         mo,
         model_plots,
         np,
-        paper_boxplot,
         paths,
         pd,
         pl,
@@ -238,7 +205,6 @@ def _():
         prepare_predictions_df,
         project_root,
         put_figure_legend_at_bottom,
-        put_legend_inside_panel,
         resolve_selected_model_id,
         select_subject_behavior_df,
         sns,
@@ -286,12 +252,6 @@ def _(ModelCfg, ui_model_manager):
 def _(mo):
     get_last_fit_click, set_last_fit_click = mo.state(0)
     return get_last_fit_click, set_last_fit_click
-
-
-@app.cell
-def _(df_all):
-    df_all
-    return
 
 
 @app.cell(hide_code=True)
@@ -541,7 +501,7 @@ def _(adapter, build_trial_and_weights_df, df_all, mo, views):
         min_session_length=2,
     )
     mo.stop(trial_df.height == 0, mo.md("No subjects with matching data lengths."))
-    return (trial_df,)
+    return trial_df, weights_df
 
 
 @app.cell(hide_code=True)
@@ -550,6 +510,86 @@ def _(mo):
     ## Plots
     """)
     return
+
+
+@app.cell
+def _(selected, views):
+    views_sel = {s: views[s] for s in selected}
+    return (views_sel,)
+
+
+@app.cell
+def _(mo, save_plot):
+    def panel(title, fig=None, stem=None, description=None):
+        content = [mo.md(f"#### {title}")]
+
+        if fig is not None:
+            content.append(fig)
+            if stem is not None:
+                content.append(save_plot(fig, description or title.lower(), stem=stem))
+
+        return mo.vstack(content, align="center")
+
+    return (panel,)
+
+
+@app.cell
+def _():
+    BOXPLOT_STYLE = dict(
+        fill=False,
+        boxprops={"color": "0.5"},
+        whiskerprops={"color": "0.5"},
+        medianprops={"linewidth": 2},
+        showfliers=False,
+        showcaps=False,
+    )
+    return (BOXPLOT_STYLE,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Feature labels
+    """)
+    return
+
+
+@app.cell
+def _(weights_df):
+    feature_labels = {
+        "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
+        "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
+        "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
+        "at_choice_param": r"$\mathrm{A}_t$",
+        "choice_lag_param": r"$\mathrm{A}$",
+        "choice_lag_param_2": r"$\mathrm{A}$",
+        "prev_choice": r"$choice_{t-1}$",
+        "stim_x_delay_param":  r"$\mathrm{Stim}:\mathrm{Delay}_{\mathrm{param}}$"
+    }
+
+    feature_labeler = lambda feature: feature_labels.get(str(feature), str(feature))
+
+    features = weights_df["feature"].unique()
+    preferred_feature_order = []
+    for _feature_group in (
+        ["bias_param", "biasparam", "bias"],
+        ["stim_param", "stim", "stim_x_delay_param"],
+        ["at_choice_param", "choice_lag_param", "at_choice", "prev_choice"],
+    ):
+        preferred_feature_order.extend(
+            _feature for _feature in _feature_group if _feature in features and _feature not in preferred_feature_order
+        )
+    plot_feature_order = preferred_feature_order + [_feature for _feature in features if _feature not in preferred_feature_order]
+
+    state_order = ["Engaged", "Disengaged"]
+    state_palette = {"Engaged": "tab:green", "Disengaged": "tab:gray"}
+    return (
+        feature_labeler,
+        features,
+        plot_feature_order,
+        state_order,
+        state_palette,
+    )
 
 
 @app.cell(hide_code=True)
@@ -561,150 +601,89 @@ def _(mo):
 
 
 @app.cell
-def _(build_emission_weights_df, selected, views):
-    _views_sel = {s: views[s] for s in selected}
-    build_emission_weights_df(_views_sel)
+def _():
+    # fig_by_subject = model_plots.emission_weights_by_subject(
+    #     weights_df,
+    #     K=K,
+    # )
     return
 
 
 @app.cell
 def _(
-    K,
-    boxplot_tick_rotation,
-    build_emission_weights_df,
-    format_boxplot_panel,
-    make_boxplot_axis,
+    Annotator,
+    BOXPLOT_STYLE,
+    feature_labeler,
+    features,
+    fig_size,
     mo,
-    model_plots,
-    np,
-    paths,
-    pd,
-    put_legend_inside_panel,
-    save_plot,
+    panel,
+    plot_feature_order,
+    plt,
     selected,
     sns,
-    views,
+    state_order,
+    state_palette,
+    weights_df,
 ):
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-    _save_path = paths.RESULTS / "plots/GLMHMM/emissions_coefs.png"
-    _views_sel = {s: views[s] for s in selected}
-    _weights_df = build_emission_weights_df(_views_sel)
-    _fig_by_subject = model_plots.emission_weights_by_subject(
-        _weights_df,
-        K=K,
+    emissions_fig, emissions_ax = plt.subplots(figsize=fig_size(2, 1))
+
+    sns.boxplot(
+        data=weights_df,
+        ax=emissions_ax,
+        x="feature",
+        y="weight",
+        hue="state_label",
+        order=plot_feature_order,
+        hue_order=state_order,
+        palette=state_palette,
+        **BOXPLOT_STYLE,
+    )
+    emissions_ax.axhline(0, linestyle="--", color="0.5", zorder=0)
+
+
+    # We take pairs for the annotation of the significance
+    paired = weights_df.pivot(
+        values="weight",
+        index=["subject", "feature"],
+        columns="state_label",
+        aggregate_function="first",
     )
 
-    _feature_labels = {
-        "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
-        "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
-        "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
-        "at_choice_param": r"$\mathrm{A}_t$",
-        "choice_lag_param": r"$\mathrm{A}$",
-        "choice_lag_param_2": r"$\mathrm{A}$",
-        "prev_choice": r"$choice_{t-1}$",
-        "stim_x_delay_param":  r"$\mathrm{Stim}:\mathrm{Delay}_{\mathrm{param}}$"
-    }
-
-    feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
-
-    _weights_pdf = _weights_df.to_pandas() if hasattr(_weights_df, "to_pandas") else pd.DataFrame(_weights_df)
-    _weights_pdf = _weights_pdf.copy()
-    _weights_pdf["subject"] = _weights_pdf["subject"].astype(str)
-    _weights_pdf["feature"] = _weights_pdf["feature"].astype(str)
-    _weights_pdf["weight"] = pd.to_numeric(_weights_pdf["weight"], errors="coerce")
-    _weights_pdf = _weights_pdf.dropna(subset=["weight"])
-    _available_features = pd.unique(_weights_pdf["feature"]).tolist()
-    _preferred_feature_order = []
-    for _feature_group in (
-        ["bias_param", "biasparam", "bias"],
-        ["stim_param", "stim", "stim_x_delay_param"],
-        ["at_choice_param", "choice_lag_param", "at_choice", "prev_choice"],
-    ):
-        _preferred_feature_order.extend(
-            _feature
-            for _feature in _feature_group
-            if _feature in _available_features and _feature not in _preferred_feature_order
+    for row in paired.iter_rows(named=True):
+        x = plot_feature_order.index(row["feature"])
+        emissions_ax.plot(
+            [x - 0.2, x + 0.2],
+            [row[state_order[0]], row[state_order[1]]],
+            color="0.75",
+            zorder=0,
         )
-    _plot_feature_order = _preferred_feature_order + [
-        _feature
-        for _feature in _available_features
-        if _feature not in _preferred_feature_order
-    ]
 
-    _summary_fig, _summary_ax = make_boxplot_axis()
-    _summary_figs = model_plots.emission_weights_summary_boxplot(
-        # _weights_df.filter((pl.col("feature") == "stim_param") |(pl.col("feature") == "bias") ),
-        _weights_df,
-        connect_subjects=True,
-        show_ttests=True,
-        feature_order=_preferred_feature_order,
-        feature_labeler=feature_labeler,
-        ax=_summary_ax,
-        tick_rotation=boxplot_tick_rotation,
+    _pairs = [((f, state_order[0]), (f, state_order[1])) for f in features]
+    Annotator(
+        emissions_ax,
+        _pairs,
+        data=weights_df.to_pandas(),
+        x="feature",
+        y="weight",
+        hue="state_label",
+        order=plot_feature_order,
+        hue_order=state_order,
+    ).configure(test="t-test_paired", text_format="star", line_height=0, verbose=False).apply_and_annotate()
+
+
+    emissions_ax.legend(frameon=False)
+    emissions_ax.set_xticklabels([feature_labeler(f) for f in plot_feature_order])
+
+    (
+        panel(
+            "Emission weights",
+            emissions_ax.figure,
+            "emissions",
+            "emissions boxplot",
+        ),
     )
-    put_legend_inside_panel(_summary_figs, anchor=(0.98, 0.3))
-    format_boxplot_panel(_summary_figs)
-    _emission_subject_lines = [
-        _line
-        for _line in _summary_figs.lines
-        if _line.get_alpha() == 0.15 and _line.get_linestyle() == "-" and len(_line.get_xdata()) >= 2 and len(_line.get_ydata()) >= 2
-    ]
-    _line_keys = []
-    for _feature in _plot_feature_order:
-        _feature_df = _weights_pdf[_weights_pdf["feature"] == _feature]
-        for _subject in sorted(pd.unique(_feature_df["subject"]).tolist()):
-            if _feature_df[_feature_df["subject"] == _subject]["weight"].notna().sum() >= 2:
-                _line_keys.append((str(_subject), str(_feature), str(feature_labeler(_feature))))
-    emission_summary_selection_points = []
-    for (_subject, _feature, _feature_label), _line in zip(_line_keys, _emission_subject_lines, strict=False):
-        _xs = _line.get_xdata()
-        _ys = _line.get_ydata()
-        for _left in range(len(_xs) - 1):
-            if not (np.isfinite(_xs[_left]) and np.isfinite(_xs[_left + 1]) and np.isfinite(_ys[_left]) and np.isfinite(_ys[_left + 1])):
-                continue
-            for _x, _y in zip(np.linspace(_xs[_left], _xs[_left + 1], 24), np.linspace(_ys[_left], _ys[_left + 1], 24), strict=False):
-                emission_summary_selection_points.append(
-                    {
-                        "subject": _subject,
-                        "feature": _feature,
-                        "feature_label": _feature_label,
-                        "x": float(_x),
-                        "y": float(_y),
-                    }
-                )
-    sns.set_context("paper")
-    ui_emission_summary = mo.ui.matplotlib(_summary_figs, debounce=True)
-    mo.vstack(
-        [
-            # _fig_by_subject,
-            #  save_plot(_fig_by_subject, f"Emission Weights",
-            #                      stem=f"emissions_summary", location = (0,1)),
-            ui_emission_summary,
-            mo.hstack(
-                [
-                    save_plot(_summary_figs.figure, f"Emission Weights lineplot", stem=f"emissions_lineplot"),
-                    save_plot(_summary_figs.figure, f"Emission Weights boxplot", stem=f"emissions_boxplot"),
-                ],
-                gap="15",
-            ),
-        ],
-        align="center",
-    )
-    return emission_summary_selection_points, ui_emission_summary
-
-
-@app.cell
-def _(emission_summary_selection_points, mo, pd, ui_emission_summary):
-    _points = pd.DataFrame(emission_summary_selection_points)
-    if _points.empty or not ui_emission_summary.value:
-        selected_emission_subjects = []
-    else:
-        _mask = ui_emission_summary.value.get_mask(
-            _points["x"].to_numpy(),
-            _points["y"].to_numpy(),
-        )
-        selected_emission_subjects = sorted(_points.loc[_mask, "subject"].unique().tolist())
-    mo.md("Selected subjects: " + (", ".join(selected_emission_subjects) if selected_emission_subjects else "_none_"))
     return
 
 
@@ -737,215 +716,6 @@ def _(np, pd):
                 clip_on=False,
             )
 
-    return (annotate_choice_lag_ttests,)
-
-
-@app.cell
-def _(
-    K,
-    annotate_choice_lag_ttests,
-    build_emission_weights_df,
-    mo,
-    np,
-    pd,
-    plt,
-    save_plot,
-    selected,
-    sns,
-    views,
-):
-    sns.set_context("paper")
-    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-
-    _views_sel = {s: views[s] for s in selected}
-    _weights_df = build_emission_weights_df(_views_sel)
-
-    _feature_labels = {
-        "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
-        "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
-        "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
-        "at_choice_param": r"$\mathrm{A}_t$",
-        "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
-        "choice_lag_param_2": r"$\mathrm{A}_{t,\geq 2}^{\mathrm{choice,param}}$",
-    }
-    _feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
-
-    _plot_weights = _fold_three_choice_raw_weights(_weights_df)
-    if _plot_weights is None:
-        _plot_weights = _weights_df
-
-    _df, _features, _display_features, _state_order, _palette = _prepare_weights_df(
-        _plot_weights,
-        K=K,
-        feature_labeler=_feature_labeler,
-    )
-    _grouped_values, _subject_lines = _emission_boxplot_payload(
-        _df,
-        features=_features,
-        states=_state_order,
-    )
-
-    _choice_df = _weights_pdf.copy()
-    _choice_df["subject"] = _choice_df["subject"].astype(str)
-    _choice_df["state_label"] = _choice_df["state_label"].astype(str)
-    _choice_df["feature"] = _choice_df["feature"].astype(str)
-    _choice_df["weight"] = pd.to_numeric(_choice_df["weight"], errors="coerce")
-    _choice_df["lag"] = pd.to_numeric(
-        _choice_df["feature"].str.extract(r"^choice_lag_(\d+)$", expand=False),
-        errors="coerce",
-    )
-    _choice_df = _choice_df[
-        _choice_df["state_label"].isin(["Engaged", "Disengaged"])
-        & _choice_df["lag"].between(1, 100)
-        & np.isfinite(_choice_df["weight"])
-    ].copy()
-    mo.stop(_choice_df.empty, mo.md("No `choice_lag_01` through `choice_lag_100` emission weights found."))
-
-    _choice_df["lag"] = _choice_df["lag"].astype(int)
-    _lag_order = list(range(1, 101))
-    _choice_df = _choice_df[_choice_df["lag"].isin(_lag_order)].copy()
-
-    _fig_choice_lag_states, _axes_choice_lag_states = plt.subplots(
-        1,
-        2,
-        figsize=(10,4),
-        sharey=True,
-        constrained_layout=True,
-    )
-    _state_order = ["Engaged", "Disengaged"]
-    for _ax, _state_label in zip(_axes_choice_lag_states, _state_order, strict=False):
-        _state_df = _choice_df[_choice_df["state_label"] == _state_label].copy()
-        sns.lineplot(
-            data=_state_df,
-            x="lag",
-            y="weight",
-            estimator="mean",
-            errorbar="se",
-            marker="o",
-            markersize=3,
-            linewidth=1.25,
-            color="#1f77b4",
-            ax=_ax,
-        )
-        _ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-        _ax.set_title(_state_label)
-        _ax.set_xlabel("Choice lag")
-        _ax.set_ylabel("Weight" if _state_label == "Engaged" else "")
-        _ax.set_xticks(range(5, 101, 5))
-        _ax.set_ylim(-0.5, 2)
-        annotate_choice_lag_ttests(_ax, _state_df, _lag_order, 1.75)
-
-    mo.vstack(
-        [
-            mo.md("#### Choice-lag emission weights by state"),
-            _fig_choice_lag_states,
-            save_plot(
-                _fig_choice_lag_states,
-                "choice lag emission weights by state",
-                stem="choice_lag_100_by_state",
-            ),
-        ],
-        align="center",
-    )
-    return
-
-
-@app.cell
-def _(
-    annotate_choice_lag_ttests,
-    build_emission_weights_df,
-    mo,
-    np,
-    pd,
-    plt,
-    save_plot,
-    selected,
-    sns,
-    views,
-):
-    sns.set_context("paper")
-    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-
-    _views_sel = {s: views[s] for s in selected}
-    _weights_df = build_emission_weights_df(_views_sel)
-    _weights_pdf = _weights_df.to_pandas() if hasattr(_weights_df, "to_pandas") else pd.DataFrame(_weights_df)
-    _required = {"subject", "state_label", "feature", "weight"}
-    mo.stop(
-        _weights_pdf.empty or not _required.issubset(_weights_pdf.columns),
-        mo.md("No state-labelled emission weights available."),
-    )
-
-    _choice_df = _weights_pdf.copy()
-    _choice_df["subject"] = _choice_df["subject"].astype(str)
-    _choice_df["state_label"] = _choice_df["state_label"].astype(str)
-    _choice_df["feature"] = _choice_df["feature"].astype(str)
-    _choice_df["weight"] = pd.to_numeric(_choice_df["weight"], errors="coerce")
-    _parsed = _choice_df["feature"].str.extract(r"^choice_lag_(corr|inc)_(\d+)$")
-    _choice_df["outcome_family"] = _parsed[0].map({"corr": "Correct", "inc": "Incorrect"})
-    _choice_df["lag"] = pd.to_numeric(_parsed[1], errors="coerce")
-    _choice_df = _choice_df[
-        _choice_df["state_label"].isin(["Engaged", "Disengaged"])
-        & _choice_df["outcome_family"].isin(["Correct", "Incorrect"])
-        & _choice_df["lag"].between(1, 100)
-        & np.isfinite(_choice_df["weight"])
-    ].copy()
-    mo.stop(
-        _choice_df.empty,
-        mo.md("No `choice_lag_corr_01` / `choice_lag_inc_01` through lag 100 emission weights found."),
-    )
-
-    _choice_df["lag"] = _choice_df["lag"].astype(int)
-    _lag_order = list(range(1, 101))
-    _choice_df = _choice_df[_choice_df["lag"].isin(_lag_order)].copy()
-
-    _fig_choice_lag_outcome_states, _axes_choice_lag_outcome_states = plt.subplots(
-        2,
-        2,
-        figsize=(12, 7),
-        sharey=True,
-        constrained_layout=True,
-    )
-    _outcome_order = ["Correct", "Incorrect"]
-    _state_order = ["Engaged", "Disengaged"]
-    for _row_idx, _outcome_family in enumerate(_outcome_order):
-        for _col_idx, _state_label in enumerate(_state_order):
-            _ax = _axes_choice_lag_outcome_states[_row_idx, _col_idx]
-            _panel_df = _choice_df[
-                (_choice_df["outcome_family"] == _outcome_family)
-                & (_choice_df["state_label"] == _state_label)
-            ].copy()
-            sns.lineplot(
-                data=_panel_df,
-                x="lag",
-                y="weight",
-                estimator="mean",
-                errorbar="se",
-                marker="o",
-                markersize=3,
-                linewidth=1.25,
-                color="#1f77b4",
-                ax=_ax,
-            )
-            _ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-            _ax.set_title(f"{_outcome_family} - {_state_label}")
-            _ax.set_xlabel("Choice lag" if _row_idx == len(_outcome_order) - 1 else "")
-            _ax.set_ylabel("Weight" if _col_idx == 0 else "")
-            _ax.set_xticks(range(5, 101, 5))
-            _ax.set_ylim(-0.5, 4)
-            annotate_choice_lag_ttests(_ax, _panel_df, _lag_order)
-
-    mo.vstack(
-        [
-            mo.md("#### Correct/incorrect choice-lag emission weights by state"),
-            _fig_choice_lag_outcome_states,
-            save_plot(
-                _fig_choice_lag_outcome_states,
-                "correct incorrect choice lag emission weights by state",
-                stem="choice_lag_corr_inc_100_by_state",
-            ),
-        ],
-        align="center",
-    )
     return
 
 
@@ -958,48 +728,41 @@ def _(mo):
 
 
 @app.cell
+def _(mo, selected):
+    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
+    # _by_subject_payload = build_transition_matrix_by_subject_payload(
+    #     arrays_store=arrays_store,
+    #     state_labels=state_labels,
+    #     K=K,
+    #     subjects=selected,
+    # )
+    # _fig_by_subject = model_plots.transition_matrix_by_subject(**_by_subject_payload)
+    return
+
+
+@app.cell
 def _(
     K,
     arrays_store,
-    build_transition_matrix_by_subject_payload,
     build_transition_matrix_payload,
     fig_size,
-    mo,
     model_plots,
+    panel,
     plt,
-    save_plot,
     selected,
     state_labels,
 ):
-    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-    _by_subject_payload = build_transition_matrix_by_subject_payload(
+    transitions_summary = build_transition_matrix_payload(
         arrays_store=arrays_store,
         state_labels=state_labels,
         K=K,
         subjects=selected,
     )
-    _fig_by_subject = model_plots.transition_matrix_by_subject(**_by_subject_payload)
+    fig_transition_matrix, ax_transition_matrix = plt.subplots(figsize=fig_size(2,1))
+    fig_transition_matrix = model_plots.transition_matrix(**transitions_summary, ax=ax_transition_matrix)
+    fig_transition_matrix.set_title("")
 
-    _summary_payload = build_transition_matrix_payload(
-        arrays_store=arrays_store,
-        state_labels=state_labels,
-        K=K,
-        subjects=selected,
-    )
-    _fig_summary, _ax_summary = plt.subplots(figsize=fig_size(2,1))
-    _fig_summary = model_plots.transition_matrix(**_summary_payload, ax=_ax_summary)
-    _fig_summary.set_title("")
-    mo.vstack(
-        [
-            _fig_summary,
-            save_plot(
-                _fig_summary.figure,
-                f"Mean Transition Matrix",
-                stem=f"mean_transition_matrix",
-            ),
-        ],
-        align="center",
-    )
+    panel("Mean Transition matrix",ax_transition_matrix.figure, "transition_matrix")
     return
 
 
@@ -1013,123 +776,49 @@ def _(mo):
 
 @app.cell
 def _(
-    boxplot_figsize,
     build_state_dwell_times_payload,
     fig_size,
-    format_boxplot_panel,
     mo,
     model_plots,
-    pl,
+    panel,
     plt,
-    save_plot,
-    selected,
     trial_df,
-    views,
+    views_sel,
+    weights_df,
 ):
-    _views_sel = {s: views[s] for s in selected}
-    mo.stop(not _views_sel, mo.md("No fitted arrays found — run the fit first."))
-    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-    _dwell_payload = build_state_dwell_times_payload(
-        _trial_df_sel,
+    dwell_times = build_state_dwell_times_payload(
+        trial_df,
         session_col="session",
         sort_col="trial_idx",
-        views=_views_sel,
+        views=views_sel,
         max_dwell=90,
     )
-    _dwell_ax_size = fig_size(2, 1)
-    _n_dwell_states = max(1, len(_dwell_payload.get("state_order") or []))
-    _n_dwell_subjects = max(1, len(_dwell_payload.get("subject_order") or []))
-    _fig_dwell_summary, _axes_dwell_summary = plt.subplots(
+
+    fig_dwell_time, ax_dwell_time = plt.subplots(
         1,
-        _n_dwell_states,
-        figsize=(_dwell_ax_size[0] * _n_dwell_states, _dwell_ax_size[1]),
+        (weights_df["state_label"].n_unique()),
+        figsize=(fig_size(1,2)),
         sharex=True,
         sharey=True,
         squeeze=False,
     )
-    _fig_dwell_summary, _axes_dwell_summary = model_plots.state_dwell_times_summary(
-        _dwell_payload,
-        axes=_axes_dwell_summary,
+    fig_dwell_time, ax_dwell_time = model_plots.state_dwell_times_summary(
+        dwell_times,
+        axes=ax_dwell_time,
     )
-    _fig_dwell_cumulative, _ax_dwell_cumulative = plt.subplots(figsize=_dwell_ax_size)
-    _fig_dwell_cumulative, _ax_dwell_cumulative = model_plots.state_dwell_times_cumulative(
-        _dwell_payload,
-        ax=_ax_dwell_cumulative,
+    fig_dwell_cumulative, ax_dwell_cumulative = plt.subplots(figsize=fig_size(2,1))
+    fig_dwell_cumulative, ax_dwell_cumulative = model_plots.state_dwell_times_cumulative(
+        dwell_times,
+        ax=ax_dwell_cumulative,
     )
-    _fig_dwell_median, _ax_dwell_median = plt.subplots(figsize=boxplot_figsize)
-    _fig_dwell_median, _ax_dwell_median = model_plots.state_dwell_median_boxplot(
-        _dwell_payload,
-        ax=_ax_dwell_median,
+    fig_dwell_median, ax_dwell_median = plt.subplots(figsize=fig_size(3,1))
+    fig_dwell_median, ax_dwell_median = model_plots.state_dwell_median_boxplot(
+        dwell_times,
+        ax=ax_dwell_median,
     )
-    format_boxplot_panel(_ax_dwell_median)
-    _fig_dwell_by_subject, _axes_dwell_by_subject = plt.subplots(
-        _n_dwell_subjects,
-        _n_dwell_states,
-        figsize=(_dwell_ax_size[0] * _n_dwell_states, _dwell_ax_size[1] * _n_dwell_subjects),
-        sharex=True,
-        sharey=True,
-        squeeze=False,
-    )
-    _fig_dwell_by_subject, _axes_dwell_by_subject = model_plots.state_dwell_times_by_subject(
-        _dwell_payload,
-        axes=_axes_dwell_by_subject,
-    )
-    mo.vstack(
-        [
-            _fig_dwell_summary,
-            save_plot(_fig_dwell_summary, "state dwell times summary", stem="state_dwell_times_summary"),
-            _fig_dwell_cumulative,
-            save_plot(_fig_dwell_cumulative, "state dwell times cumulative", stem="state_dwell_times_cumulative"),
-            _fig_dwell_median,
-            save_plot(_fig_dwell_median, "state dwell median boxplot", stem="state_dwell_median_boxplot"),
-            _fig_dwell_by_subject,
-            # save_plot(_fig_dwell_by_subject, "state dwell times by subject", stem="state_dwell_times_by_subject"),
-        ],
-        align="center",
-    )
+
+    mo.hstack([panel("Mean Transition matrix",fig_dwell_time, "dwell_time"), panel("Mean Transition matrix",ax_dwell_cumulative.figure, "dwell_cumulative"), panel("Mean Transition matrix",ax_dwell_median.figure, "dwell_median")])
     return
-
-
-@app.cell
-def _(mo):
-    ui_psychometric_background = mo.ui.radio(
-        options={
-            "Data traces": "data",
-            "Model curves": "model",
-            "None": "none",
-        },
-        value="Data traces",
-        inline=False,
-        label="Psychometric background",
-    )
-    ui_state_show_weighted_points = mo.ui.checkbox(value=True, label="Weighted dots")
-    ui_state_show_data_smooth = mo.ui.checkbox(value=False, label="Data smooth")
-    ui_state_assignment_mode = mo.ui.radio(
-        options={
-            "Predictive weights": "weighted",
-            "MAP state": "map",
-        },
-        value="MAP state",
-        inline=False,
-        label="State assignment",
-    )
-    ui_state_model_line_mode = mo.ui.radio(
-        options={
-            "Smooth curve": "smooth",
-            "Trial-matched": "trial_matched",
-            "None": "none",
-        },
-        value="Smooth curve",
-        inline=False,
-        label="Model line",
-    )
-    return (
-        ui_psychometric_background,
-        ui_state_assignment_mode,
-        ui_state_model_line_mode,
-        ui_state_show_data_smooth,
-        ui_state_show_weighted_points,
-    )
 
 
 @app.cell
@@ -1165,23 +854,19 @@ def _(
     K,
     fig_size,
     mo,
-    pl,
+    panel,
     plots,
     plt,
     prepare_predictions_df,
-    save_plot,
     selected,
     task_name,
     trial_df,
     ui_psychometric_regressor,
-    views,
+    views_sel,
 ):
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-    _views_sel = {s: views[s] for s in selected}
-    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-    mo.stop(_trial_df_sel.height == 0, mo.md("No subjects with matching data lengths."))
 
-    plot_df_all = prepare_predictions_df(task_name, _trial_df_sel)
+    plot_df_all = prepare_predictions_df(task_name, trial_df)
     _state_plot_kwargs = dict(
         background_style="model",
         show_weighted_points=True,
@@ -1192,579 +877,105 @@ def _(
         figure_dpi=300,
     )
 
-    _fig_all, _ = plots.plot_categorical_performance_all(
+    fig_psychometric, ax_psychometric = plots.plot_categorical_performance_all(
         plot_df_all,
         f"glmhmm K={K}",
         background_style="model",
-        views=_views_sel,
+        views=views_sel,
     )
-    _fig_all_list = list(_fig_all) if isinstance(_fig_all, (list, tuple)) else [_fig_all]
-    for _fig in _fig_all_list:
-        for _ax_idx, _ax in enumerate(_fig.axes):
-            _ax.set_title("")
-            _ax.set_ylabel(r"$\mathit{p}(\mathrm{right})$" if _ax_idx == 0 else "")
-        if _fig._suptitle is not None:
-            _fig._suptitle.set_text("")
-        _fig.tight_layout()
 
-    _fig_state_overlay, _ax_state_overlay = plt.subplots(figsize=fig_size(2, 1))
-    _fig_state_overlay, _ = plots.plot_categorical_performance_state_overlay(
+    fig_psychometric_state, ax_psychometric_state = plt.subplots(figsize=fig_size(2, 1))
+    fig_psychometric_state, _ = plots.plot_categorical_performance_state_overlay(
         df=plot_df_all,
-        views=_views_sel,
+        views=views_sel,
         model_name=f"glmhmm K={K} — all states",
-        ax=_ax_state_overlay,
+        ax=ax_psychometric_state,
         **_state_plot_kwargs,
     )
 
-    _fig_state, _ = plots.plot_categorical_performance_by_state(
+    fig_psychometric_state_detailed, _ = plots.plot_categorical_performance_by_state(
         df=plot_df_all,
-        views=_views_sel,
+        views=views_sel,
         model_name=f"glmhmm K={K} — per state",
         **_state_plot_kwargs,
     )
 
-    _fig_reg_overlay, _ax_reg_overlay = plt.subplots(figsize=fig_size(2, 1))
-    _fig_reg_overlay, _ = plots.plot_regressor_psychometric_by_state(
+    fig_psychometric_state_at, ax_psychometric_state_at = plt.subplots(figsize=fig_size(2, 1))
+    fig_psychometric_state_at, _ = plots.plot_regressor_psychometric_by_state(
         df=plot_df_all,
-        views=_views_sel,
+        views=views_sel,
         model_name=f"glmhmm K={K}",
         feature_col=ui_psychometric_regressor.value,
         overlay_only=True,
-        ax=_ax_reg_overlay,
+        ax=ax_psychometric_state_at,
         **_state_plot_kwargs,
     )
-    _ax_reg_overlay.set_xlabel(r"$A$")
+    ax_psychometric_state_at.set_xlabel(r"$A$")
 
-    _fig_reg_state, _axes_reg_state = plt.subplots(1, K, figsize=(4 * K, 4), sharey=True)
-    _fig_reg_state, _ = plots.plot_regressor_psychometric_by_state(
+    fig_psychometric_state_at_detailed, ax_psychometric_state_at_detailed = plt.subplots(1, K, figsize=(4 * K, 4), sharey=True)
+    fig_psychometric_state_at_detailed, _ = plots.plot_regressor_psychometric_by_state(
         df=plot_df_all,
-        views=_views_sel,
+        views=views_sel,
         model_name=f"glmhmm K={K}",
         feature_col=ui_psychometric_regressor.value,
-        axes=_axes_reg_state,
+        axes=ax_psychometric_state_at_detailed,
         **_state_plot_kwargs,
     )
+    mo.vstack([
+        panel("Overall psychometric", fig_psychometric, "psychometric"),
 
-    mo.vstack(
-        [
-            mo.vstack(
-                [
-                    _item
-                    for _fig_idx, _fig in enumerate(_fig_all_list, start=1)
-                    for _item in (
-                        _fig,
-                        save_plot(
-                            _fig,
-                            f"overall psychometric {_fig_idx}" if len(_fig_all_list) > 1 else "overall psychometric",
-                            stem=f"categorical_overall_{_fig_idx}" if len(_fig_all_list) > 1 else "categorical_overall",
-                        ),
-                    )
-                ],
-                align="center",
-            ),
-            mo.md("#### State categorical performance — all states"),
-            mo.vstack(
-                [
-                    _fig_state_overlay,
-                    save_plot(_fig_state_overlay, "state-overlay psychometric", stem="categorical_state_overlay"),
-                ],
-                justify="space-between",
-                align="center",
-            ),
-            mo.md("#### Per-state categorical performance"),
-            _fig_state,
-            save_plot(_fig_state, "per-state psychometric", stem="categorical_by_state"),
-            mo.hstack([mo.md("#### Per-state psychometric by regressor"), ui_psychometric_regressor]),
-            _fig_reg_overlay,
-            save_plot(
-                _fig_reg_overlay,
-                f"{ui_psychometric_regressor.value} all states",
-                stem=f"regressor_state_overlay_{ui_psychometric_regressor.value}",
-            ),
-            _fig_reg_state,
-            save_plot(
-                _fig_reg_state,
-                f"{ui_psychometric_regressor.value} by state",
-                stem=f"regressor_by_state_{ui_psychometric_regressor.value}",
-            ),
-        ],
-        align="center",
-    )
+        mo.hstack([panel("State categorical performance", fig_psychometric_state, "categorical_state_overlay"), panel("Per-state categorical performance", fig_psychometric_state_detailed, "categorical_by_state")]),
+
+        mo.hstack([panel("Psychometric by regressor", fig_psychometric_state_at, f"regressor_state_overlay_{ui_psychometric_regressor.value}"), panel(f"{ui_psychometric_regressor.value} by state", fig_psychometric_state_at_detailed, f"regressor_by_state_{ui_psychometric_regressor.value}")]),
+
+    ], align="center")
     return (plot_df_all,)
 
 
 @app.cell
-def _(
-    K,
-    boxplot_tick_rotation,
-    build_emission_weights_df,
-    fig_size,
-    mo,
-    model_plots,
-    np,
-    pd,
-    pl,
-    plot_df_all,
-    plots,
-    plt,
-    put_legend_inside_panel,
-    save_plot,
-    selected,
-    sns,
-    views,
-):
-    from scipy.stats import ttest_1samp as _ttest_1samp
-
-    sns.set_context("paper")
-    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-
-    def _significance_stars(pvalue: float) -> str:
-        if not np.isfinite(pvalue):
-            return ""
-        if pvalue < 0.001:
-            return "***"
-        if pvalue < 0.01:
-            return "**"
-        if pvalue < 0.05:
-            return "*"
-        return ""
-
-    def _annotate_choice_lag_ttests(
-        ax,
-        panel_df: pd.DataFrame,
-        lag_order: list[int],
-        y: float,
-    ) -> None:
-        for lag in lag_order:
-            values = panel_df.loc[panel_df["lag"] == lag, "weight"].dropna().to_numpy(dtype=float)
-            if values.size < 2:
-                continue
-            ax.text(
-                lag,
-                y,
-                _significance_stars(float(_ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue)),
-                ha="center",
-                va="bottom",
-                fontsize=9,
-                color="black",
-                clip_on=False,
-            )
-
-    def _split_axis_columns(ax, ncols: int = 2):
-        fig = ax.figure
-        subgrid = ax.get_subplotspec().subgridspec(1, ncols)
-        ax.remove()
-        axes = []
-        for col in range(ncols):
-            sharey = axes[0] if axes else None
-            axes.append(fig.add_subplot(subgrid[0, col], sharey=sharey))
-        ax._replacement_axes = axes
-        return axes
-
-    _views_sel = {s: views[s] for s in selected}
-    _weights_df = build_emission_weights_df(_views_sel)
-    _weights_pdf = _weights_df.to_pandas() if hasattr(_weights_df, "to_pandas") else pd.DataFrame(_weights_df)
-    _required = {"subject", "state_label", "feature", "weight"}
-    mo.stop(
-        _weights_pdf.empty or not _required.issubset(_weights_pdf.columns),
-        mo.md("No state-labelled emission weights available."),
-    )
-
-    _fig_glmhmm_summary, _axd_glmhmm_summary = plt.subplot_mosaic(
-        [
-            ["stim", "categorical"],
-            ["choice_engaged", "choice_engaged"],
-            ["choice_disengaged", "choice_disengaged"],
-        ],
-        figsize=fig_size(1, 0.75),
-        layout="constrained",
-    )
-
-    _feature_labels = {
-        "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
-        "stim_x_delay_param": r"$\mathrm{Stim}:\mathrm{Delay}_{\mathrm{param}}$",
-        "bias": r"$\mathrm{Bias}$",
-        "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
-        "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
-    }
-    _feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
-    _preferred_feature_order = ["bias", "bias_param", "biasparam", "stim_param", "stim_x_delay_param"]
-    _summary_df = _weights_df.filter(
-        (pl.col("feature") == "stim_param") | (pl.col("feature") == "bias")
-    )
-    if _summary_df.is_empty():
-        _summary_df = _weights_df.filter(pl.col("feature").is_in(_preferred_feature_order))
-    if _summary_df.is_empty():
-        _axd_glmhmm_summary["stim"].text(
-            0.5,
-            0.5,
-            "No stim/bias weights found",
-            ha="center",
-            va="center",
-            transform=_axd_glmhmm_summary["stim"].transAxes,
-        )
-        _axd_glmhmm_summary["stim"].set_axis_off()
-    else:
-        _summary_pdf = _summary_df.to_pandas() if hasattr(_summary_df, "to_pandas") else pd.DataFrame(_summary_df)
-        _available_features = pd.unique(_summary_pdf["feature"].astype(str)).tolist()
-        _feature_order = [_feature for _feature in _preferred_feature_order if _feature in _available_features]
-        _feature_order.extend(_feature for _feature in _available_features if _feature not in _feature_order)
-        model_plots.emission_weights_summary_boxplot(
-            _summary_df,
-            K=K,
-            connect_subjects=True,
-            show_ttests=True,
-            feature_order=_feature_order,
-            feature_labeler=_feature_labeler,
-            ax=_axd_glmhmm_summary["stim"],
-            tick_rotation=boxplot_tick_rotation,
-        )
-        put_legend_inside_panel(_axd_glmhmm_summary["stim"], anchor=(0.98, 0.3))
-
-    _state_plot_kwargs = dict(
-        background_style="model",
-        show_weighted_points=True,
-        show_data_smooth=True,
-        show_model_smooth=True,
-        model_line_mode="smooth",
-        state_assignment_mode="map",
-        figure_dpi=300,
-    )
-    plots.plot_categorical_performance_state_overlay(
-        df=plot_df_all,
-        views=_views_sel,
-        model_name=f"glmhmm K={K} — all states",
-        ax=_axd_glmhmm_summary["categorical"],
-        **_state_plot_kwargs,
-    )
-
-    _choice_df = _weights_pdf.copy()
-    _choice_df["subject"] = _choice_df["subject"].astype(str)
-    _choice_df["state_label"] = _choice_df["state_label"].astype(str)
-    _choice_df["feature"] = _choice_df["feature"].astype(str)
-    _choice_df["weight"] = pd.to_numeric(_choice_df["weight"], errors="coerce")
-    _parsed = _choice_df["feature"].str.extract(r"^choice_lag_(corr|inc)_(\d+)$")
-    _choice_df["outcome_family"] = _parsed[0].map({"corr": "Correct", "inc": "Incorrect"})
-    _choice_df["lag"] = pd.to_numeric(_parsed[1], errors="coerce")
-    _choice_df = _choice_df[
-        _choice_df["state_label"].isin(["Engaged", "Disengaged"])
-        & _choice_df["outcome_family"].isin(["Correct", "Incorrect"])
-        & _choice_df["lag"].between(1, 100)
-        & np.isfinite(_choice_df["weight"])
-    ].copy()
-
-    if _choice_df.empty:
-        _fallback_choice_df = _weights_pdf.copy()
-        _fallback_choice_df["subject"] = _fallback_choice_df["subject"].astype(str)
-        _fallback_choice_df["state_label"] = _fallback_choice_df["state_label"].astype(str)
-        _fallback_choice_df["feature"] = _fallback_choice_df["feature"].astype(str)
-        _fallback_choice_df["weight"] = pd.to_numeric(_fallback_choice_df["weight"], errors="coerce")
-        _fallback_choice_df["lag"] = pd.to_numeric(
-            _fallback_choice_df["feature"].str.extract(r"^choice_lag_(\d+)$", expand=False),
-            errors="coerce",
-        )
-        _fallback_choice_df = _fallback_choice_df[
-            _fallback_choice_df["state_label"].isin(["Engaged", "Disengaged"])
-            & _fallback_choice_df["lag"].between(1, 100)
-            & np.isfinite(_fallback_choice_df["weight"])
-        ].copy()
-        _fallback_choice_df["lag"] = _fallback_choice_df["lag"].astype(int)
-        _fallback_lag_order = list(range(1, 101))
-        for _state_label, _key in (("Engaged", "choice_engaged"), ("Disengaged", "choice_disengaged")):
-            _ax = _axd_glmhmm_summary[_key]
-            _state_df = _fallback_choice_df[_fallback_choice_df["state_label"] == _state_label].copy()
-            if _state_df.empty:
-                _ax.text(
-                    0.5,
-                    0.5,
-                    f"No {_state_label} choice-lag weights",
-                    ha="center",
-                    va="center",
-                    transform=_ax.transAxes,
-                )
-                _ax.set_axis_off()
-                continue
-            sns.lineplot(
-                data=_state_df,
-                x="lag",
-                y="weight",
-                estimator="mean",
-                errorbar="se",
-                marker="o",
-                markersize=3,
-                linewidth=1.25,
-                color={"Engaged": "tab:green", "Disengaged": "tab:gray"}[_state_label],
-                ax=_ax,
-            )
-            _ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-            _ax.set_xlabel("Choice lag")
-            _ax.set_ylabel("Weight")
-            _ax.set_xticks(range(5, 101, 5))
-            _ax.set_ylim(-0.5, 2)
-            _annotate_choice_lag_ttests(_ax, _state_df, _fallback_lag_order, y=1.75)
-            if _state_label == "Engaged":
-                _ax.set_xlabel("")
-                _ax.tick_params(axis="x", labelbottom=False)
-    else:
-        _choice_df["lag"] = _choice_df["lag"].astype(int)
-        _lag_order = list(range(1, 101))
-        _choice_df = _choice_df[_choice_df["lag"].isin(_lag_order)].copy()
-        for _state_label, _key in (("Engaged", "choice_engaged"), ("Disengaged", "choice_disengaged")):
-            _host_ax = _axd_glmhmm_summary[_key]
-            _outcome_axes = _split_axis_columns(_host_ax)
-            for _outcome_ax, _outcome_family in zip(_outcome_axes, ("Correct", "Incorrect"), strict=False):
-                _panel_df = _choice_df[
-                    (_choice_df["outcome_family"] == _outcome_family)
-                    & (_choice_df["state_label"] == _state_label)
-                ].copy()
-                sns.lineplot(
-                    data=_panel_df,
-                    x="lag",
-                    y="weight",
-                    estimator="mean",
-                    errorbar="se",
-                    marker="o",
-                    markersize=3,
-                    linewidth=1.25,
-                    color={"Engaged": "tab:green", "Disengaged": "tab:gray"}[_state_label],
-                    ax=_outcome_ax,
-                )
-                _outcome_ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
-                _outcome_ax.set_title(f"{_outcome_family} — {_state_label}")
-                _outcome_ax.set_xlabel("Choice lag")
-                _outcome_ax.set_ylabel("Weight" if _outcome_family == "Correct" else "")
-                _outcome_ax.set_xticks(range(5, 101, 5))
-                _outcome_ax.set_ylim(-0.5, 4)
-                _annotate_choice_lag_ttests(_outcome_ax, _panel_df, _lag_order, y=3.75)
-                if _state_label == "Engaged":
-                    _outcome_ax.set_xlabel("")
-                    _outcome_ax.tick_params(axis="x", labelbottom=False)
-
-    for _key in ("stim", "categorical"):
-        _axd_glmhmm_summary[_key].set_box_aspect(1)
-    _fig_glmhmm_summary.canvas.draw()
-    _label_grid = {
-        "stim": (0, 0, "a"),
-        "categorical": (0, 1, "b"),
-        "choice_engaged": (1, 0, "c"),
-        "choice_disengaged": (2, 0, "d"),
-    }
-    _label_axes = {
-        _key: (getattr(_axd_glmhmm_summary[_key], "_replacement_axes", None) or [_axd_glmhmm_summary[_key]])[0]
-        for _key in _label_grid
-    }
-    _row_tops = {
-        _row: max(
-            _label_axes[_key].get_position().y1
-            for _key, (_key_row, _, _) in _label_grid.items()
-            if _key_row == _row
-        )
-        for _row in {0, 1, 2}
-    }
-    _col_lefts = {
-        _col: min(
-            _label_axes[_key].get_position().x0
-            for _key, (_, _key_col, _) in _label_grid.items()
-            if _key_col == _col
-        )
-        for _col in {0, 1}
-    }
-    for _key, (_row, _col, _label) in _label_grid.items():
-        _fig_glmhmm_summary.text(
-            _col_lefts[_col] - 0.01,
-            _row_tops[_row] + 0.01,
-            _label,
-            transform=_fig_glmhmm_summary.transFigure,
-            fontsize=plt.rcParams["axes.titlesize"],
-            fontweight="bold",
-            va="bottom",
-            ha="right",
-        )
-    sns.despine(fig=_fig_glmhmm_summary)
-
-    mo.vstack(
-        [
-            mo.md("#### GLM-HMM summary mosaic"),
-            _fig_glmhmm_summary,
-            save_plot(
-                _fig_glmhmm_summary,
-                "GLM-HMM summary mosaic",
-                stem="glmhmm_summary_mosaic",
-            ),
-        ],
-        align="center",
-    )
-    return
-
-
-@app.cell
-def _(
-    adapter,
-    fig_size,
-    mo,
-    np,
-    pd,
-    plot_df_all,
-    plots,
-    plt,
-    save_plot,
-    selected,
-    views,
-):
-    _views_sel = {s: views[s] for s in selected}
-    _evidence_figsize = fig_size(2, 1)
-
-    def _response_right(_df):
-        _response = pd.to_numeric(_df["response"], errors="coerce")
-        if next(iter(_views_sel.values())).num_classes == 3:
-            return (_response == 2).astype(float)
-        return (_response > 0).astype(float)
-
-    def _plot_pright_by_evidence(_df, *, group_col, legend_title, ax, discrete=False):
-        _df = _df.to_pandas().copy() if hasattr(_df, "to_pandas") else pd.DataFrame(_df).copy()
-        if group_col not in _df.columns or "pR" not in _df.columns:
-            ax.set_axis_off()
-            return None
-        _df["_response_right"] = _response_right(_df)
-        _df["_group"] = pd.to_numeric(_df[group_col], errors="coerce")
-        _df["_p_right"] = pd.to_numeric(_df["pR"], errors="coerce")
-        _df["_right_evidence"] = np.log(np.clip(_df["_p_right"], 1e-6, 1 - 1e-6) / np.clip(1 - _df["_p_right"], 1e-6, 1))
-        _df = _df.dropna(subset=["_response_right", "_group", "_p_right", "_right_evidence"])
-        if _df.empty or _df["_group"].nunique() < 2:
-            ax.set_axis_off()
-            return None
-        _df["_line"] = _df["_group"] if discrete else pd.qcut(_df["_group"], q=4, labels=False, duplicates="drop")
-        _df["_xbin"] = pd.qcut(_df["_right_evidence"], q=10, labels=False, duplicates="drop")
-        _df = _df.dropna(subset=["_line", "_xbin"]).copy()
-        _subject = (
-            _df.groupby(["_line", "subject", "_xbin"], observed=True)
-            .agg(data=("_response_right", "mean"), model=("_p_right", "mean"), x=("_right_evidence", "mean"))
-            .reset_index()
-        )
-        _summary = (
-            _subject.groupby(["_line", "_xbin"], observed=True)
-            .agg(data_mean=("data", "mean"), data_std=("data", "std"), n=("data", "count"), model_mean=("model", "mean"), x=("x", "mean"))
-            .reset_index()
-            .sort_values(["_line", "x"])
-        )
-        _summary["data_sem"] = _summary["data_std"].fillna(0) / np.sqrt(_summary["n"].clip(lower=1))
-        _order = sorted(_summary["_line"].dropna().unique().tolist())
-        _colors = plt.get_cmap("viridis" if discrete else "RdBu")(np.linspace(0.15, 0.85, len(_order)))
-        for _line, _color in zip(_order, _colors, strict=False):
-            _sub = _summary[_summary["_line"] == _line]
-            _label = f"{float(_line):g}" if discrete else f"Q{int(_line) + 1}"
-            ax.plot(_sub["x"], _sub["model_mean"], "-", color=_color, lw=2, label=_label)
-            ax.errorbar(_sub["x"], _sub["data_mean"], yerr=_sub["data_sem"], fmt="o", color=_color, ecolor=_color, ms=4, capsize=3)
-        ax.axhline(0.5, color="gray", lw=0.8, ls="--", alpha=0.5)
-        ax.axvline(0, color="gray", lw=0.8, ls="--", alpha=0.5)
-        ax.set_xlabel("Right-vs-rest fitted evidence")
-        ax.set_ylabel(r"$p(\mathrm{right})$")
-        ax.set_ylim(0, 1)
-        ax.legend(title=legend_title, frameon=False, fontsize=8)
-        return ax
-
-    _fig_total_evidence, _ax_total_evidence = plt.subplots(
+def _(adapter, fig_size, mo, panel, plot_df_all, plots, plt, views_sel):
+    fig_total_evidence, ax_total_evidence = plt.subplots(
         1,
         1,
-        figsize=_evidence_figsize,
+        figsize=fig_size(2, 1),
         layout="constrained",
     )
     plots.plot_accuracy_by_total_evidence(
         plot_df_all,
         adapter=adapter,
-        views=_views_sel,
-        ax=_ax_total_evidence,
-        figsize=_evidence_figsize,
+        views=views_sel,
+        ax=ax_total_evidence,
+        figsize=fig_size(2, 1),
     )
-    _ax_total_evidence.set_xlabel("Fitted Evidence")
+    ax_total_evidence.set_xlabel("Fitted Evidence")
 
-    _stimulus_group_col = "stim_x_delay" if "stim_x_delay" in plot_df_all.columns else "ILD"
-    _pright_evidence_panels = []
-    for _group_col, _legend_title, _stem_label, _discrete in [
-        ("choice_lag_param", r"$A$", "action_trace", False),
-        (_stimulus_group_col, "Stim.", "stimulus", True),
-    ]:
-        _fig_pright_evidence, _ax_pright_evidence = plt.subplots(
-            1,
-            1,
-            figsize=_evidence_figsize,
-            layout="constrained",
-        )
-        _plotted_pright = _plot_pright_by_evidence(
-            plot_df_all,
-            group_col=_group_col,
-            legend_title=_legend_title,
-            ax=_ax_pright_evidence,
-            discrete=_discrete,
-        )
-        if _plotted_pright is None:
-            plt.close(_fig_pright_evidence)
-            continue
-        _pright_evidence_panels.append(
-            mo.vstack(
-                [
-                    _fig_pright_evidence,
-                    save_plot(
-                        _fig_pright_evidence,
-                        f"p(right) by total evidence binned by {_stem_label}",
-                        stem=f"pright_total_evidence_binned_{_stem_label}",
-                    ),
-                ],
-                align="center",
-            )
-        )
-
-    _fig_repeat_evidence, _ax_repeat_evidence = plt.subplots(
-        1,
-        1,
-        figsize=_evidence_figsize,
-        layout="constrained",
-    )
+    fig_repeat_evidence, ax_repeat_evidence = plt.subplots(1, 1, figsize=fig_size(2, 1), layout="constrained")
     plots.plot_repeat_by_repeat_evidence(
         plot_df_all,
-        views=_views_sel,
-        ax=_ax_repeat_evidence,
-        figsize=_evidence_figsize,
+        views=views_sel,
+        ax=ax_repeat_evidence,
+        figsize=fig_size(2, 1),
     )
-    _ax_repeat_evidence.set_xlabel("Rep. Evidence")
-    mo.stop(
-        _fig_repeat_evidence is None,
-        mo.md("No repeat evidence plot available for the selected task/features."),
-    )
+    ax_repeat_evidence.set_xlabel("Rep. Evidence")
 
-    mo.hstack(
-        [
-            mo.vstack(
-                [
-                    _fig_total_evidence,
-                    save_plot(
-                        _fig_total_evidence,
-                        "accuracy by fitted total evidence",
-                        stem="accuracy_total_evidence",
-                    ),
-                ],
-                align="center",
-            ),
-            *_pright_evidence_panels,
-            mo.vstack(
-                [
-                    _fig_repeat_evidence,
-                    save_plot(
-                        _fig_repeat_evidence,
-                        "repeat probability by fitted repeat evidence",
-                        stem="repeat_probability_repeat_evidence",
-                    ),
-                ],
-                align="center",
-            ),
-        ],
-    )
+    mo.hstack([
+        panel(
+            "Accuracy by fitted evidence",
+            fig_total_evidence,
+            "accuracy_total_evidence",
+        ),
+        panel(
+            "Repeat probability by repeat evidence",
+            fig_repeat_evidence,
+            "repeat_probability_repeat_evidence",
+        ),
+    ], align="center")
     return
 
 
 @app.cell
-def _(fig_size, mo, np, pd, plot_df_all, plt, save_plot, selected, views):
-    _views_sel = {s: views[s] for s in selected}
+def _(fig_size, mo, np, pd, plot_df_all, plt, save_plot):
+
     _stim_col = (
         "stim_x_delay"
         if "stim_x_delay" in plot_df_all.columns
@@ -2482,15 +1693,7 @@ def _(
     coef_editor_reference_class_idx = _payload["reference_class_idx"]
     coef_editor_stored_class_indices = _payload["stored_class_indices"]
     coef_editor_stored_reference_class_idx = _payload["stored_reference_class_idx"]
-    return (
-        coef_editor,
-        coef_editor_explicit_class_indices,
-        coef_editor_reference_class_idx,
-        coef_editor_stored_class_indices,
-        coef_editor_stored_reference_class_idx,
-        coef_state_idx,
-        coef_state_label,
-    )
+    return
 
 
 @app.cell
@@ -2516,7 +1719,7 @@ def _(
     mo.stop(_df_sub.height != _view.T, mo.md(f"Subject {_subj} does not match the loaded fit arrays."))
     editor_trial_df = build_trial_df(_view, adapter, _df_sub, adapter.behavioral_cols)
     editor_view = _view
-    return editor_trial_df, editor_view
+    return
 
 
 @app.cell(hide_code=True)
@@ -2524,230 +1727,6 @@ def _(mo):
     mo.md(r"""
     ### Editable accuracy plots
     """)
-    return
-
-
-@app.cell
-def _(
-    adapter,
-    apply_state_tweak_to_trial_df,
-    apply_state_tweak_to_view,
-    coef_editor,
-    coef_editor_explicit_class_indices,
-    coef_editor_reference_class_idx,
-    coef_editor_stored_class_indices,
-    coef_editor_stored_reference_class_idx,
-    coef_state_idx,
-    coef_state_label,
-    editor_trial_df,
-    editor_view,
-    mo,
-    np,
-    plots,
-    plt,
-    prepare_predictions_df,
-    save_plot,
-    task_name,
-    ui_editor_subject,
-    ui_psychometric_background,
-    ui_psychometric_regressor,
-    ui_state_assignment_mode,
-    ui_state_model_line_mode,
-    ui_state_show_data_smooth,
-    ui_state_show_weighted_points,
-):
-    _subj = ui_editor_subject.value
-    _view = editor_view
-    _trial_df_sub = editor_trial_df
-    _edited_weights = np.asarray(coef_editor.value["weights"], dtype=float)
-
-    _trial_df_tweaked = apply_state_tweak_to_trial_df(
-        _trial_df_sub,
-        adapter=adapter,
-        view=_view,
-        state_idx=coef_state_idx,
-        edited_weights=_edited_weights,
-        original_weights=np.asarray(coef_editor.value["original_weights"], dtype=float),
-        explicit_class_indices=list(coef_editor_explicit_class_indices),
-        reference_class_idx=int(coef_editor_reference_class_idx),
-    )
-    _view_tweaked = apply_state_tweak_to_view(
-        _view,
-        state_idx=coef_state_idx,
-        edited_weights=_edited_weights,
-        explicit_class_indices=list(coef_editor_explicit_class_indices),
-        reference_class_idx=int(coef_editor_reference_class_idx),
-        stored_class_indices=list(coef_editor_stored_class_indices),
-        stored_reference_class_idx=int(coef_editor_stored_reference_class_idx),
-    )
-    _plot_df_tweaked = prepare_predictions_df(task_name, _trial_df_tweaked)
-
-    _title = f"{_subj} — tweaked {coef_state_label}"
-    _fig_all_tweaked, _ = plots.plot_categorical_performance_all(
-        _plot_df_tweaked,
-        _title,
-        background_style=ui_psychometric_background.value,
-    )
-    _fig_all_tweaked_list = list(_fig_all_tweaked) if isinstance(_fig_all_tweaked, (list, tuple)) else [_fig_all_tweaked]
-    for _fig in _fig_all_tweaked_list:
-        for _ax_idx, _ax in enumerate(_fig.axes):
-            _ax.set_title("")
-            _ax.set_ylabel(r"$\mathit{p}(\mathrm{right})$" if _ax_idx == 0 else "")
-        if _fig._suptitle is not None:
-            _fig._suptitle.set_text("")
-        _fig.tight_layout()
-    _state_overlay_fn = getattr(plots, "plot_categorical_performance_state_overlay", None)
-    if _state_overlay_fn is None:
-        _fig_state_overlay_tweaked, _ = plots.plot_categorical_performance_by_state(
-            df=_plot_df_tweaked,
-            views={_subj: _view_tweaked},
-            model_name=f"{_title} — all states",
-            background_style=ui_psychometric_background.value,
-            show_weighted_points=ui_state_show_weighted_points.value,
-            show_data_smooth=ui_state_show_data_smooth.value,
-            show_model_smooth=ui_state_model_line_mode.value != "none",
-            model_line_mode=ui_state_model_line_mode.value,
-            state_assignment_mode=ui_state_assignment_mode.value,
-            figure_dpi=80,
-            overlay_only=True,
-        )
-    else:
-        _fig_state_overlay_tweaked_base, _ax_state_overlay_tweaked = plt.subplots(figsize=(3, 3))
-        _fig_state_overlay_tweaked, _ = _state_overlay_fn(
-            df=_plot_df_tweaked,
-            views={_subj: _view_tweaked},
-            model_name=f"{_title} — all states",
-            background_style=ui_psychometric_background.value,
-            show_weighted_points=ui_state_show_weighted_points.value,
-            show_data_smooth=ui_state_show_data_smooth.value,
-            show_model_smooth=ui_state_model_line_mode.value != "none",
-            model_line_mode=ui_state_model_line_mode.value,
-            state_assignment_mode=ui_state_assignment_mode.value,
-            figure_dpi=80,
-            ax=_ax_state_overlay_tweaked,
-        )
-    _fig_state_tweaked, _ = plots.plot_categorical_performance_by_state(
-        df=_plot_df_tweaked,
-        views={_subj: _view_tweaked},
-        model_name=f"{_title} — per state",
-        background_style=ui_psychometric_background.value,
-        show_weighted_points=ui_state_show_weighted_points.value,
-        show_data_smooth=ui_state_show_data_smooth.value,
-        show_model_smooth=ui_state_model_line_mode.value != "none",
-        model_line_mode=ui_state_model_line_mode.value,
-        state_assignment_mode=ui_state_assignment_mode.value,
-        figure_dpi=80,
-    )
-    _reg_plot_fn = getattr(plots, "plot_regressor_psychometric_by_state", None)
-    if _reg_plot_fn is None:
-        _reg_section = mo.md("This task does not expose a regressor psychometric plot.")
-    else:
-        _fig_reg_state_tweaked, _ = _reg_plot_fn(
-            df=_plot_df_tweaked,
-            views={_subj: _view_tweaked},
-            model_name=_title,
-            feature_col=ui_psychometric_regressor.value,
-            background_style=ui_psychometric_background.value,
-            show_weighted_points=ui_state_show_weighted_points.value,
-            show_data_smooth=ui_state_show_data_smooth.value,
-            show_model_smooth=ui_state_model_line_mode.value != "none",
-            model_line_mode=ui_state_model_line_mode.value,
-            state_assignment_mode=ui_state_assignment_mode.value,
-            figure_dpi=80,
-        )
-        _reg_section = mo.vstack(
-            [
-                mo.hstack([ui_psychometric_regressor], justify="space-between"),
-                mo.vstack(
-                    [
-                        _fig_reg_state_tweaked,
-                        save_plot(
-                            _fig_reg_state_tweaked,
-                            f"tweaked {ui_psychometric_regressor.value} by state",
-                            stem=f"tweaked_regressor_by_state_{ui_psychometric_regressor.value}",
-                        ),
-                    ],
-                    align="center",
-                ),
-            ],
-            align="center",
-        )
-    _side_plot_fn = getattr(plots, "plot_categorical_strat_by_side", None)
-    if _side_plot_fn is None:
-        _side_section = mo.md("This task does not expose a side-stratified categorical plot.")
-    else:
-        _fig_side_tweaked, _ = plots.plot_categorical_strat_by_side(
-            _plot_df_tweaked,
-            subject=_subj,
-            model_name=f"{_subj}_tweaked_{coef_state_idx}",
-        )
-        _side_section = mo.vstack(
-            [
-                _fig_side_tweaked,
-                save_plot(
-                    _fig_side_tweaked,
-                    "tweaked psychometric by stimulus side",
-                    stem="tweaked_categorical_by_side",
-                ),
-            ],
-            align="center",
-        )
-
-    mo.vstack(
-        [
-            mo.hstack(
-                [
-                    mo.vstack(
-                        [
-                            *[
-                                _item
-                                for _fig_idx, _fig in enumerate(_fig_all_tweaked_list, start=1)
-                                for _item in (
-                                    _fig,
-                                    save_plot(
-                                        _fig,
-                                        f"tweaked overall psychometric {_fig_idx}" if len(_fig_all_tweaked_list) > 1 else "tweaked overall psychometric",
-                                        stem=f"tweaked_categorical_overall_{_fig_idx}" if len(_fig_all_tweaked_list) > 1 else "tweaked_categorical_overall",
-                                    ),
-                                )
-                            ],
-                        ],
-                        align="center",
-                    ),
-                    mo.vstack(
-                        [
-                            ui_psychometric_background,
-                        ],
-                        align="start",
-                    ),
-                ],
-                justify="space-between",
-                align="center",
-                widths=[4, 1],
-            ),
-            mo.vstack(
-                [
-                    _fig_state_overlay_tweaked,
-                    save_plot(
-                        _fig_state_overlay_tweaked,
-                        "tweaked state-overlay psychometric",
-                        stem="tweaked_categorical_state_overlay",
-                    ),
-                    _fig_state_tweaked,
-                    save_plot(
-                        _fig_state_tweaked,
-                        "tweaked per-state psychometric",
-                        stem="tweaked_categorical_by_state",
-                    ),
-                ],
-                align="center",
-            ),
-            _reg_section,
-            _side_section,
-            coef_editor,
-        ],
-        align="center",
-    )
     return
 
 
@@ -2776,308 +1755,106 @@ def _(mo):
 
 
 @app.cell
+def _(adapter, adapter_behavioral_column, df_all, pl, trial_df):
+    session_col = adapter_behavioral_column(adapter, df_all, "session", "session", "Session")
+    trial_col = adapter_behavioral_column(adapter, df_all, "trial_idx", "trial_idx", "trial", "Trial")
+
+    licks_df = (
+        trial_df
+        .join(
+            df_all.select(
+                "subject",
+                pl.col(session_col).alias("session"),
+                pl.col(trial_col).alias("trial_idx"),
+                "nLicks",
+            ),
+            on=["subject", "session", "trial_idx"],
+            how="left",
+        )
+        .with_columns(pl.col("nLicks").cast(pl.Float64, strict=False))
+        .drop_nulls(["nLicks", "state_label"])
+        .group_by(["subject", "state_label"])
+        .agg(pl.median("nLicks").alias("nLicks"))
+        .to_pandas()
+    )
+    return licks_df, session_col, trial_col
+
+
+@app.cell
 def _(
+    Annotator,
     adapter,
-    adapter_behavioral_column,
     build_state_accuracy_payload,
     build_state_posterior_count_payload,
-    df_all,
     fig_size,
+    licks_df,
     mo,
     model_plots,
-    paper_boxplot,
-    pd,
-    pl,
+    panel,
     plt,
-    save_plot,
     selected,
     sns,
     trial_df,
 ):
     mo.stop(not selected, mo.md("No fitted subjects available."))
-    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
 
-    _fig_acc_base, _ax_acc = plt.subplots(figsize=fig_size(3,1))
-    _fig_acc = model_plots.state_accuracy(
+    fig_acc,ax_acc  = plt.subplots(figsize=fig_size(3, 1))
+    model_plots.state_accuracy(
         build_state_accuracy_payload(
-            _trial_df_sel,
+            trial_df,
             performance_col="correct_bool",
             chance_level=1.0 / adapter.num_classes,
         ),
-        ax=_ax_acc,
+        ax=ax_acc,
     )
-    _fig_acc.set_title("")
-    fig, ax = plt.subplots(figsize=fig_size(3,1))
-    _fig_post = model_plots.state_posterior_count_kde(build_state_posterior_count_payload(_trial_df_sel), ax=ax, figsize=fig_size(3,1))
-    ax.spines["right"].set_visible(True)
-    ax.set_title("")
+    ax_acc.set_title("")
 
-    def _pick_column(_df, _candidates):
-        for _candidate in _candidates:
-            if _candidate and _candidate in _df.columns:
-                return _candidate
-        return None
+    fig_post, ax_post = plt.subplots(figsize=fig_size(3, 1))
+    model_plots.state_posterior_count_kde(
+        build_state_posterior_count_payload(trial_df),
+        ax=ax_post,
+        figsize=fig_size(3, 1),
+    )
+    ax_post.spines["right"].set_visible(True)
+    ax_post.set_title("")
 
-    _state_nlicks_message = None
-    _fig_nlicks = None
-    _trial_pdf = _trial_df_sel.to_pandas()
-    _state_col = _pick_column(_trial_pdf, ["state_label", "state_label_pred"])
-    _behavior_metric_candidates = [
-        "nLicks",
-        "RT",
-        "RT2",
-        "response_time_first",
-        "reaction_time",
-        "ReactionTime",
-        "timepoint_4",
-    ]
-    state_behavior_df = _trial_pdf.copy()
-    _missing_behavior_cols = [
-        _col
-        for _col in _behavior_metric_candidates
-        if _col not in state_behavior_df.columns and _col in df_all.columns
-    ]
-    if _missing_behavior_cols:
-        _session_col = adapter_behavioral_column(adapter, df_all, "session", "session", "Session")
-        _trial_col = adapter_behavioral_column(adapter, df_all, "trial_idx", "trial_idx", "trial", "Trial")
-        if (
-            _session_col is not None
-            and _trial_col is not None
-            and {"subject", "session", "trial_idx"}.issubset(state_behavior_df.columns)
-        ):
-            _behavior_pdf = (
-                df_all
-                .select(["subject", _session_col, _trial_col, *_missing_behavior_cols])
-                .rename({_session_col: "session", _trial_col: "trial_idx"})
-                .to_pandas()
-            )
-            state_behavior_df = state_behavior_df.merge(
-                _behavior_pdf,
-                on=["subject", "session", "trial_idx"],
-                how="left",
-            )
+    fig_nlicks, ax_nlicks = plt.subplots(figsize=fig_size(3, 1))
+    sns.boxplot(
+        data=licks_df,
+        x="state_label",
+        y="nLicks",
+        hue="state_label",
+        order=["Engaged", "Disengaged"],
+        palette={"Engaged": "tab:green", "Disengaged": "tab:gray"},
+        fill=False,
+        showcaps=False,
+        showfliers=False,
+        medianprops={"linewidth": 2},
+        boxprops={"color": "tab:gray"},
+        whiskerprops={"color": "tab:gray"},
+        ax=ax_nlicks,
+    )
 
-    if "nLicks" in state_behavior_df.columns:
-        state_nlicks_df = state_behavior_df.copy()
-    else:
-        state_nlicks_df = pd.DataFrame()
-        _state_nlicks_message = mo.md("`nLicks` is not available for this task/dataframe.")
+    annotator = Annotator(
+        ax_nlicks,
+        [("Engaged", "Disengaged")],
+        data=licks_df,
+        x="state_label",
+        y="nLicks",
+        order=["Engaged", "Disengaged"],
+    )
+    annotator.configure(test="t-test_paired", text_format="star", loc="outside", verbose=0, line_height=0)
+    annotator.apply_and_annotate()
 
-    if _state_nlicks_message is None and _state_col is not None and not state_nlicks_df.empty:
-        state_nlicks_df = state_nlicks_df.copy()
-        state_nlicks_df["nLicks"] = pd.to_numeric(state_nlicks_df["nLicks"], errors="coerce")
-        state_nlicks_df = state_nlicks_df.dropna(subset=["nLicks", _state_col])
-        plot_df = (
-            state_nlicks_df#[state_nlicks_df["performance"] == 1]
-            .groupby(["subject", _state_col], as_index=False)["nLicks"]
-            .median()
-        )
-        if state_nlicks_df.empty:
-            _state_nlicks_message = mo.md("No valid `nLicks` values for selected fitted trials.")
-        else:
-            _fig_nlicks, _ax_nlicks = plt.subplots(figsize=fig_size(3,1))
-            paper_boxplot(
-                data=plot_df,
-                x=_state_col,
-                hue = _state_col,
-                y="nLicks",
-                ax=_ax_nlicks,
-                palette={"Engaged": "tab:green", "Disengaged":"tab:gray"},
-                order=["Engaged", "Disengaged"],
-            )
-            _ax_nlicks.set_xlabel("State")
-            _ax_nlicks.set_ylabel("Number of licks in correct trials")
-            _ax_nlicks.tick_params(axis="x")
-            sns.despine(ax=_ax_nlicks)
-            _fig_nlicks.tight_layout()
-    elif _state_nlicks_message is None:
-        _state_nlicks_message = mo.md("State labels are not available for the `nLicks` boxplot.")
-    if _fig_nlicks is not None and _state_col is not None:
-        try:
-            from statannotations.Annotator import Annotator
+    ax_nlicks.set(xlabel="State", ylabel="Number of licks in correct trials")
+    sns.despine(ax=ax_nlicks)
+    fig_nlicks.tight_layout()
 
-            pairs = [("Engaged", "Disengaged")]
-            annotator = Annotator(
-                _ax_nlicks,
-                pairs,
-                data=plot_df,
-                x=_state_col,
-                y="nLicks",
-                order=["Engaged", "Disengaged"],
-            )
-            annotator.configure(
-                test="t-test_paired",
-                text_format="star",
-                loc="outside",
-                verbose=0,
-            )
-            annotator.apply_and_annotate()
-        except Exception:
-            pass
-
-    mo.vstack(
+    mo.hstack(
         [
-            mo.hstack(
-                [
-                    mo.vstack(
-                        [
-                            mo.md("#### Accuracy by state"),
-                            _fig_acc.figure,
-                            save_plot(
-                                _fig_acc.figure,
-                                "accuracy by state",
-                                stem="state_accuracy",
-                            ),
-                        ],
-                        align="center",
-                    ),
-                    mo.vstack(
-                        [
-                            mo.md("#### Number of licks by state"),
-                            _fig_nlicks if _fig_nlicks is not None else _state_nlicks_message,
-                            save_plot(
-                                _fig_nlicks,
-                                "number of licks by state",
-                                stem="state_nlicks",
-                            ) if _fig_nlicks is not None else mo.md(""),
-                        ],
-                        align="center",
-                    ),
-                    mo.vstack(
-                        [
-                            mo.md("#### Posterior / trial-count KDE"),
-                            _fig_post.figure,
-                            save_plot(
-                                _fig_post.figure,
-
-                                "posterior trial-count kde",
-                                stem="state_posterior_count_kde",
-                            ),
-                        ],
-                        align="center",
-                    ),
-                    mo.vstack(
-                        [
-                            mo.md("#### State-change KDE"),
-                            # _fig_switch_kde,
-                            # save_plot(
-                            #     _fig_switch_kde,
-                            #     "state changes per session kde",
-                            #     stem="state_switches_kde",
-                            # ),
-                        ],
-                        align="center",
-                    ),
-                ],
-                align="center",
-            ),
-            mo.md("**Trial counts & mean accuracy per label:**"),
-        ]
-    )
-    return (state_behavior_df,)
-
-
-@app.cell
-def _(state_behavior_df):
-    state_behavior_df
-    return
-
-
-@app.cell
-def _(fig_size, mo, np, pd, plt, save_plot, sns, state_behavior_df):
-    mo.stop(
-        state_behavior_df.empty,
-        mo.md("No state/behavior dataframe is available for ROC analysis."),
-    )
-
-    _state_col = next(
-        (_col for _col in ["state_label", "state_label_pred"] if _col in state_behavior_df.columns),
-        None,
-    )
-    mo.stop(_state_col is None, mo.md("State labels are not available for behavioral ROC curves."))
-
-    _rt_col = next(
-        (
-            _col
-            for _col in ["RT", "RT2", "response_time_first", "reaction_time", "ReactionTime", "timepoint_4"]
-            if _col in state_behavior_df.columns
-        ),
-        None,
-    )
-    _metric_specs = [("nLicks", "Licking", "Higher lick count")]
-    if _rt_col is not None:
-        _metric_specs.append((_rt_col, "RT", "Faster RT"))
-    _metric_specs = [_spec for _spec in _metric_specs if _spec[0] in state_behavior_df.columns]
-    mo.stop(not _metric_specs, mo.md("No `nLicks` or RT column was found for behavioral ROC curves."))
-
-    def _binary_engaged_target(_labels):
-        _label_text = pd.Series(_labels, copy=False).astype(str).str.strip().str.lower()
-        _positive = _label_text.eq("engaged") | _label_text.str.startswith("engaged ")
-        _negative = _label_text.eq("disengaged") | _label_text.str.startswith("disengaged ")
-        return _positive.to_numpy(dtype=bool), (_positive | _negative).to_numpy(dtype=bool)
-
-    def _roc_curve(_target, _score):
-        _target = np.asarray(_target, dtype=bool)
-        _score = np.asarray(_score, dtype=float)
-        _valid = np.isfinite(_score)
-        _target = _target[_valid]
-        _score = _score[_valid]
-        _n_pos = int(_target.sum())
-        _n_neg = int((~_target).sum())
-        if _target.size == 0 or _n_pos == 0 or _n_neg == 0:
-            return None
-        _order = np.argsort(-_score, kind="mergesort")
-        _target_sorted = _target[_order]
-        _score_sorted = _score[_order]
-        _threshold_idxs = np.r_[np.where(np.diff(_score_sorted))[0], _target_sorted.size - 1]
-        _tps = np.cumsum(_target_sorted)[_threshold_idxs]
-        _fps = (1 + _threshold_idxs) - _tps
-        _tpr = np.r_[0.0, _tps / _n_pos]
-        _fpr = np.r_[0.0, _fps / _n_neg]
-        _auc = float(np.sum(np.diff(_fpr) * (_tpr[:-1] + _tpr[1:]) / 2.0))
-        return _fpr, _tpr, _auc
-
-    _fig_roc, _axes = plt.subplots(
-        1,
-        len(_metric_specs),
-        figsize=fig_size(1, max(1, len(_metric_specs))),
-        squeeze=False,
-        layout="constrained",
-    )
-    _plotted = False
-    for _ax, (_metric_col, _title, _direction_label) in zip(_axes.ravel(), _metric_specs, strict=False):
-        _df = state_behavior_df[[_state_col, _metric_col]].copy()
-        _target, _valid_labels = _binary_engaged_target(_df[_state_col])
-        _score = pd.to_numeric(_df[_metric_col], errors="coerce").to_numpy(dtype=float)
-        if _metric_col != "nLicks":
-            _score = -_score
-        _result = _roc_curve(_target[_valid_labels], _score[_valid_labels])
-        if _result is None:
-            _ax.text(0.5, 0.5, "Need Engaged and Disengaged trials", ha="center", va="center")
-            _ax.set_axis_off()
-            continue
-        _fpr, _tpr, _auc = _result
-        _ax.plot(_fpr, _tpr, color="#1B6CA8", lw=2, label=f"AUC = {_auc:.3f}")
-        _ax.plot([0, 1], [0, 1], color="0.6", lw=1, ls="--")
-        _ax.set_title(_title)
-        _ax.set_xlabel("False positive rate")
-        _ax.set_ylabel("True positive rate")
-        _ax.set_xlim(0, 1)
-        _ax.set_ylim(0, 1)
-        _ax.legend(title=_direction_label, frameon=False, loc="lower right")
-        sns.despine(ax=_ax)
-        _plotted = True
-
-    mo.stop(not _plotted, mo.md("Behavioral ROC curves require both Engaged and Disengaged labeled trials."))
-    mo.vstack(
-        [
-            mo.md("#### Behavioral ROC by state"),
-            _fig_roc,
-            save_plot(
-                _fig_roc,
-                "behavioral ROC by state",
-                stem="state_behavioral_roc",
-            ),
+            panel("Accuracy by state", fig_acc, "state_accuracy", "accuracy by state"),
+            panel("Number of licks by state", fig_nlicks, "state_nlicks", "number of licks by state"),
+            panel("Posterior / trial-count KDE", fig_post, "state_posterior_count_kde", "posterior trial-count kde"),
         ],
         align="center",
     )
@@ -3085,246 +1862,234 @@ def _(fig_size, mo, np, pd, plt, save_plot, sns, state_behavior_df):
 
 
 @app.cell
-def _(mo):
-    get_behavior_session_pick, set_behavior_session_pick = mo.state(None)
-    ui_behavior_random_session = mo.ui.run_button(label="Pick random session")
-    return (
-        get_behavior_session_pick,
-        set_behavior_session_pick,
-        ui_behavior_random_session,
-    )
+def _(np, pd):
+    # Convert state labels to a binary target:
+    # Engaged = True, everything else = False
+    def engaged_mask(labels):
+        return pd.Series(labels).astype(str).str.lower().str.startswith("engaged").to_numpy()
+
+
+    # Compute ROC curve and AUC from binary targets and continuous scores
+    def roc_curve(target, score):
+        target, score = np.asarray(target, bool), np.asarray(score, float)
+
+        # Remove invalid scores
+        keep = np.isfinite(score)
+        target, score = target[keep], score[keep]
+
+        # Sort by decreasing score
+        order = np.argsort(-score, kind="mergesort")
+        target = target[order]
+
+        # Indices where score thresholds change
+        thresholds = np.r_[np.where(np.diff(score[order]))[0], len(target) - 1]
+
+        # Compute cumulative TP and FP counts
+        tp = np.cumsum(target)[thresholds]
+        fp = (thresholds + 1) - tp
+
+        # Convert to rates
+        tpr = np.r_[0, tp / target.sum()]
+        fpr = np.r_[0, fp / (~target).sum()]
+
+        # Area under the ROC curve
+        auc = np.trapezoid(tpr, fpr)
+
+        return fpr, tpr, auc
+
+    return engaged_mask, roc_curve
 
 
 @app.cell
 def _(
-    mo,
-    np,
-    set_behavior_session_pick,
-    state_behavior_df,
-    ui_behavior_random_session,
+    df_all,
+    engaged_mask,
+    fig_size,
+    panel,
+    pd,
+    pl,
+    plt,
+    roc_curve,
+    session_col,
+    trial_col,
+    trial_df,
 ):
-    mo.stop(not ui_behavior_random_session.value)
-    mo.stop(
-        state_behavior_df.empty or not {"subject", "session"}.issubset(state_behavior_df.columns),
-        mo.md("No subject/session table is available for random behavioral ECDF selection."),
-    )
-
-    _state_col = next(
-        (_col for _col in ["state_label", "state_label_pred"] if _col in state_behavior_df.columns),
-        None,
-    )
-    _metric_cols = [
-        _col
-        for _col in ["nLicks", "RT", "RT2", "response_time_first", "reaction_time", "ReactionTime", "timepoint_4"]
-        if _col in state_behavior_df.columns
+    # Metrics to evaluate:
+    # (column, panel title, legend title, score direction)
+    metrics = [
+        ("nLicks", "Licking", "Higher lick count", 1),
+        ("RT", "RT", "Faster RT", -1),  # negate RT so faster responses predict engagement
     ]
-    mo.stop(_state_col is None or not _metric_cols, mo.md("Need state labels and licks/RT columns for random behavioral ECDF selection."))
 
-    _sessions_df = (
-        state_behavior_df
-        .dropna(subset=["subject", "session", _state_col])
-        .dropna(subset=_metric_cols, how="all")
-        .groupby(["subject", "session"], as_index=False)
-        .size()
-        .rename(columns={"size": "n_trials"})
+
+    # Create one ROC panel per behavioral metric
+    fig_roc, axes_roc = plt.subplots(
+        1,
+        len(metrics),
+        figsize=fig_size(1, len(metrics)),
+        squeeze=False,
+        layout="constrained",
     )
-    _sessions_df = _sessions_df[_sessions_df["n_trials"] > 0].sort_values(["subject", "session"])
-    mo.stop(_sessions_df.empty, mo.md("No sessions with state labels and licks/RT values are available."))
 
-    _row = _sessions_df.iloc[int(np.random.default_rng().integers(len(_sessions_df)))]
-    set_behavior_session_pick({"subject": _row["subject"], "session": str(_row["session"])})
-    return
+
+    # Attach behavioral variables to trial-level state assignments
+    behavior_df = (
+        trial_df.join(
+            df_all.select(
+                "subject",
+                pl.col(session_col).alias("session"),
+                pl.col(trial_col).alias("trial_idx"),
+                "nLicks",
+                "RT",
+            ),
+            on=["subject", "session", "trial_idx"],
+            how="left",
+        )
+        .select("subject", "session","state_label", "nLicks", "RT")
+        .to_pandas()
+    )
+
+
+    # Compute and plot ROC curve for each behavioral metric
+    for ax_roc, (metric, title, direction, sign) in zip(axes_roc.ravel(), metrics):
+        # Keep only trials with valid values for this metric
+        df_roc = behavior_df[["state_label", metric]].dropna().copy()
+
+        target = engaged_mask(df_roc["state_label"])
+        score = sign * pd.to_numeric(df_roc[metric], errors="coerce").to_numpy(float)
+
+        # Compute ROC and AUC
+        fpr, tpr, auc = roc_curve(target, score)
+
+        ax_roc.plot(fpr, tpr, lw=2, label=f"AUC = {auc:.3f}")
+        ax_roc.plot([0, 1], [0, 1], ls="--", color="0.5")
+        ax_roc.set(
+            title=title,
+            xlabel="False positive rate",
+            ylabel="True positive rate",
+            xlim=(0, 1),
+            ylim=(0, 1),
+        )
+
+        ax_roc.legend(
+            title=direction,
+            frameon=False,
+            loc="lower right",
+        )
+
+
+    panel(
+        "Behavioral ROC by state",
+        fig_roc,
+        "state_behavioral_roc",
+        "behavioral ROC by state",
+    )
+    return (behavior_df,)
 
 
 @app.cell
-def _(
-    get_behavior_session_pick,
-    mo,
-    set_behavior_session_pick,
-    state_behavior_df,
-):
-    _subj_opts = (
-        sorted(state_behavior_df["subject"].dropna().astype(str).unique().tolist(), key=str)
-        if "subject" in state_behavior_df.columns and not state_behavior_df.empty
-        else ["(no subjects)"]
-    )
-    _pick = get_behavior_session_pick() or {}
-    _picked_subj = str(_pick.get("subject")) if _pick.get("subject") is not None else None
-    _default_subj = _picked_subj if _picked_subj in _subj_opts else _subj_opts[0]
-    ui_behavior_session_subj = mo.ui.dropdown(
-        options=_subj_opts,
-        value=_default_subj,
-        label="Subject",
-        on_change=lambda value: set_behavior_session_pick({"subject": value, "session": None}),
-    )
-    return (ui_behavior_session_subj,)
+def _(behavior_df, mo):
+    def random_session():
+        return (
+            behavior_df[["subject", "session"]]
+            .dropna()
+            .drop_duplicates()
+            .sample(1)
+            .iloc[0]
+        )
+    ui_behavior_random_session = mo.ui.run_button(label="Pick random session")
+    return random_session, ui_behavior_random_session
 
 
 @app.cell
-def _(
-    get_behavior_session_pick,
-    mo,
-    set_behavior_session_pick,
-    state_behavior_df,
-    ui_behavior_random_session,
-    ui_behavior_session_subj,
-):
-    if (
-        state_behavior_df.empty
-        or "subject" not in state_behavior_df.columns
-        or "session" not in state_behavior_df.columns
-        or ui_behavior_session_subj.value == "(no subjects)"
-    ):
-        _sess_values = ["(no sessions)"]
+def _(behavior_df, mo, random_session, ui_behavior_random_session):
+    if ui_behavior_random_session.value:
+        pick = random_session()
+        subject_value = str(pick["subject"])
+        session_value = str(pick["session"])
     else:
-        _subject_sessions = state_behavior_df.loc[
-            state_behavior_df["subject"].astype(str) == str(ui_behavior_session_subj.value),
-            "session",
-        ]
-        _sess_values = sorted(_subject_sessions.dropna().astype(str).unique().tolist(), key=str) or ["(no sessions)"]
-
-    _pick = get_behavior_session_pick() or {}
-    _picked_session = (
-        str(_pick.get("session"))
-        if str(_pick.get("subject")) == str(ui_behavior_session_subj.value) and _pick.get("session") is not None
-        else None
+        subject_value = sorted(behavior_df["subject"].astype(str).unique())[0]
+        session_value = (
+            behavior_df.loc[
+                behavior_df["subject"].astype(str) == subject_value,
+                "session"
+            ]
+            .astype(str)
+            .sort_values()
+            .iloc[0]
+        )
+    ui_behavior_session_subj = mo.ui.dropdown(
+        options=sorted(behavior_df["subject"].astype(str).unique()),
+        value=subject_value,
+        label="Subject",
     )
-    _default_session = _picked_session if _picked_session in _sess_values else _sess_values[0]
+    return session_value, ui_behavior_session_subj
+
+
+@app.cell
+def _(behavior_df, mo, session_value, ui_behavior_session_subj):
     ui_behavior_session_id = mo.ui.dropdown(
-        options=_sess_values,
-        value=_default_session,
+        options=(
+            behavior_df.loc[
+                behavior_df["subject"].astype(str) == ui_behavior_session_subj.value,
+                "session",
+            ]
+            .astype(str)
+            .sort_values()
+            .unique()
+            .tolist()
+        ),
+        value=session_value,
         label="Session",
-        on_change=lambda value: set_behavior_session_pick({"subject": ui_behavior_session_subj.value, "session": value}),
-    )
-
-    mo.vstack(
-        [
-            mo.md("#### Example session RT/lick cumulative distributions"),
-            mo.hstack([ui_behavior_random_session, ui_behavior_session_subj, ui_behavior_session_id]),
-        ],
-        align="start",
     )
     return (ui_behavior_session_id,)
 
 
 @app.cell
 def _(
+    behavior_df,
     fig_size,
     mo,
     np,
     pd,
     plt,
     save_plot,
-    sns,
-    state_behavior_df,
+    state_order,
+    state_palette,
+    ui_behavior_random_session,
     ui_behavior_session_id,
     ui_behavior_session_subj,
 ):
-    mo.stop(
-        state_behavior_df.empty
-        or ui_behavior_session_subj.value == "(no subjects)"
-        or ui_behavior_session_id.value == "(no sessions)",
-        mo.md("Pick a subject/session with state labels and licks/RT values."),
-    )
-
-    _state_col = next(
-        (_col for _col in ["state_label", "state_label_pred"] if _col in state_behavior_df.columns),
-        None,
-    )
-    mo.stop(_state_col is None, mo.md("State labels are not available for the example-session ECDF."))
-
-    _rt_col = next(
-        (
-            _col
-            for _col in ["RT", "RT2", "response_time_first", "reaction_time", "ReactionTime", "timepoint_4"]
-            if _col in state_behavior_df.columns
-        ),
-        None,
-    )
-    _metric_specs = [("nLicks", "Licks")]
-    if _rt_col is not None:
-        _metric_specs.append((_rt_col, "RT"))
-    _metric_specs = [_spec for _spec in _metric_specs if _spec[0] in state_behavior_df.columns]
-    mo.stop(not _metric_specs, mo.md("No `nLicks` or RT column was found for the example-session ECDF."))
-
-    _session_df = state_behavior_df[
-        (state_behavior_df["subject"].astype(str) == str(ui_behavior_session_subj.value))
-        & (state_behavior_df["session"].astype(str) == str(ui_behavior_session_id.value))
-    ].copy()
-    mo.stop(_session_df.empty, mo.md("No rows found for the selected subject/session."))
-
-    _state_values = _session_df[_state_col].dropna().astype(str).unique().tolist()
-    _state_order = [_state for _state in ["Engaged", "Disengaged"] if _state in _state_values]
-    _state_order.extend([_state for _state in sorted(_state_values, key=str) if _state not in _state_order])
-    mo.stop(not _state_order, mo.md("No state labels found for the selected subject/session."))
-
-    def _ecdf(_values):
-        _values = pd.to_numeric(pd.Series(_values), errors="coerce").dropna().to_numpy(dtype=float)
-        if _values.size == 0:
-            return None, None
-        _x = np.sort(_values)
-        _y = np.arange(1, _x.size + 1, dtype=float) / float(_x.size)
-        return _x, _y
-
-    _palette = {
-        "Engaged": "tab:green",
-        "Disengaged": "tab:gray",
-    }
-    _fallback_colors = plt.get_cmap("tab10")(np.linspace(0.0, 1.0, max(1, len(_state_order))))
-
-    _fig_ecdf, _axes = plt.subplots(
+    session_df = behavior_df[
+        (behavior_df["subject"].astype(str) == str(ui_behavior_session_subj.value))
+        & (behavior_df["session"].astype(str) == str(ui_behavior_session_id.value))
+    ]
+    def ecdf(values):
+        x = np.sort(pd.to_numeric(values, errors="coerce").dropna().to_numpy(float))
+        return x, np.arange(1, len(x) + 1) / len(x)
+    _metrics = [("nLicks", "Licks"), ("RT", "RT")]
+    fig_ecdf, axes_ecdf = plt.subplots(
         1,
-        len(_metric_specs),
-        figsize=fig_size(1, max(1, len(_metric_specs))),
+        len(_metrics),
+        figsize=fig_size(1, len(_metrics)),
         squeeze=False,
         layout="constrained",
     )
-    _plotted = False
-    for _ax, (_metric_col, _title) in zip(_axes.ravel(), _metric_specs, strict=False):
-        for _idx, _state in enumerate(_state_order):
-            _sub = _session_df[_session_df[_state_col].astype(str) == str(_state)]
-            _x, _y = _ecdf(_sub[_metric_col])
-            if _x is None:
-                continue
-            _ax.step(
-                _x,
-                _y,
-                where="post",
-                lw=2,
-                color=_palette.get(str(_state), _fallback_colors[_idx]),
-                label=f"{_state} (n={len(_x)})",
-            )
-            _plotted = True
-        _ax.set_title(_title)
-        _ax.set_xlabel(_metric_col)
-        _ax.set_ylabel("Cumulative probability")
-        _ax.set_ylim(0, 1)
-        _ax.legend(frameon=False, loc="lower right")
-        sns.despine(ax=_ax)
 
-    mo.stop(not _plotted, mo.md("No licks/RT values were available for the selected subject/session."))
-    mo.vstack(
-        [
-            mo.md(f"Subject `{ui_behavior_session_subj.value}`, session `{ui_behavior_session_id.value}`"),
-            _fig_ecdf,
-            save_plot(
-                _fig_ecdf,
-                "example session behavioral ECDF by state",
-                stem="example_session_behavior_ecdf_by_state",
-            ),
-        ],
-        align="center",
-    )
-    return
+    for _ax_ecdf, (_metric, _title) in zip(axes_ecdf.ravel(), _metrics):
+        for _state in state_order:
+            _x, _y = ecdf(session_df.loc[session_df["state_label"].astype(str) == _state, _metric])
+            _ax_ecdf.step(_x,_y, where="post", label=f"{_state} (n={len(_x)})", color = state_palette[_state])
 
+        _ax_ecdf.set(title=_title, xlabel=_metric, ylabel="Cumulative probability", ylim=(0, 1))
+        _ax_ecdf.legend(frameon=False, loc="lower right")
 
-@app.cell
-def _(df_all, mo):
-    # ── controls for session-trajectory & occupancy plots ─────────────────────
-    ui_subjects_traj = mo.ui.multiselect(
-        options=sorted(df_all["subject"].unique().to_list(), key=str), label="Subjects (session trajectories & occupancy)", value=""
-    )
-    mo.vstack([mo.md("### Session trajectory & occupancy"), ui_subjects_traj])
+    mo.vstack([
+        mo.md("#### Example session RT/lick cumulative distributions"),
+        mo.hstack([ui_behavior_random_session, ui_behavior_session_subj, ui_behavior_session_id]),
+        fig_ecdf,
+        save_plot(fig_ecdf, "example session behavioral ECDF by state", stem="example_session_behavior_ecdf_by_state"),
+    ], align="center")
     return
 
 
@@ -3334,31 +2099,22 @@ def _(
     fig_size,
     mo,
     model_plots,
-    pl,
+    panel,
     plt,
     selected,
     trial_df,
 ):
     mo.stop(not selected, mo.md("Select subjects above to view session trajectories."))
-    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-    _fig_traj, _ax_traj = plt.subplots(figsize=fig_size(2, 1))
-    _ax_traj = model_plots.session_trajectories(
+    fig_traj, ax_traj = plt.subplots(figsize=fig_size(1, 2))
+    ax_traj = model_plots.session_trajectories(
         build_session_trajectories_payload(
-            _trial_df_sel,
+            trial_df,
             session_col="session",
             sort_col="trial_idx",
         ),
-        ax=_ax_traj,
+        ax=ax_traj,
     )
-    _fig_traj = _ax_traj.figure
-    mo.vstack(
-        [
-            # mo.md(f"### c. Average state-probability trajectories within a session  (K={K})"),
-            # _fig_traj,
-            # mo.md("> Mean ± 1 s.e.m. across sessions for the selected subjects."),
-        ],
-        align="center",
-    )
+    panel("Mean engagement", fig_traj, "mean_engagement")
     return
 
 
@@ -3376,192 +2132,29 @@ def _(
     fig_size,
     mo,
     model_plots,
-    np,
-    pd,
-    pl,
+    panel,
     plt,
-    save_plot,
-    selected,
     trial_df,
 ):
-    mo.stop(not selected, mo.md("Select subjects above."))
-    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-    _occupancy_payload = build_state_occupancy_payload(
-        _trial_df_sel,
-        session_col="session",
-        sort_col="trial_idx",
-    )
-    _fig_occ_overall_summary, _ax_occ_overall_summary = plt.subplots(figsize=fig_size(3,1))
-    ax_occ_overall_summary = model_plots.state_occupancy_overall_summary(
-        _occupancy_payload,
-        ax=_ax_occ_overall_summary,
-    )
-    ax_occ_overall_summary.set_title("")
-    _fig_occ_overall_by_subject = model_plots.state_occupancy_overall_by_subject(_occupancy_payload)
-    _fig_occ_sessions_summary, _ax_occ_sessions_summary = plt.subplots(figsize=fig_size(3,1))
-    ax_occ_sessions_summary = model_plots.state_session_occupancy_summary(
-        _occupancy_payload,
-        ax=_ax_occ_sessions_summary,
-    )
-    ax_occ_sessions_summary.set_title("")
-    _fig_occ_sessions_by_subject = model_plots.state_session_occupancy_by_subject(_occupancy_payload)
-    _fig_switches_summary, _ax_switches_summary = plt.subplots(figsize=fig_size(3,1))
-    ax_switches_summary = model_plots.state_switches_summary(
-        _occupancy_payload,
-        ax=_ax_switches_summary,
-    )
-    ax_switches_summary.set_title("")
-    _fig_occ_switches_by_subject = model_plots.state_switches_by_subject(_occupancy_payload)
-    state_switch_sessions_df = _occupancy_payload["switches_df"]
-    state_switch_sessions_df = (
-        state_switch_sessions_df.to_pandas() if hasattr(state_switch_sessions_df, "to_pandas") else pd.DataFrame(state_switch_sessions_df)
-    )
-    state_switch_sessions_df = state_switch_sessions_df.copy()
-    state_switch_sessions_df["subject"] = state_switch_sessions_df["subject"].astype(str)
-    state_switch_sessions_df["session"] = state_switch_sessions_df["session"].astype(str)
-    state_switch_sessions_df["n_switches"] = pd.to_numeric(
-        state_switch_sessions_df["n_switches"],
-        errors="coerce",
-    )
-    state_switch_sessions_df = state_switch_sessions_df.dropna(subset=["n_switches"]).copy()
-    state_switch_sessions_df["n_switches"] = state_switch_sessions_df["n_switches"].astype(int)
+    occupancy_payload = build_state_occupancy_payload(trial_df, session_col="session", sort_col="trial_idx")
 
-    _switch_counts = (
-        state_switch_sessions_df.groupby("n_switches", as_index=False, observed=True)
-        .size()
-        .rename(columns={"size": "n_sessions"})
-        .sort_values("n_switches")
-    )
-    state_switch_selection_points = []
-    for _row in _switch_counts.itertuples(index=False):
-        for _y in range(int(_row.n_sessions)):
-            for _x in np.linspace(float(_row.n_switches) - 0.45, float(_row.n_switches) + 0.45, 9):
-                state_switch_selection_points.append(
-                    {
-                        "n_switches": int(_row.n_switches),
-                        "x": float(_x),
-                        "y": float(_y) + 0.5,
-                    }
-                )
-    ui_occ_switches_summary = mo.ui.matplotlib(ax_switches_summary, debounce=True)
+    fig_occ_overall, ax_occ_overall = plt.subplots(figsize=fig_size(3, 1))
+    model_plots.state_occupancy_overall_summary(occupancy_payload, ax=ax_occ_overall).set_title("")
+
+    fig_occ_sessions, ax_occ_sessions = plt.subplots(figsize=fig_size(3, 1))
+    model_plots.state_session_occupancy_summary(occupancy_payload, ax=ax_occ_sessions).set_title("")
+
+    fig_switches, ax_switches = plt.subplots(figsize=fig_size(3, 1))
+    model_plots.state_switches_summary(occupancy_payload, ax=ax_switches).set_title("")
+
+
     mo.hstack(
         [
-            mo.vstack(
-                [
-                    mo.vstack(
-                        [
-                            ax_occ_overall_summary.figure,
-                            save_plot(
-                                ax_occ_overall_summary.figure,
-                                "fractional occupancy overall summary",
-                                stem="state_occupancy_overall_summary",
-                            ),
-                        ],
-                        align="center",
-                    ),
-                    #     mo.vstack([
-                    #         _fig_occ_overall_by_subject,
-                    #         save_plot(
-                    #             _fig_occ_overall_by_subject,
-                    #             "fractional occupancy overall by subject",
-                    #             stem="state_occupancy_overall_by_subject",
-                    #             location=(0, 0),
-                    #         ),
-                    #     ], align="center"),
-                ],
-                align="center",
-            ),
-            mo.vstack(
-                [
-                    mo.vstack(
-                        [
-                            ax_occ_sessions_summary.figure,
-                            save_plot(
-                                ax_occ_sessions_summary.figure,
-                                "fractional occupancy by session summary",
-                                stem="state_session_occupancy_summary",
-                            ),
-                        ],
-                        align="center",
-                    ),
-                    # mo.vstack([
-                    #     _fig_occ_sessions_by_subject,
-                    #     save_plot(
-                    #         _fig_occ_sessions_by_subject,
-                    #         "fractional occupancy by session and subject",
-                    #         stem="state_session_occupancy_by_subject",
-                    #         location=(0, 0),
-                    #     ),
-                    # ], align="center"),
-                ],
-                align="center",
-            ),
-            mo.vstack(
-                [
-                    mo.vstack(
-                        [
-                            ax_switches_summary,
-                            save_plot(
-                                ax_switches_summary.figure,
-                                "state switches summary",
-                                stem="state_switches_summary",
-                            ),
-                        ],
-                        align="center",
-                    ),
-                    # mo.vstack([
-                    #     _fig_occ_switches_by_subject,
-                    #     save_plot(
-                    #         _fig_occ_switches_by_subject,
-                    #         "state switches by subject",
-                    #         stem="state_switches_by_subject",
-                    #         location=(0, 0),
-                    #     ),
-                    # ], align="center"),
-                ],
-                align="center",
-            ),
+            panel("Overall occupancy", fig_occ_overall, "state_occupancy_overall_summary", "fractional occupancy overall summary"),
+            panel("Session occupancy", fig_occ_sessions, "state_session_occupancy_summary", "fractional occupancy by session summary"),
+            panel("State switches", ax_switches, "state_switches_summary", "state switches summary"),
         ],
         align="center",
-    )
-    return (
-        state_switch_selection_points,
-        state_switch_sessions_df,
-        ui_occ_switches_summary,
-    )
-
-
-@app.cell
-def _(
-    mo,
-    pd,
-    state_switch_selection_points,
-    state_switch_sessions_df,
-    ui_occ_switches_summary,
-):
-    _points = pd.DataFrame(state_switch_selection_points)
-    if _points.empty or not ui_occ_switches_summary.value:
-        selected_state_switch_counts = []
-    else:
-        _mask = ui_occ_switches_summary.value.get_mask(
-            _points["x"].to_numpy(),
-            _points["y"].to_numpy(),
-        )
-        selected_state_switch_counts = sorted(_points.loc[_mask, "n_switches"].unique().tolist())
-    selected_state_switch_sessions = (
-        state_switch_sessions_df[state_switch_sessions_df["n_switches"].isin(selected_state_switch_counts)]
-        .sort_values(["n_switches", "subject", "session"])
-        .reset_index(drop=True)
-    )
-    mo.vstack(
-        [
-            mo.md(
-                "Selected switch counts: " + (", ".join(map(str, selected_state_switch_counts)) if selected_state_switch_counts else "_none_")
-            ),
-            selected_state_switch_sessions
-            if selected_state_switch_counts
-            else mo.md("Select one or more histogram bars to list matching sessions."),
-        ]
     )
     return
 
@@ -3581,78 +2174,51 @@ def _(
     fig_size,
     mo,
     model_plots,
-    pl,
+    panel,
     plt,
-    save_plot,
     selected,
     trial_df,
 ):
     mo.stop(not selected, mo.md("Select subjects above."))
-    _trial_df_sel = trial_df.filter(pl.col("subject").is_in(selected))
-    _change_payload = build_change_triggered_posteriors_payload(
-        _trial_df_sel,
+
+    change_payload = build_change_triggered_posteriors_payload(
+        trial_df,
         session_col="session",
         sort_col="trial_idx",
         switch_posterior_threshold=THRESH_ui.amount,
     )
-    _change_directions = list(_change_payload.get("directions") or ["into_engaged", "out_of_engaged"])
-    _fig_change_summary_base, _axes_change_summary = plt.subplots(
+
+    fig_change_base, axes_change = plt.subplots(
         1,
-        len(_change_directions),
-        figsize=fig_size(1,3),
-        squeeze=False,
+        len(change_payload.get("directions") or ["into_engaged", "out_of_engaged"]),
+        figsize=fig_size(1, 3),
     )
-    _fig_change_summary = model_plots.change_triggered_posteriors_summary(
-        _change_payload,
-        axes=_axes_change_summary,
-    )
-    _fig_change_by_subject = model_plots.change_triggered_posteriors_by_subject(
-        _change_payload,
-    )
-    def _clear_titles(_plot_obj):
-        if isinstance(_plot_obj, (list, tuple)):
-            for _item in _plot_obj:
-                _clear_titles(_item)
-            return
-        _fig = getattr(_plot_obj, "figure", _plot_obj)
-        for _ax in getattr(_fig, "axes", []):
-            _ax.set_title("")
 
-    def _set_change_legend(_fig):
-        for _ax in _fig.axes:
-            if _ax.legend_ is not None:
-                _ax.legend_.remove()
-        _fig.legend(
-            handles=[
-                plt.Line2D([0], [0], color="tab:green", lw=2.2, label="Engaged"),
-                plt.Line2D([0], [0], color="tab:gray", lw=2.0, label="Disengaged"),
-            ],
-            loc="upper center",
-            bbox_to_anchor=(0.5, 0.98),
-            ncol=2,
-            frameon=False,
-            fontsize=8,
-        )
-        _fig.subplots_adjust(top=0.86)
+    fig_change = model_plots.change_triggered_posteriors_summary(change_payload, axes=axes_change)
 
-    for _plot_obj in (_fig_change_summary, _fig_change_by_subject):
-        _clear_titles(_plot_obj)
-    _set_change_legend(_fig_change_summary[0].figure)
+    for ax_change in fig_change[0].figure.axes:
+        ax_change.set_title("")
+        if ax_change.legend_:
+            ax_change.legend_.remove()
+
+    fig_change[0].figure.legend(
+        handles=[
+            plt.Line2D([0], [0], color="tab:green", lw=2, label="Engaged"),
+            plt.Line2D([0], [0], color="tab:gray", lw=2, label="Disengaged"),
+        ],
+        loc="upper center",
+        ncol=2,
+        frameon=False,
+    )
+
     mo.vstack(
         [
-            mo.md(f"> Change events use the same confident MAP switch rule as the histogram above: posterior ≥ {THRESH_ui}. "),
-            _fig_change_summary[0],
-            save_plot(
-                _fig_change_summary[0].figure,
-                "change-triggered posteriors summary",
-                stem="change_triggered_posteriors_summary",
+            mo.md(f"> Change events use the same confident MAP switch rule as the histogram above: posterior ≥ {THRESH_ui.amount}."),
+            panel(
+                "Change-triggered posteriors",
+                fig_change[0].figure,
+                "change_triggered_posteriors_summary",
             ),
-            # _fig_change_by_subject,
-            # save_plot(
-            #     _fig_change_by_subject,
-            #     "change-triggered posteriors by subject",
-            #     stem="change_triggered_posteriors_by_subject",
-            # ),
         ],
         align="center",
     )
@@ -3699,7 +2265,7 @@ def _(mo, pl, trial_df, ui_session_subj, views):
         inline=False,
         label="P(engaged) trace",
     )
-    return ui_engaged_trace_mode, ui_engaged_window, ui_session_id
+    return ui_engaged_trace_mode, ui_engaged_window
 
 
 @app.cell(hide_code=True)
@@ -3716,26 +2282,25 @@ def _(
     build_session_deepdive_payload,
     mo,
     model_plots,
+    panel,
     put_figure_legend_at_bottom,
-    save_plot,
     trial_df,
+    ui_behavior_random_session,
+    ui_behavior_session_id,
+    ui_behavior_session_subj,
     ui_engaged_trace_mode,
     ui_engaged_window,
-    ui_session_id,
-    ui_session_subj,
     views,
 ):
-    _subj = ui_session_subj.value
-    mo.stop(
-        _subj not in views,
-        mo.md("No fitted arrays for this subject — run the fit first."),
-    )
+    subject = ui_behavior_session_subj.value
+    session = int(ui_behavior_session_id.value) if str(ui_behavior_session_id.value).isdigit() else ui_behavior_session_id.value
 
-    _sess = int(ui_session_id.value) if str(ui_session_id.value).isdigit() else ui_session_id.value
-    _deepdive_payload = build_session_deepdive_payload(
+    mo.stop(subject not in views, mo.md("No fitted arrays for this subject — run the fit first."))
+
+    deepdive_payload = build_session_deepdive_payload(
         trial_df,
-        subject=_subj,
-        session=_sess,
+        subject=subject,
+        session=session,
         session_col="session",
         sort_col="trial",
         engaged_window=ui_engaged_window.value,
@@ -3744,882 +2309,27 @@ def _(
         num_classes=adapter.num_classes,
         views=views,
     )
-    _fig = model_plots.session_deepdive(_deepdive_payload)
-    _fig_traces = model_plots.session_deepdive_state_traces(_deepdive_payload)
-    put_figure_legend_at_bottom(_fig, bottom=0.18)
-    put_figure_legend_at_bottom(_fig_traces, bottom=0.28)
-    mo.vstack(
-        [
-            mo.hstack([ui_session_subj, ui_session_id, ui_engaged_window, ui_engaged_trace_mode], align="center"),
-            _fig,
-            _fig_traces,
-            save_plot(
-                _fig,
-                "session statistics",
-                stem=f"session_stats_{_subj}_{_sess}",
-            ),
-            save_plot(
-                _fig_traces,
-                "session state traces",
-                stem=f"session_state_traces_{_subj}_{_sess}",
-            ),
-        ],
-        align="center",
-    )
-    return
 
+    fig_deepdive = model_plots.session_deepdive(deepdive_payload)
+    fig_traces = model_plots.session_deepdive_state_traces(deepdive_payload)
 
-@app.cell
-def _(pl, trial_df):
-    trial_df.filter(pl.col("subject") == "E10", pl.col("session") == 32)["drug"].unique()
-    return
-
-
-@app.cell
-def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
-    # ── τ sweep analysis ────────────────────────────────────────────────────────
-    # Loads results produced by:
-    #   uv run glmhmmt-fit-tau-sweep --model glmhmm --K <K>
-    # Expects: RESULTS/fits/tau_sweep/glmhmm_K<K>/tau_sweep_summary.parquet
-
-    _sweep_path = paths.RESULTS / "fits" / "tau_sweep" / f"glmhmm_K{K}" / "tau_sweep_summary.parquet"
-    mo.stop(
-        not _sweep_path.exists(),
-        mo.md(
-            f"**τ sweep results not found.**  \
-     Run the sweep first:\n```\n"
-            f"uv run glmhmmt-fit-tau-sweep --model glmhmm --K {K}\n```"
-        ),
-    )
-
-    _df_sweep = pl.read_parquet(_sweep_path)
-    _subjects = [s for s in model_cfg.subjects if s in _df_sweep["subject"].unique().to_list()]
-    mo.stop(not _subjects, mo.md("No sweep data for selected subjects."))
-
-    # ── BIC vs τ plot ────────────────────────────────────────────────────
-    _fig_sweep, _axes_sw = plt.subplots(1, 2, figsize=(12, 4))
-    _ax_bic, _ax_ll = _axes_sw
-    _palette = sns.color_palette("tab10", n_colors=len(_subjects))
-    n_trials = df_all.group_by("subject").agg(pl.len().alias("n_trials"))
-
-    for _i, _subj in enumerate(_subjects):
-        _d = _df_sweep.filter((pl.col("subject") == _subj) & (pl.col("K") == K)).sort("tau")
-        _tau = _d["tau"].to_numpy()
-        _bic = _d["bic"].to_numpy()
-        _ll = _d["ll_per_trial"].to_numpy()
-        _c = _palette[_i]
-        _ax_bic.plot(_tau, _bic, "-o", ms=3, color=_c, label=_subj)
-        _ax_ll.plot(_tau, _ll, "-o", ms=3, color=_c, label=_subj)
-        # mark best τ
-        _best_idx = int(np.argmin(_bic))
-        _ax_bic.axvline(_tau[_best_idx], color=_c, lw=0.8, linestyle="--", alpha=0.6)
-    4
-    for _ax, _ylabel, _title in [
-        (_ax_bic, "BIC", "BIC vs τ  (lower is better)"),
-        (_ax_ll, "LL / trial", "Log-likelihood per trial vs τ"),
-    ]:
-        _ax.set_xlabel("τ (action-trace half-life)")
-        _ax.set_ylabel(_ylabel)
-        _ax.set_title(_title)
-        _ax.legend(fontsize=8, frameon=False)
-        sns.despine(ax=_ax)
-
-    _fig_sweep.tight_layout()
-
-    # ── best τ table ────────────────────────────────────────────────────────
-    _best = (
-        _df_sweep.filter(pl.col("subject").is_in(_subjects) & (pl.col("K") == K))
-        .sort("bic")
-        .group_by(["subject", "K"])
-        .first()
-        .select(["subject", "K", "tau", "bic", "ll_per_trial", "acc"])
-        .sort(["subject", "K"])
-    )
-
-    _best_all = (
-        _df_sweep.filter(pl.col("subject").is_in(_subjects) & (pl.col("K") == K))
-        .join(n_trials, on="subject", how="left")
-        .group_by("tau")
-        .agg(
-            [
-                (pl.col("bic") * pl.col("n_trials")).sum().alias("bic_wsum"),
-                (pl.col("ll_per_trial") * pl.col("n_trials")).sum().alias("llpt_wsum"),
-                (pl.col("acc") * pl.col("n_trials")).sum().alias("acc_wsum"),
-                pl.col("n_trials").sum().alias("n_total"),
-                pl.n_unique("subject").alias("n_subjects"),
-            ]
-        )
-        .with_columns(
-            [
-                (pl.col("bic_wsum") / pl.col("n_total")).alias("bic_mean_w"),
-                (pl.col("llpt_wsum") / pl.col("n_total")).alias("ll_per_trial_mean_w"),
-                (pl.col("acc_wsum") / pl.col("n_total")).alias("acc_mean_w"),
-            ]
-        )
-        .select(
-            [
-                "tau",
-                "bic_mean_w",
-                "ll_per_trial_mean_w",
-                "acc_mean_w",
-                "n_subjects",
-                "n_total",
-            ]
-        )
-        .sort("bic_mean_w")
-    )
+    put_figure_legend_at_bottom(fig_deepdive, bottom=0.18)
+    put_figure_legend_at_bottom(fig_traces, bottom=0.28)
 
     mo.vstack(
         [
-            mo.md(f"### τ sweep results — glmhmm K={K}"),
-            _fig_sweep,
-            save_plot(
-                _fig_sweep,
-                "tau sweep results",
-                stem=f"tau_sweep_glmhmm_k{K}",
+            mo.hstack(
+                [
+                    ui_behavior_random_session,
+                    ui_behavior_session_subj,
+                    ui_behavior_session_id,
+                    ui_engaged_window,
+                    ui_engaged_trace_mode,
+                ],
+                align="center",
             ),
-            mo.md("**Best τ per subject (min BIC):**"),
-            mo.plain_text(_best.to_pandas().to_string(index=False)),
-            mo.ui.dataframe(_best_all),
-        ],
-        align="center",
-    )
-    return
-
-
-@app.cell
-def _(mo, task_name):
-    # ── SSM GLM-HMM safety check (2AFC only) ──────────────────────────────────
-    mo.stop(
-        task_name != "2AFC_DRUG",
-        mo.md("ℹ️ **SSM safety check is only available for the 2AFC task.** Switch task to 2AFC above."),
-    )
-    ssm_run_btn = mo.ui.run_button(label="▶ Run SSM safety check")
-    mo.vstack(
-        [
-            mo.md("### SSM GLM-HMM safety check (2AFC)"),
-            mo.md(
-                "Fits a K-state GLM-HMM using the **SSM library** (`input_driven_obs`, `standard` "
-                "transitions) with the exact same covariates as the custom model.  \n"
-            ),
-            ssm_run_btn,
-        ]
-    )
-    return (ssm_run_btn,)
-
-
-@app.cell
-def _(
-    K,
-    adapter,
-    build_trial_df,
-    build_views,
-    df_all,
-    mo,
-    model_cfg,
-    np,
-    paths,
-    pl,
-    plots,
-    prepare_predictions_df,
-    selected_model_id,
-    ssm_run_btn,
-    task_name,
-    trial_df,
-    views,
-):
-    # ── SSM fit + comparison tables ────────────────────────────────────────────
-    mo.stop(not ssm_run_btn.value, mo.md("Press **▶ Run SSM safety check** above to fit."))
-    try:
-        import ssm as ssm_lib
-    except Exception as exc:
-        mo.stop(
-            True,
-            mo.md(
-                "SSM could not be imported in the current environment, so the SSM vs custom log-likelihood comparison cannot run. "
-                f"Import error: `{type(exc).__name__}: {exc}`. "
-                "In this project, that usually means `ssm` is installed but incompatible with the currently resolved "
-                "`autograd`/`numpy` versions, not that `uv` is using the wrong environment."
-            ),
-        )
-    from glmhmmt.cli.fit_common import valid_trial_mask
-
-    ssm_subjects = [subject for subject in model_cfg.subjects if subject in views]
-    mo.stop(not ssm_subjects, mo.md("No fitted arrays found — run the custom fit first."))
-
-    ssm_arrays = {}
-    cmp_rows = []
-    missing_metric_subjects = []
-    out_dir = paths.RESULTS / "fits" / task_name / "glmhmm" / selected_model_id
-
-
-    def load_custom_metrics(subject: str, n_trials: int):
-        candidates = [
-            out_dir / f"{subject}_K{K}_glmhmm_metrics.parquet",
-            out_dir / f"{subject}_glmhmm_metrics.parquet",
-            *sorted(out_dir.glob(f"{subject}*_glmhmm_metrics.parquet")),
-        ]
-        for path in dict.fromkeys(candidates):
-            if not path.exists():
-                continue
-            metrics_df = pl.read_parquet(path)
-            if metrics_df.height == 0:
-                continue
-            row = metrics_df.row(0, named=True)
-            raw_ll = row.get("raw_ll")
-            ll_per_trial = row.get("ll_per_trial")
-            if raw_ll is None and ll_per_trial is not None:
-                raw_ll = float(ll_per_trial) * n_trials
-            if ll_per_trial is None and raw_ll is not None:
-                ll_per_trial = float(raw_ll) / max(n_trials, 1)
-            if raw_ll is None or ll_per_trial is None:
-                continue
-            return float(raw_ll), float(ll_per_trial), path.name
-        return np.nan, np.nan, None
-
-
-    def ssm_data_loglik(model, choices_list, inputs_list):
-        if hasattr(model, "log_likelihood"):
-            return float(model.log_likelihood(choices_list, inputs=inputs_list)), "log_likelihood"
-        if hasattr(model, "log_probability"):
-            return float(model.log_probability(choices_list, inputs=inputs_list)), "log_probability"
-        raise AttributeError("SSM HMM object exposes neither log_likelihood nor log_probability.")
-
-
-    def stable_softmax_np(logits: np.ndarray) -> np.ndarray:
-        shifted_logits = logits - np.max(logits, axis=-1, keepdims=True)
-        exp_logits = np.exp(shifted_logits)
-        return exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
-
-
-    with mo.status.spinner(title="Fitting SSM GLM-HMM…"):
-        for _subject in ssm_subjects:
-            view = views[_subject]
-            X = np.asarray(view.X)  # (T, n_feat) — already session-filtered
-            y = np.asarray(view.y)  # (T,)
-
-            # Reconstruct session ids with same mask as fit_subject()
-            subject_df = df_all.filter(pl.col("subject") == _subject).sort(adapter.sort_col)
-            session_ids_raw = subject_df[adapter.session_col].to_numpy()
-            valid_mask = valid_trial_mask(session_ids_raw)
-            session_ids = session_ids_raw[valid_mask]
-
-            # Split into per-session lists — SSM expects list of arrays
-            unique_sessions = list(dict.fromkeys(session_ids.tolist()))
-            choices_list, inputs_list = [], []
-            for session_id in unique_sessions:
-                idx = np.where(session_ids == session_id)[0]
-                choices_list.append(y[idx].reshape(-1, 1).astype(int))
-                inputs_list.append(X[idx].astype(float))
-
-            # Initialise and fit
-            obs_dim = 1
-            n_cats = 2
-            n_feat = X.shape[1]
-            glmhmm_ssm = ssm_lib.HMM(
-                K,
-                obs_dim,
-                n_feat,
-                observations="input_driven_obs",
-                observation_kwargs=dict(C=n_cats),
-                transitions="standard",
-            )
-            glmhmm_ssm.fit(
-                choices_list,
-                inputs=inputs_list,
-                method="em",
-                num_iters=200,
-                tolerance=1e-4,
-            )
-
-            W_ssm = glmhmm_ssm.observations.params  # (K, C-1, n_feat); flip sign
-            transition_matrix_ssm = glmhmm_ssm.transitions.transition_matrix  # (K, K)
-            smoothed_probs_ssm = np.vstack(
-                [glmhmm_ssm.expected_states(data=data, input=inp)[0] for data, inp in zip(choices_list, inputs_list)]
-            )
-            initial_state_distn_ssm = np.asarray(glmhmm_ssm.init_state_distn.initial_state_distn, dtype=float)
-            p_pred_ssm_parts = []
-            for data, inp in zip(choices_list, inputs_list):
-                filtered_probs = np.asarray(glmhmm_ssm.filter(data=data, input=inp), dtype=float)  # (T_s, K)
-                n_trials_session = int(inp.shape[0])
-                pred_z_session = (
-                    np.vstack(
-                        [
-                            initial_state_distn_ssm[None, :],
-                            filtered_probs[:-1] @ transition_matrix_ssm,
-                        ]
-                    )
-                    if n_trials_session > 1
-                    else initial_state_distn_ssm[None, :]
-                )
-                logits_ce_session = np.einsum("kcf,tf->tkc", W_ssm, np.asarray(inp, dtype=float))
-                logits_session = np.concatenate(
-                    [
-                        logits_ce_session,
-                        np.zeros((n_trials_session, K, 1), dtype=float),
-                    ],
-                    axis=-1,
-                )
-                p_y_given_z_session = stable_softmax_np(logits_session)  # (T_s, K, C)
-                p_pred_ssm_parts.append(np.einsum("tk,tkc->tc", pred_z_session, p_y_given_z_session))
-            p_pred_ssm = np.concatenate(p_pred_ssm_parts, axis=0)
-            ssm_raw_ll, ssm_ll_source = ssm_data_loglik(glmhmm_ssm, choices_list, inputs_list)
-            _n_trials = int(y.shape[0])
-            ssm_ll_per_trial = ssm_raw_ll / max(_n_trials, 1)
-            custom_raw_ll, custom_ll_per_trial, metric_file = load_custom_metrics(_subject, _n_trials)
-            if metric_file is None:
-                missing_metric_subjects.append(_subject)
-
-            cmp_rows.append(
-                {
-                    "subject": _subject,
-                    "n_trials": _n_trials,
-                    "custom_raw_ll": custom_raw_ll,
-                    "ssm_raw_ll": ssm_raw_ll,
-                    "delta_raw_ll_ssm_minus_custom": ssm_raw_ll - custom_raw_ll,
-                    "custom_ll_per_trial": custom_ll_per_trial,
-                    "ssm_ll_per_trial": ssm_ll_per_trial,
-                    "delta_ll_per_trial_ssm_minus_custom": ssm_ll_per_trial - custom_ll_per_trial,
-                    "custom_metrics_file": metric_file,
-                    "ssm_ll_source": ssm_ll_source,
-                }
-            )
-
-            ssm_arrays[_subject] = {
-                "smoothed_probs": smoothed_probs_ssm,
-                "emission_weights": W_ssm,
-                "transition_matrix": transition_matrix_ssm,
-                "X": X,
-                "y": y,
-                "X_cols": np.array(list(view.feat_names), dtype=object),
-                "p_pred": p_pred_ssm,
-            }
-
-    ssm_views = build_views(ssm_arrays, adapter, K, ssm_subjects)
-    views_sel = {subject: views[subject] for subject in ssm_subjects}
-    ssm_views_sel = {subject: ssm_views[subject] for subject in ssm_subjects}
-    trial_df_custom_sel = trial_df.filter(pl.col("subject").is_in(ssm_subjects))
-    sort_col = adapter.sort_col
-    session_col = adapter.session_col
-    behavioral_cols = adapter.behavioral_cols
-    trial_frames_ssm = []
-    for _subject, view in ssm_views_sel.items():
-        subject_df = df_all.filter(pl.col("subject") == _subject).sort(sort_col).filter(pl.col(session_col).count().over(session_col) >= 2)
-        if subject_df.height != view.T:
-            continue
-        trial_frames_ssm.append(build_trial_df(view, adapter, subject_df, behavioral_cols))
-    trial_df_ssm = pl.concat(trial_frames_ssm) if trial_frames_ssm else pl.DataFrame()
-
-    ssm_psych_fig_custom = None
-    ssm_psych_fig_ssm = None
-    if trial_df_custom_sel.height > 0 and trial_df_ssm.height > 0:
-        plot_df_custom = prepare_predictions_df(task_name, trial_df_custom_sel)
-        ssm_psych_fig_custom, _ = plots.plot_categorical_performance_all(
-            plot_df_custom,
-            f"Dynamax glmhmm K={K}",
-            views=views_sel,
-        )
-        for _ax_idx, _ax in enumerate(ssm_psych_fig_custom.axes):
-            _ax.set_title("")
-            _ax.set_ylabel(r"$\mathit{p}(\mathrm{right})$" if _ax_idx == 0 else "")
-        if ssm_psych_fig_custom._suptitle is not None:
-            ssm_psych_fig_custom._suptitle.set_text("")
-        ssm_psych_fig_custom.tight_layout()
-        plot_df_ssm = prepare_predictions_df(task_name, trial_df_ssm)
-        ssm_psych_fig_ssm, _ = plots.plot_categorical_performance_all(
-            plot_df_ssm,
-            f"SSM glmhmm K={K}",
-            views=ssm_views_sel,
-        )
-        for _ax_idx, _ax in enumerate(ssm_psych_fig_ssm.axes):
-            _ax.set_title("")
-            _ax.set_ylabel(r"$\mathit{p}(\mathrm{right})$" if _ax_idx == 0 else "")
-        if ssm_psych_fig_ssm._suptitle is not None:
-            ssm_psych_fig_ssm._suptitle.set_text("")
-        ssm_psych_fig_ssm.tight_layout()
-
-    ssm_cmp_df = pl.DataFrame(cmp_rows)
-    contrast_labels = list(adapter.choice_labels[:-1]) or ["contrast_0"]
-    coef_rows = []
-    for _subject in ssm_subjects:
-        custom_view = views[_subject]
-        _ssm_view = ssm_views[_subject]
-        custom_feat_names = list(custom_view.feat_names)
-        ssm_feat_names = list(_ssm_view.feat_names)
-        feat_names = (
-            custom_feat_names
-            if custom_feat_names == ssm_feat_names
-            else [
-                custom_feat_names[i] if i < len(custom_feat_names) else ssm_feat_names[i]
-                for i in range(min(len(custom_feat_names), len(ssm_feat_names)))
-            ]
-        )
-
-        for state_rank, (custom_k, ssm_k) in enumerate(zip(custom_view.state_idx_order, _ssm_view.state_idx_order, strict=False)):
-            custom_label = custom_view.state_name_by_idx.get(int(custom_k), f"State {custom_k}")
-            ssm_label = _ssm_view.state_name_by_idx.get(int(ssm_k), f"State {ssm_k}")
-            state_label = custom_label if custom_label == ssm_label else f"{custom_label} | {ssm_label}"
-            custom_w = np.asarray(custom_view.emission_weights[int(custom_k)], dtype=float)
-            ssm_w = np.asarray(_ssm_view.emission_weights[int(ssm_k)], dtype=float)
-            n_contrasts = min(custom_w.shape[0], ssm_w.shape[0], len(contrast_labels))
-            n_features = min(custom_w.shape[1], ssm_w.shape[1], len(feat_names))
-
-            for contrast_idx in range(n_contrasts):
-                for feature_idx in range(n_features):
-                    custom_coef = float(custom_w[contrast_idx, feature_idx])
-                    ssm_coef = -float(ssm_w[contrast_idx, feature_idx])
-                    coef_rows.append(
-                        {
-                            "subject": _subject,
-                            "state_rank": int(state_rank),
-                            "state_label": state_label,
-                            "custom_state_idx": int(custom_k),
-                            "ssm_state_idx": int(ssm_k),
-                            "contrast": contrast_labels[contrast_idx],
-                            "feature": feat_names[feature_idx],
-                            "dynamax_coef": custom_coef,
-                            "ssm_coef": ssm_coef,
-                            "delta_ssm_minus_dynamax": abs(ssm_coef + custom_coef),
-                        }
-                    )
-
-    ssm_coef_df = (
-        pl.DataFrame(coef_rows)
-        if coef_rows
-        else pl.DataFrame(
-            schema={
-                "subject": pl.Utf8,
-                "state_rank": pl.Int64,
-                "state_label": pl.Utf8,
-                "custom_state_idx": pl.Int64,
-                "ssm_state_idx": pl.Int64,
-                "contrast": pl.Utf8,
-                "feature": pl.Utf8,
-                "dynamax_coef": pl.Float64,
-                "ssm_coef": pl.Float64,
-                "delta_ssm_minus_dynamax": pl.Float64,
-            }
-        )
-    )
-    ssm_coef_df = ssm_coef_df.sort(["subject", "state_rank", "contrast", "feature"])
-    ssm_coef_display = ssm_coef_df.select(
-        [
-            "subject",
-            "state_rank",
-            "state_label",
-            "custom_state_idx",
-            "ssm_state_idx",
-            "contrast",
-            "feature",
-            "dynamax_coef",
-            "ssm_coef",
-            "delta_ssm_minus_dynamax",
-        ]
-    )
-
-    cmp_valid = ssm_cmp_df.filter(pl.col("custom_raw_ll").is_finite())
-    if cmp_valid.height > 0:
-        custom_total_raw = float(cmp_valid["custom_raw_ll"].sum())
-        ssm_total_raw = float(cmp_valid["ssm_raw_ll"].sum())
-        total_trials = int(cmp_valid["n_trials"].sum())
-        ssm_summary_md = "\n".join(
-            [
-                "### Log-likelihood comparison",
-                "",
-                f"- Compared on **{cmp_valid.height} subject(s)** and **{total_trials} trials**.",
-                f"- **Custom / Dynamax total raw LL:** `{custom_total_raw:.3f}`",
-                f"- **SSM total raw LL:** `{ssm_total_raw:.3f}`",
-                f"- **Δ raw LL (SSM - custom):** `{ssm_total_raw - custom_total_raw:.3f}`",
-                f"- **Custom / Dynamax LL per trial:** `{custom_total_raw / max(total_trials, 1):.6f}`",
-                f"- **SSM LL per trial:** `{ssm_total_raw / max(total_trials, 1):.6f}`",
-                f"- **Δ LL per trial (SSM - custom):** `{(ssm_total_raw - custom_total_raw) / max(total_trials, 1):.6f}`",
-            ]
-        )
-    else:
-        ssm_summary_md = (
-            "### Log-likelihood comparison\n\n"
-            "No matching saved custom metrics were found for the selected fit, so only the "
-            "SSM posterior overlay is shown below."
-        )
-
-    notes = []
-    if missing_metric_subjects:
-        notes.append("Missing custom metrics for: " + ", ".join(sorted(dict.fromkeys(missing_metric_subjects))))
-    ssm_sources = sorted(dict.fromkeys(ssm_cmp_df["ssm_ll_source"].to_list())) if ssm_cmp_df.height > 0 else []
-    if ssm_sources and ssm_sources != ["log_likelihood"]:
-        notes.append("SSM LL used fallback method(s): " + ", ".join(ssm_sources))
-    ssm_notes_md = (
-        "  \n".join(f"- {note}" for note in notes)
-        if notes
-        else "- `raw_ll` is the data log-likelihood from the saved custom fit metrics.  \n"
-        "- `delta` columns are defined as **SSM - custom / Dynamax**."
-    )
-    ssm_notes_md += (
-        "  \n- Emission coefficients are compared after each model's states are reordered by the notebook's "
-        "semantic state labelling (`state_idx_order`), not by raw fitted state index."
-    )
-
-    mo.vstack(
-        [
-            mo.md("### SSM GLM-HMM fit summary"),
-            mo.md(ssm_summary_md),
-            mo.md(ssm_notes_md),
-            mo.ui.dataframe(ssm_cmp_df),
-            mo.md("### Emission coefficients — SSM vs Dynamax"),
-            mo.md(
-                "Each row below is one fitted emission coefficient for one subject, aligned by the notebook's "
-                "state order. `delta_ssm_minus_dynamax > 0` means the SSM coefficient is larger."
-            ),
-            mo.ui.dataframe(ssm_coef_display),
-        ],
-        align="center",
-    )
-    return (
-        cmp_valid,
-        ssm_coef_df,
-        ssm_psych_fig_custom,
-        ssm_psych_fig_ssm,
-        ssm_subjects,
-        ssm_views,
-    )
-
-
-@app.cell
-def _(
-    K,
-    adapter,
-    cmp_valid,
-    np,
-    paper_boxplot,
-    plt,
-    sns,
-    ssm_coef_df,
-    ssm_subjects,
-    ssm_views,
-    ui_trial_range,
-    views,
-):
-    def choice_meta(num_classes: int):
-        if num_classes == 2:
-            return {0: "royalblue", 1: "tomato"}
-        return {0: "royalblue", 1: "gold", 2: "tomato"}
-
-
-    def choice_short_labels(labels):
-        return {int(i): str(label)[0].upper() for i, label in enumerate(labels)}
-
-
-    def posterior_color(rank: int):
-        palette = ["tab:green", "tab:grey", *sns.color_palette("tab10", n_colors=max(0, K - 2))]
-        if rank < len(palette):
-            return palette[rank]
-        return sns.color_palette("tab10", n_colors=K)[rank % K]
-
-
-    def plot_view_posterior(
-        ax,
-        view,
-        title: str,
-        t0_plot: int,
-        t1_plot: int,
-        overlay_line=None,
-        overlay_label: str | None = None,
-    ):
-        probs = np.asarray(view.smoothed_probs)[t0_plot : t1_plot + 1]
-        y_window = np.asarray(view.y).astype(int)[t0_plot : t1_plot + 1]
-        n_trials_window = probs.shape[0]
-        x_window = np.arange(t0_plot, t0_plot + n_trials_window)
-        bottom = np.zeros(n_trials_window)
-
-        for state_idx in list(view.state_idx_order):
-            rank = view.state_rank_by_idx.get(int(state_idx), int(state_idx))
-            color = posterior_color(rank)
-            ax.fill_between(
-                x_window,
-                bottom,
-                bottom + probs[:, state_idx],
-                alpha=0.7,
-                color=color,
-                label=view.state_name_by_idx.get(state_idx, f"State {state_idx}"),
-            )
-            bottom += probs[:, state_idx]
-
-        engaged_state = view.engaged_k()
-        engaged_label = view.state_name_by_idx.get(engaged_state, f"State {engaged_state}")
-        ax.plot(
-            x_window,
-            probs[:, engaged_state],
-            color="black",
-            lw=1.4,
-            alpha=0.95,
-            label=f"P({engaged_label})",
-        )
-        if overlay_line is not None:
-            ax.plot(
-                x_window,
-                np.asarray(overlay_line)[:n_trials_window],
-                color="darkorange",
-                lw=2,
-                alpha=0.95,
-                linestyle="--",
-                label=overlay_label or "Overlay",
-            )
-
-        choice_colors = choice_meta(view.num_classes)
-        choice_labels = choice_short_labels(adapter.choice_labels)
-        for response, color in choice_colors.items():
-            mask = y_window == response
-            if not np.any(mask):
-                continue
-            ax.scatter(
-                x_window[mask],
-                np.ones(mask.sum()) * 1.03,
-                c=color,
-                s=4,
-                marker="|",
-                label=choice_labels.get(response, str(response)),
-                transform=ax.get_xaxis_transform(),
-                clip_on=False,
-            )
-
-        ax.set_xlim(t0_plot, t0_plot + n_trials_window - 1)
-        ax.set_ylim(0, 1)
-        ax.set_ylabel("State probability")
-        ax.set_title(title)
-        ax.legend(
-            bbox_to_anchor=(1.01, 1),
-            loc="upper left",
-            fontsize=8,
-            ncol=1,
-            frameon=False,
-        )
-
-
-    ssm_ll_fig = None
-    if cmp_valid.height > 0:
-        import plotly.graph_objects as go
-
-        cmp_pd = cmp_valid.select(["subject", "custom_ll_per_trial", "ssm_ll_per_trial"]).to_pandas()
-        ssm_ll_fig = go.Figure()
-
-        for row in cmp_pd.itertuples(index=False):
-            ssm_ll_fig.add_trace(
-                go.Scatter(
-                    x=["Dynamax", "SSM"],
-                    y=[row.custom_ll_per_trial, row.ssm_ll_per_trial],
-                    mode="lines+markers",
-                    line=dict(color="rgba(120, 120, 120, 0.22)", width=1.2),
-                    marker=dict(color="rgba(0, 0, 0, 0.65)", size=7),
-                    customdata=[row.subject, row.subject],
-                    hovertemplate="Subject: %{customdata}<br>Model: %{x}<br>LL/trial: %{y:.6f}<extra></extra>",
-                    showlegend=False,
-                )
-            )
-
-        ssm_ll_fig.add_trace(
-            go.Box(
-                x=["Dynamax"] * len(cmp_pd),
-                y=cmp_pd["custom_ll_per_trial"],
-                name="Dynamax",
-                marker_color="rgba(180, 180, 180, 0.9)",
-                fillcolor="rgba(217, 217, 217, 0.6)",
-                line=dict(color="rgba(90, 90, 90, 0.9)"),
-                boxpoints=False,
-                showlegend=False,
-                hoverinfo="skip",
-            )
-        )
-        ssm_ll_fig.add_trace(
-            go.Box(
-                x=["SSM"] * len(cmp_pd),
-                y=cmp_pd["ssm_ll_per_trial"],
-                name="SSM",
-                marker_color="rgba(180, 180, 180, 0.9)",
-                fillcolor="rgba(217, 217, 217, 0.6)",
-                line=dict(color="rgba(90, 90, 90, 0.9)"),
-                boxpoints=False,
-                showlegend=False,
-                hoverinfo="skip",
-            )
-        )
-
-        ssm_ll_fig.update_layout(
-            title="Per-subject LL comparison",
-            xaxis_title=None,
-            yaxis_title="Log-likelihood per trial",
-            template="simple_white",
-            width=560,
-            height=420,
-            margin=dict(l=60, r=20, t=60, b=50),
-        )
-        ssm_ll_fig.update_yaxes(zeroline=False)
-        ssm_ll_fig.update_xaxes(categoryorder="array", categoryarray=["Dynamax", "SSM"])
-
-    ssm_coef_fig = None
-    if ssm_coef_df.height > 0:
-        coef_pd = ssm_coef_df.to_pandas()
-        panel_keys = (
-            coef_pd[["state_rank", "state_label", "contrast"]].drop_duplicates().sort_values(["state_rank", "contrast"]).to_dict("records")
-        )
-        n_panels = len(panel_keys)
-        n_cols = 1 if n_panels == 1 else min(2, n_panels)
-        n_rows = int(np.ceil(n_panels / n_cols))
-        ssm_coef_fig, coef_axes = plt.subplots(
-            n_rows,
-            n_cols,
-            figsize=(max(8, 5.5 * n_cols), max(3.6, 3.6 * n_rows)),
-            squeeze=False,
-            sharey=True,
-        )
-        axes_flat = coef_axes.ravel()
-        for _ax, key in zip(axes_flat, panel_keys, strict=False):
-            mask = (
-                (coef_pd["state_rank"] == key["state_rank"])
-                & (coef_pd["state_label"] == key["state_label"])
-                & (coef_pd["contrast"] == key["contrast"])
-            )
-            panel_df = coef_pd.loc[mask].copy()
-            paper_boxplot(
-                data=panel_df,
-                x="feature",
-                y="delta_ssm_minus_dynamax",
-                ax=_ax,
-                color="#D9D9D9",
-                boxprops={"color": "gray", "alpha": 0.8},
-            )
-            sns.stripplot(
-                data=panel_df,
-                x="feature",
-                y="delta_ssm_minus_dynamax",
-                ax=_ax,
-                color="black",
-                alpha=0.7,
-                size=4,
-                jitter=0.22,
-            )
-            _ax.axhline(0, color="black", lw=0.9, ls="--", alpha=0.7)
-            _ax.set_title(f"{key['state_label']}  ({key['contrast']})")
-            _ax.set_xlabel("")
-            _ax.set_ylabel("SSM - Dynamax coefficient")
-            _ax.tick_params(axis="x", rotation=35)
-            _ax.set_yscale("log")
-            sns.despine(ax=_ax)
-        for _ax in axes_flat[n_panels:]:
-            _ax.set_visible(False)
-        ssm_coef_fig.tight_layout()
-
-    t0_ssm, t1_ssm = ui_trial_range.value
-    n_subjects = len(ssm_subjects)
-    ssm_posterior_fig, axes_ssm = plt.subplots(n_subjects, 1, figsize=(14, 3.4 * n_subjects), squeeze=False)
-
-    for i, subject in enumerate(ssm_subjects):
-        ssm_view = ssm_views[subject]
-        ssm_engaged_probs = np.asarray(ssm_view.smoothed_probs)[t0_ssm : t1_ssm + 1, ssm_view.engaged_k()]
-        plot_view_posterior(
-            axes_ssm[i, 0],
-            views[subject],
-            f"Subject {subject} — Custom posterior + SSM line",
-            t0_ssm,
-            t1_ssm,
-            overlay_line=ssm_engaged_probs,
-            overlay_label="SSM P(Engaged)",
-        )
-
-    axes_ssm[-1, 0].set_xlabel("Trial")
-    ssm_posterior_fig.tight_layout()
-    ssm_posterior_fig.subplots_adjust(right=0.84)
-    sns.despine(fig=ssm_posterior_fig)
-    return ssm_coef_fig, ssm_ll_fig, ssm_posterior_fig
-
-
-@app.cell
-def _(mo, save_plot, ssm_posterior_fig):
-    mo.vstack(
-        [
-            ssm_posterior_fig,
-            save_plot(
-                ssm_posterior_fig,
-                "ssm posterior overlay",
-                stem="ssm_posterior_overlay",
-            ),
-        ],
-        align="center",
-    )
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### SSM GLM-HMM plots
-    """)
-    return
-
-
-@app.cell
-def _(
-    K,
-    mo,
-    save_plot,
-    ssm_coef_fig,
-    ssm_ll_fig,
-    ssm_psych_fig_custom,
-    ssm_psych_fig_ssm,
-):
-    mo.vstack(
-        [
-            mo.md("### Log-likelihood comparison"),
-            ssm_ll_fig if ssm_ll_fig is not None else mo.md("LL comparison unavailable because subject-level metrics are missing."),
-            mo.md("### Categorical psychometrics — Dynamax vs SSM"),
-            (
-                mo.hstack(
-                    [
-                        mo.vstack(
-                            [
-                                mo.md("#### Dynamax"),
-                                ssm_psych_fig_custom,
-                                save_plot(
-                                    ssm_psych_fig_custom,
-                                    "ssm comparison dynamax psychometric",
-                                    stem=f"ssm_comparison_dynamax_psychometric_k{K}",
-                                ),
-                            ],
-                            align="center",
-                        ),
-                        mo.vstack(
-                            [
-                                mo.md("#### SSM"),
-                                ssm_psych_fig_ssm,
-                                save_plot(
-                                    ssm_psych_fig_ssm,
-                                    "ssm comparison ssm psychometric",
-                                    stem=f"ssm_comparison_ssm_psychometric_k{K}",
-                                ),
-                            ],
-                            align="center",
-                        ),
-                    ],
-                    justify="start",
-                )
-                if ssm_psych_fig_custom is not None and ssm_psych_fig_ssm is not None
-                else mo.md("Psychometric comparison unavailable because one of the trial-level prediction tables could not be built.")
-            ),
-            mo.md("### Coefficient differences"),
-            (
-                mo.vstack(
-                    [
-                        ssm_coef_fig,
-                        save_plot(
-                            ssm_coef_fig,
-                            "ssm coefficient differences",
-                            stem=f"ssm_coefficient_differences_k{K}",
-                        ),
-                    ],
-                    align="center",
-                )
-                if ssm_coef_fig is not None
-                else mo.md("No coefficient comparison available.")
-            ),
+            panel("Session statistics", fig_deepdive, f"session_stats_{subject}_{session}", "session statistics"),
+            panel("Session state traces", fig_traces, f"session_state_traces_{subject}_{session}", "session state traces"),
         ],
         align="center",
     )
