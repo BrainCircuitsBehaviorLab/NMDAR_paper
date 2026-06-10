@@ -21,7 +21,8 @@
     "transition_cols": [
         "Drug",
         "trial_index",
-        "drug_x_trial_index"
+        "drug_x_trial_index",
+        "filtered_reward"
     ],
     "frozen_emissions": {},
     "baseline_class_idx": 0,

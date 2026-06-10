@@ -22,7 +22,9 @@
     "emission_cols": [
         "bias",
         "choice_lag_param",
-        "stim_param"
+        "stim_param",
+        "stim_param_L",
+        "stim_param_R"
     ],
     "frozen_emissions": {},
     "baseline_class_idx": 1,

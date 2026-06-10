@@ -17,26 +17,8 @@ from glmhmmt.tasks.fitted_regressors import (
     resolved_source_features,
     weighted_sum_regressor,
 )
-from glmhmmt.tasks import TaskAdapter, _register
+from glmhmmt.tasks import TaskAdapter, _register, build_selector_groups as _build_selector_groups
 from glmhmmt.runtime import get_data_dir
-
-try:
-    from glmhmmt.tasks import build_selector_groups as _build_selector_groups
-except ImportError:
-    def _build_selector_groups(available_cols: list[str], registry: list[dict]) -> list[dict]:
-        available = set(available_cols)
-        registered: set[str] = set()
-        result: list[dict] = []
-        for group in registry:
-            filtered = {k: v for k, v in group["members"].items() if v in available}
-            if filtered:
-                result.append({**group, "members": filtered})
-                registered.update(filtered.values())
-        for col in available_cols:
-            if col not in registered:
-                result.append({"key": col, "label": col, "members": {"N": col}})
-        return result
-    
 from src.process.common import (
     PreparedWeightFamilyPlot,
     attach_quantile_bin_column,
@@ -65,7 +47,7 @@ _BIAS_HOT_COL_PREFIX = "bias_"
 _CHOICE_LAG_COL_PREFIX = "choice_lag_"
 _CHOICE_LAG_CORR_COL_PREFIX = "choice_lag_corr_"
 _CHOICE_LAG_INC_COL_PREFIX = "choice_lag_inc_"
-_CHOICE_LAG_CORR_ALIAS = "choice_lag_corr"
+_CHOICE_LAG_CORRECT_ALIAS = "choice_lag_correct"
 _CHOICE_LAG_INC_ALIAS = "choice_lag_inc"
 _CHOICE_LAG_15_ALIAS = "choice_lag_15_lags"
 _CHOICE_LAG_50_ALIAS = "choice_lag_50_lags"
@@ -79,14 +61,14 @@ _PREV_DIFFICULTY_HOT_COL_PREFIX = "prev_difficulty_hot_"
 _PREV_DIFFICULTY_LAG_COL_PREFIX = "prev_difficulty_lag_"
 _PREV_DIFFICULTY_LAG_HOT_COL_PREFIX = "prev_difficulty_lag_hot_"
 _PREV_DAY_REWARD_LAG_COL_PREFIX = "prev_day_total_reward_lag_"
-_NUM_CHOICE_LAGS = 40
+_NUM_CHOICE_LAGS = 15
 _NUM_LEGACY_CHOICE_LAGS = 15
 _NUM_MEDIUM_CHOICE_LAGS = 40
 _NUM_REWARD_LAGS = 40
 _NUM_DIFFICULTY_LAGS = 20
 _NUM_DAY_REWARD_LAGS = 5
 _FILTERED_REGRESSOR_TAU = 4.0
-_RAW_PARAM_MODEL_ID = "one hot"
+_RAW_PARAM_MODEL_ID = "one hot2"
 _TRANSITION_PARAM_MODEL_ID = "one hot"
 EMISSION_COLS: list[str] = [
     "bias",
@@ -100,6 +82,7 @@ EMISSION_COLS: list[str] = [
     "at_choice_param",
     "choice_lag_param",
     "choice_lag_param_2",
+    "choice_lag_param_correct",
     "at_error",
     "at_correct",
     "reward_trace",
@@ -137,6 +120,7 @@ _LEGACY_TRANSITION_COLS: list[str] = [
 _STIM_PARAM_COL = "stim_param"
 _CHOICE_LAG_PARAM_COL = "choice_lag_param"
 _CHOICE_LAG_PARAM_2_COL = "choice_lag_param_2"
+_CHOICE_LAG_PARAM_CORRECT_COL = "choice_lag_param_correct"
 _STIM_PARAM_SPEC = FittedWeightRegressorSpec(
     target_name="stim_param",
     fit_task="2AFC",
@@ -181,6 +165,14 @@ _CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
     source_feature_prefixes=(_CHOICE_LAG_COL_PREFIX,),
     exclude_features=(f"{_CHOICE_LAG_COL_PREFIX}01",),
 )
+_CHOICE_LAG_PARAM_CORRECT_SPEC = FittedWeightRegressorSpec(
+    target_name=_CHOICE_LAG_PARAM_CORRECT_COL,
+    fit_task="2AFC",
+    fit_model_kind="glm",
+    fit_model_id=_RAW_PARAM_MODEL_ID,
+    arrays_suffix="glm_arrays.npz",
+    source_feature_prefixes=(_CHOICE_LAG_CORR_COL_PREFIX,),
+)
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "stim_vals": r"$\mathrm{Stimulus}$",
@@ -194,6 +186,7 @@ EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "at_choice_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
     "choice_lag_param": r"$\mathrm{A}_t^{\mathrm{choice,param}}$",
     "choice_lag_param_2": r"$\mathrm{A}_{t,\geq 2}^{\mathrm{choice,param}}$",
+    "choice_lag_param_correct": r"$\mathrm{A}_t^{\mathrm{choice,correct,param}}$",
     "at_error": r"$\mathrm{A}_t^{\mathrm{error}}$",
     "at_correct": r"$\mathrm{A}_t^{\mathrm{correct}}$",
     "reward_trace": r"$\mathrm{Reward}_{\mathrm{trace}}$",
@@ -219,6 +212,7 @@ _EMISSION_GROUPS: list[dict] = [
     {"key": "at_choice_param", "label": "choice param", "members": {"N": "at_choice_param"}},
     {"key": "choice_lag_param", "label": "choice lag param", "members": {"N": "choice_lag_param"}},
     {"key": "choice_lag_param_2", "label": "choice lag param 2+", "members": {"N": "choice_lag_param_2"}},
+    {"key": "choice_lag_param_correct", "label": "choice lag correct param", "members": {"N": "choice_lag_param_correct"}},
     {"key": "at_error", "label": "action (error)", "members": {"N": "at_error"}},
     {"key": "at_correct", "label": "action (correct)", "members": {"N": "at_correct"}},
     {"key": "reward_trace", "label": "reward trace", "members": {"N": "reward_trace"}},
@@ -666,7 +660,7 @@ def _build_emission_groups(available_cols: list[str]) -> list[dict]:
                 family_cols=choice_lag_cols,
             )
             add_hidden_family(
-                key=_CHOICE_LAG_CORR_ALIAS,
+                key=_CHOICE_LAG_CORRECT_ALIAS,
                 label="choice lag correct",
                 family_cols=choice_lag_corr_cols,
             )
@@ -1317,6 +1311,7 @@ class TwoAFCAdapter(TaskAdapter):
     at_choice_param_spec: FittedWeightRegressorSpec = _AT_CHOICE_PARAM_SPEC
     choice_lag_param_spec: FittedWeightRegressorSpec = _CHOICE_LAG_PARAM_SPEC
     choice_lag_param_2_spec: FittedWeightRegressorSpec = _CHOICE_LAG_PARAM_2_SPEC
+    choice_lag_param_correct_spec: FittedWeightRegressorSpec = _CHOICE_LAG_PARAM_CORRECT_SPEC
 
     # ── state-scoring options ────────────────────────────────────────────────
     # For 2AFC the weight matrix is (K, 1, M) where W[k,0,:] is the
@@ -1387,6 +1382,7 @@ class TwoAFCAdapter(TaskAdapter):
         include_at_choice_param: bool = False,
         include_choice_lag_param: bool = False,
         include_choice_lag_param_2: bool = False,
+        include_choice_lag_param_correct: bool = False,
     ) -> pl.DataFrame:
         """Return the Alexis 2AFC feature dataframe owned by this adapter."""
         from glmhmmt.cli.alexis_functions import get_action_trace, make_frames_dm
@@ -1730,6 +1726,18 @@ class TwoAFCAdapter(TaskAdapter):
                     [part, pd.DataFrame({_CHOICE_LAG_PARAM_2_COL: choice_lag_param_2}, index=part.index)],
                     axis=1,
                 )
+            if include_choice_lag_param_correct:
+                try:
+                    choice_lag_param_correct = _weighted_sum_regressor_zero_fill(part, self.choice_lag_param_correct_spec)
+                except FileNotFoundError as exc:
+                    raise ValueError(
+                        f"Cannot build {self.choice_lag_param_correct_spec.target_name!r}; pooled fitted weights are unavailable "
+                        f"for {self.choice_lag_param_correct_spec.fit_task}/{self.choice_lag_param_correct_spec.fit_model_kind}/{self.choice_lag_param_correct_spec.fit_model_id}."
+                    ) from exc
+                part = pd.concat(
+                    [part, pd.DataFrame({_CHOICE_LAG_PARAM_CORRECT_COL: choice_lag_param_correct}, index=part.index)],
+                    axis=1,
+                )
             parts.append(part)
 
         return pl.from_pandas(pd.concat(parts, ignore_index=True))
@@ -1745,6 +1753,7 @@ class TwoAFCAdapter(TaskAdapter):
             include_at_choice_param=False,
             include_choice_lag_param=False,
             include_choice_lag_param_2=False,
+            include_choice_lag_param_correct=False,
         )
 
     def _resolved_emission_cols(
@@ -1762,7 +1771,7 @@ class TwoAFCAdapter(TaskAdapter):
             "bias_hot": self.bias_hot_cols(feature_df),
             "choice_lag": self.choice_lag_cols(feature_df),
             "at_choice_lag": self.choice_lag_cols(feature_df),
-            _CHOICE_LAG_CORR_ALIAS: _choice_lag_corr_cols(list(feature_df.columns)),
+            _CHOICE_LAG_CORRECT_ALIAS: _choice_lag_corr_cols(list(feature_df.columns)),
             _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_cols(list(feature_df.columns)),
             _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
                 feature_df,
@@ -1816,6 +1825,7 @@ class TwoAFCAdapter(TaskAdapter):
         include_at_choice_param = "at_choice_param" in requested_emission_cols
         include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested_emission_cols
         include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested_emission_cols
+        include_choice_lag_param_correct = _CHOICE_LAG_PARAM_CORRECT_COL in requested_emission_cols
         feature_df = self._build_feature_df(
             df_sub,
             tau=tau,
@@ -1825,6 +1835,7 @@ class TwoAFCAdapter(TaskAdapter):
             include_at_choice_param=include_at_choice_param,
             include_choice_lag_param=include_choice_lag_param,
             include_choice_lag_param_2=include_choice_lag_param_2,
+            include_choice_lag_param_correct=include_choice_lag_param_correct,
         )
         return self.build_design_matrices(
             feature_df,
@@ -1848,6 +1859,7 @@ class TwoAFCAdapter(TaskAdapter):
         include_at_choice_param = "at_choice_param" in requested_emission_cols
         include_choice_lag_param = _CHOICE_LAG_PARAM_COL in requested_emission_cols
         include_choice_lag_param_2 = _CHOICE_LAG_PARAM_2_COL in requested_emission_cols
+        include_choice_lag_param_correct = _CHOICE_LAG_PARAM_CORRECT_COL in requested_emission_cols
         missing_optional = (
             (include_stim_strength and not any(str(col).startswith(_SF_COL_PREFIX) for col in feature_df.columns))
             or (include_stim_param and _STIM_PARAM_COL not in feature_df.columns)
@@ -1855,6 +1867,7 @@ class TwoAFCAdapter(TaskAdapter):
             or (include_at_choice_param and "at_choice_param" not in feature_df.columns)
             or (include_choice_lag_param and _CHOICE_LAG_PARAM_COL not in feature_df.columns)
             or (include_choice_lag_param_2 and _CHOICE_LAG_PARAM_2_COL not in feature_df.columns)
+            or (include_choice_lag_param_correct and _CHOICE_LAG_PARAM_CORRECT_COL not in feature_df.columns)
         )
         if missing_optional:
             raw_cols = [
@@ -1891,6 +1904,7 @@ class TwoAFCAdapter(TaskAdapter):
                 include_at_choice_param=include_at_choice_param,
                 include_choice_lag_param=include_choice_lag_param,
                 include_choice_lag_param_2=include_choice_lag_param_2,
+                include_choice_lag_param_correct=include_choice_lag_param_correct,
             )
         ecols = self._resolved_emission_cols(feature_df, emission_cols)
         ucols = transition_cols if transition_cols is not None else self.default_transition_cols()
@@ -1939,6 +1953,7 @@ class TwoAFCAdapter(TaskAdapter):
                 "at_choice_param",
                 _CHOICE_LAG_PARAM_COL,
                 _CHOICE_LAG_PARAM_2_COL,
+                _CHOICE_LAG_PARAM_CORRECT_COL,
             }
         ]
         if df is not None:
@@ -1971,7 +1986,7 @@ class TwoAFCAdapter(TaskAdapter):
                 _CHOICE_LAG_15_ALIAS,
                 _CHOICE_LAG_50_ALIAS,
                 _CHOICE_LAG_100_ALIAS,
-                _CHOICE_LAG_CORR_ALIAS,
+                _CHOICE_LAG_CORRECT_ALIAS,
                 _CHOICE_LAG_INC_ALIAS,
                 _AT_CHOICE_LAG_15_ALIAS,
                 _AT_CHOICE_LAG_50_ALIAS,
@@ -2012,7 +2027,7 @@ class TwoAFCAdapter(TaskAdapter):
                 "bias_hot": self.bias_hot_cols(df),
                 "choice_lag": self.choice_lag_cols(df),
                 "at_choice_lag": self.choice_lag_cols(df),
-                _CHOICE_LAG_CORR_ALIAS: _choice_lag_corr_cols(list(df.columns)),
+                _CHOICE_LAG_CORRECT_ALIAS: _choice_lag_corr_cols(list(df.columns)),
                 _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_cols(list(df.columns)),
                 _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
                     df,
@@ -2041,7 +2056,7 @@ class TwoAFCAdapter(TaskAdapter):
             family_aliases = {
                 "choice_lag": self.choice_lag_cols(df),
                 "at_choice_lag": self.choice_lag_cols(df),
-                _CHOICE_LAG_CORR_ALIAS: _choice_lag_corr_names(),
+                _CHOICE_LAG_CORRECT_ALIAS: _choice_lag_corr_names(),
                 _CHOICE_LAG_INC_ALIAS: _choice_lag_inc_names(),
                 _CHOICE_LAG_15_ALIAS: self.choice_lag_cols(
                     df,
@@ -2171,7 +2186,7 @@ class TwoAFCAdapter(TaskAdapter):
                 "plot_kind": "box",
                 "feature_groups": [(str(int(col.removeprefix(_CHOICE_LAG_COL_PREFIX))), [col]) for col in choice_cols],
             },
-            _CHOICE_LAG_CORR_ALIAS: {
+            _CHOICE_LAG_CORRECT_ALIAS: {
                 "title": "choice_lag_corr_*",
                 "xlabel": "Lag",
                 "plot_kind": "box",

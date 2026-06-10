@@ -17,19 +17,11 @@
         "choice_lag_13",
         "choice_lag_14",
         "choice_lag_15",
-        "bias_0",
-        "bias_1",
-        "bias_2",
-        "bias_3",
-        "bias_4",
-        "bias_5",
-        "bias_6",
-        "bias_7",
-        "bias_8",
         "stim_x_delay_hot_0p1",
         "stim_x_delay_hot_1",
         "stim_x_delay_hot_3",
-        "stim_x_delay_hot_10"
+        "stim_x_delay_hot_10",
+        "bias"
     ],
     "requested_emission_cols": [
         "choice_lag_01",
@@ -47,19 +39,11 @@
         "choice_lag_13",
         "choice_lag_14",
         "choice_lag_15",
-        "bias_0",
-        "bias_1",
-        "bias_2",
-        "bias_3",
-        "bias_4",
-        "bias_5",
-        "bias_6",
-        "bias_7",
-        "bias_8",
         "stim_x_delay_hot_0p1",
         "stim_x_delay_hot_1",
         "stim_x_delay_hot_3",
-        "stim_x_delay_hot_10"
+        "stim_x_delay_hot_10",
+        "bias"
     ],
     "resolved_emission_cols": [
         "choice_lag_01",
@@ -77,19 +61,11 @@
         "choice_lag_13",
         "choice_lag_14",
         "choice_lag_15",
-        "bias_0",
-        "bias_1",
-        "bias_2",
-        "bias_3",
-        "bias_4",
-        "bias_5",
-        "bias_6",
-        "bias_7",
-        "bias_8",
         "stim_x_delay_hot_0p1",
         "stim_x_delay_hot_1",
         "stim_x_delay_hot_3",
-        "stim_x_delay_hot_10"
+        "stim_x_delay_hot_10",
+        "bias"
     ],
     "num_classes": 2,
     "lapse_mode": "none",
@@ -98,6 +74,7 @@
     "restart_noise_scale": 0.05,
     "seed": 0,
     "baseline_class_idx": 1,
+    "emission_model": "standard",
     "model_id": "one hot drug",
     "condition_filter": "drug"
 }

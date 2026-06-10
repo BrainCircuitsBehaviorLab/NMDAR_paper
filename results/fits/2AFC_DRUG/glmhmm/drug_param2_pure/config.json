@@ -15,17 +15,21 @@
     ],
     "emission_cols": [
         "stim_param",
-        "bias",
         "prev_choice",
+        "bias",
         "choice_lag_param_correct"
     ],
-    "frozen_emissions": {},
+    "frozen_emissions": {
+        "1": {
+            "stim_param": 0.0
+        }
+    },
     "baseline_class_idx": 0,
     "K_list": [
         2
     ],
-    "model_id": "saline_param2",
+    "model_id": "drug_param2_pure",
     "cv_mode": "none",
     "cv_repeats": 0,
-    "condition_filter": "saline"
+    "condition_filter": "drug"
 }

@@ -50,6 +50,19 @@ def normalize_subject_id(value):
         return value
 
 
+@app.function
+def adjust_rt_offset_for_experiments(df, pl, experiments_to_adjust, offset=0.15):
+    if "Experiment" not in df.columns or "RT" not in df.columns:
+        return df
+
+    return df.with_columns(
+        pl.when(pl.col("Experiment").is_in(experiments_to_adjust))
+        .then((pl.col("RT").cast(pl.Float64, strict=False) - offset).clip(lower_bound=0))
+        .otherwise(pl.col("RT").cast(pl.Float64, strict=False))
+        .alias("RT")
+    )
+
+
 @app.cell
 def _(Path, paths):
     paths.DATA_PATH
@@ -168,6 +181,7 @@ def _(
     base_exp_df = combined_df.filter((pl.col("Experiment").is_in(['2AFC_2', '2AFC_3', '2AFC_4'])))
     base_exp_df = base_exp_df.rename({"Subject" : "subject"})
     base_exp_df = base_exp_df.with_columns(pl.col("subject").cast(pl.Int64, strict=False).cast(pl.Utf8))
+    base_exp_df = adjust_rt_offset_for_experiments(base_exp_df, pl, ["2AFC_4", "2AFC_5", "2AFC_6"])
     if subject_names_to_keep:
         base_exp_df = base_exp_df.filter(
             pl.col("subject").is_in(subject_names_to_keep)
@@ -234,6 +248,7 @@ def _(
     drug_df = combined_df.filter((pl.col("Experiment").is_in(['2AFC_6'])))
     drug_df = drug_df.rename({"Subject" : "subject"})
     drug_df = drug_df.with_columns(pl.col("subject").cast(pl.Int64, strict=False).cast(pl.Utf8))
+    drug_df = adjust_rt_offset_for_experiments(drug_df, pl, ["2AFC_4", "2AFC_5", "2AFC_6"])
     if subject_names_to_keep:
         drug_df = drug_df.filter(
             pl.col("subject").is_in(subject_names_to_keep)

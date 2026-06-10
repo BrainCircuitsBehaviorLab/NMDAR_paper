@@ -1,6 +1,6 @@
 {
     "task": "2AFC_DRUG",
-    "tau": 3,
+    "tau": 3.0,
     "subjects": [
         "14",
         "16",
@@ -15,9 +15,9 @@
     ],
     "emission_cols": [
         "stim_param",
-        "choice_lag_param_2",
         "prev_choice",
-        "bias"
+        "bias",
+        "choice_lag_param_correct"
     ],
     "frozen_emissions": {},
     "baseline_class_idx": 0,

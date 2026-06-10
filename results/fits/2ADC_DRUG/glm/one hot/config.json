@@ -1,5 +1,5 @@
 {
-    "task": "2AFC_delay",
+    "task": "2ADC_DRUG",
     "tau": 50,
     "emission_cols": [
         "choice_lag_01",
@@ -75,5 +75,6 @@
     "seed": 0,
     "baseline_class_idx": 1,
     "emission_model": "standard",
-    "model_id": "one hot"
+    "model_id": "one hot",
+    "condition_filter": "all"
 }

@@ -1,8 +1,10 @@
 {
     "task": "2AFC",
-    "tau": 50,
+    "model_id": "one hot2",
+    "alias": "one hot2",
     "subjects": [
         "325",
+        "326",
         "327",
         "329",
         "330",
@@ -27,23 +29,23 @@
         "909",
         "911"
     ],
+    "tau": 2,
+    "cv_mode": "none",
+    "cv_repeats": 0,
     "emission_cols": [
-        "stim_param",
+        "stim_2",
+        "stim_4",
+        "stim_8",
+        "stim_20",
         "bias",
         "prev_choice",
-        "choice_lag_param_correct"
+        "choice_lag_correct"
     ],
-    "frozen_emissions": {
-        "1": {
-            "stim_param": 0.0
-        }
-    },
-    "baseline_class_idx": 0,
-    "K_list": [
-        2
-    ],
-    "model_id": "param",
-    "cv_mode": "balanced_session_holdout",
-    "cv_repeats": 5,
-    "condition_filter": "all"
+    "state_scoring_feature": "stim_2",
+    "state_scoring_rule": "+",
+    "state_split_feature": "",
+    "state_split_rule": "+",
+    "condition_filter": "all",
+    "lapse_mode": "none",
+    "lapse_max": 0.2
 }

@@ -1,0 +1,38 @@
+{
+    "task": "2AFC_delay",
+    "tau": 50,
+    "emission_cols": [
+        "stim_x_delay_hot_0p1",
+        "stim_x_delay_hot_1",
+        "stim_x_delay_hot_3",
+        "stim_x_delay_hot_10",
+        "prev_choice",
+        "bias"
+    ],
+    "requested_emission_cols": [
+        "stim_x_delay_hot_0p1",
+        "stim_x_delay_hot_1",
+        "stim_x_delay_hot_3",
+        "stim_x_delay_hot_10",
+        "prev_choice",
+        "bias",
+        "choice_lag_correct"
+    ],
+    "resolved_emission_cols": [
+        "stim_x_delay_hot_0p1",
+        "stim_x_delay_hot_1",
+        "stim_x_delay_hot_3",
+        "stim_x_delay_hot_10",
+        "prev_choice",
+        "bias"
+    ],
+    "num_classes": 2,
+    "lapse_mode": "none",
+    "lapse_max": 0.2,
+    "n_restarts": 1,
+    "restart_noise_scale": 0.05,
+    "seed": 0,
+    "baseline_class_idx": 1,
+    "emission_model": "standard",
+    "model_id": "one hot2"
+}

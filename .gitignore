@@ -211,8 +211,15 @@ __marimo__/
 *.pyc
 
 # Hashed fit output buckets
+
 results/fits/**/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
+
+!results/fits/*/configs.json
 results/plots/*
-# results/fits/*
+results/fits/**/*.parquet
+results/fits/**/*.npz
+.agents
+
+
 
 data/raw/*.csv

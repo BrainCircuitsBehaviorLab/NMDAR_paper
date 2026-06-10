@@ -2,29 +2,22 @@
     "task": "MCDR",
     "tau": 50,
     "subjects": [
-        "B16",
         "B17",
         "B18",
-        "B19",
         "B22",
-        "B23",
         "B24",
         "B26",
         "B28",
         "B31",
         "B32",
         "B33",
-        "B34",
-        "B35",
         "B36",
         "B37"
     ],
     "emission_cols": [
         "bias",
         "stim_param",
-        "stim_param_L",
-        "stim_param_R",
-        "choice_lag_param_correct",
+        "choice_lag_param_2",
         "prev_choice"
     ],
     "frozen_emissions": {
@@ -36,8 +29,8 @@
     "K_list": [
         2
     ],
-    "model_id": "param frozen",
+    "model_id": "param frozen_saline",
     "cv_mode": "none",
     "cv_repeats": 0,
-    "condition_filter": "all"
+    "condition_filter": "saline"
 }
