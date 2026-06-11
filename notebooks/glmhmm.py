@@ -673,14 +673,12 @@ def _(
     emissions_ax.legend(frameon=False)
     emissions_ax.set_xticklabels([feature_labeler(f) for f in plot_feature_order])
 
-    (
-        panel(
-            "Emission weights",
-            emissions_ax.figure,
-            "emissions",
-            "emissions boxplot",
-        ),
-    )
+    panel(
+        "Emission weights",
+        emissions_ax.figure,
+        "emissions",
+        "emissions boxplot",
+    ),
     return
 
 
@@ -1198,9 +1196,15 @@ def _(mo):
 
 
 @app.cell
-def _(adapter, adapter_behavioral_column, df_all, pl, trial_df):
+def _(adapter, adapter_behavioral_column, df_all):
     session_col = adapter_behavioral_column(adapter, df_all, "session", "session", "Session")
     trial_col = adapter_behavioral_column(adapter, df_all, "trial_idx", "trial_idx", "trial", "Trial")
+
+    return session_col, trial_col
+
+
+@app.cell
+def _(df_all, pl, session_col, trial_col, trial_df):
 
     licks_df = (
         trial_df
@@ -1220,7 +1224,7 @@ def _(adapter, adapter_behavioral_column, df_all, pl, trial_df):
         .agg(pl.median("nLicks").alias("nLicks"))
         .to_pandas()
     )
-    return licks_df, session_col, trial_col
+    return (licks_df,)
 
 
 @app.cell
@@ -1345,12 +1349,12 @@ def _(np, pd):
 
 @app.cell
 def _(
-    df_all,
     engaged_mask,
     fig_size,
     panel,
     pd,
     pl,
+    plot_df_all,
     plt,
     roc_curve,
     session_col,
@@ -1378,7 +1382,7 @@ def _(
     # Attach behavioral variables to trial-level state assignments
     behavior_df = (
         trial_df.join(
-            df_all.select(
+            plot_df_all.select(
                 "subject",
                 pl.col(session_col).alias("session"),
                 pl.col(trial_col).alias("trial_idx"),
@@ -1427,14 +1431,14 @@ def _(
         "state_behavioral_roc",
         "behavioral ROC by state",
     )
-    return (behavior_df,)
+    return
 
 
 @app.cell
-def _(behavior_df, mo):
+def _(mo, plot_df_all):
     def random_session():
         return (
-            behavior_df[["subject", "session"]]
+            plot_df_all[["subject", "session"]]
             .dropna()
             .drop_duplicates()
             .sample(1)
@@ -1445,42 +1449,36 @@ def _(behavior_df, mo):
 
 
 @app.cell
-def _(behavior_df, mo, random_session, ui_behavior_random_session):
+def _(df_all, mo, pl, plot_df_all, random_session, ui_behavior_random_session):
     if ui_behavior_random_session.value:
         pick = random_session()
         subject_value = str(pick["subject"])
         session_value = str(pick["session"])
     else:
-        subject_value = sorted(behavior_df["subject"].astype(str).unique())[0]
+        subject_value = sorted(df_all["subject"].unique())[0]
         session_value = (
-            behavior_df.loc[
-                behavior_df["subject"].astype(str) == subject_value,
+            plot_df_all.filter(
+                pl.col("subject") == subject_value,
                 "session"
-            ]
-            .astype(str)
-            .sort_values()
-            .iloc[0]
+            )
+            ["session"][0]
         )
     ui_behavior_session_subj = mo.ui.dropdown(
-        options=sorted(behavior_df["subject"].astype(str).unique()),
+        options=sorted(plot_df_all["subject"].unique()),
         value=subject_value,
         label="Subject",
     )
-    return session_value, ui_behavior_session_subj
+    return session_value, subject_value, ui_behavior_session_subj
 
 
 @app.cell
-def _(behavior_df, mo, session_value, ui_behavior_session_subj):
+def _(mo, pl, plot_df_all, session_value, subject_value):
     ui_behavior_session_id = mo.ui.dropdown(
         options=(
-            behavior_df.loc[
-                behavior_df["subject"].astype(str) == ui_behavior_session_subj.value,
-                "session",
-            ]
-            .astype(str)
-            .sort_values()
+            plot_df_all.filter(
+                pl.col("subject") == subject_value,
+            )["session"]
             .unique()
-            .tolist()
         ),
         value=session_value,
         label="Session",
@@ -1489,13 +1487,18 @@ def _(behavior_df, mo, session_value, ui_behavior_session_subj):
 
 
 @app.cell
+def _():
+    return
+
+
+@app.cell
 def _(
-    behavior_df,
     fig_size,
     mo,
     np,
     panel,
     pd,
+    plot_df_all,
     plt,
     state_order,
     state_palette,
@@ -1503,10 +1506,10 @@ def _(
     ui_behavior_session_id,
     ui_behavior_session_subj,
 ):
-    session_df = behavior_df[
-        (behavior_df["subject"].astype(str) == str(ui_behavior_session_subj.value))
-        & (behavior_df["session"].astype(str) == str(ui_behavior_session_id.value))
-    ]
+    session_df = plot_df_all.filter(
+        (plot_df_all["subject"] == str(ui_behavior_session_subj.value)),
+        (plot_df_all["session"]== str(ui_behavior_session_id.value))
+    ).to_pandas()
     def ecdf(values):
         x = np.sort(pd.to_numeric(values, errors="coerce").dropna().to_numpy(float))
         return x, np.arange(1, len(x) + 1) / len(x)

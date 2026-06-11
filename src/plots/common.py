@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.ticker import FuncFormatter
@@ -9,6 +10,7 @@ from matplotlib.lines import Line2D
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 import numpy as np
 import pandas as pd
+import polars as pl
 import seaborn as sns
 from scipy.stats import ttest_1samp
 from src.process.common import (
@@ -28,6 +30,17 @@ from glmhmmt.plots.common import (
     custom_boxplot,
     resolve_single_axis as resolve_glmhmmt_single_axis,
 )
+
+
+BOXPLOT_STYLE = dict(
+    fill=False,
+    boxprops={"color": "0.5"},
+    whiskerprops={"color": "0.5"},
+    medianprops={"linewidth": 2},
+    showfliers=False,
+    showcaps=False,
+)
+boxplot_STYLE = BOXPLOT_STYLE
 
 
 def _significance_stars(pvalue: float) -> str:
@@ -114,6 +127,784 @@ def fig_size(n_cols=1, ratio=None):
         fig_height = fig_width / ratio
         figsize = (fig_width, fig_height)
         return figsize
+
+
+def pick_existing_column(df_like, candidates: Sequence[str | None]) -> str | None:
+    columns = set(getattr(df_like, "columns", []))
+    for candidate in candidates:
+        if candidate and candidate in columns:
+            return candidate
+    return None
+
+
+def _coerce_correct_values(series: pd.Series) -> np.ndarray:
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().any():
+        return numeric.fillna(0).astype(float).to_numpy() > 0
+    return (
+        series.astype(str)
+        .str.lower()
+        .isin(["1", "true", "correct", "hit", "yes"])
+        .to_numpy()
+    )
+
+
+def _difficulty_values(pdf: pd.DataFrame, task_name: str) -> tuple[pd.Series, str]:
+    def numeric(column: str, *, abs_value: bool = False) -> pd.Series:
+        values = pd.to_numeric(pdf[column], errors="coerce")
+        if abs_value:
+            values = values.abs()
+        return values
+
+    if task_name == "2AFC" and "ILD" in pdf.columns:
+        return numeric("ILD", abs_value=True), "Difficulty (|ILD| dB)"
+
+    if task_name in {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}:
+        for column in ["delay", "delays"]:
+            if column in pdf.columns:
+                return numeric(column), "Difficulty (delay, s)"
+
+    if task_name == "MCDR":
+        if "stimd_c" in pdf.columns:
+            return pdf["stimd_c"].astype(str), "Difficulty"
+        if "stimd_n" in pdf.columns:
+            return numeric("stimd_n"), "Difficulty"
+
+    for column in ["difficulty", "stimd_n", "delay", "delays", "ILD", "stimulus", "stim"]:
+        if column in pdf.columns:
+            return numeric(column, abs_value=column in {"ILD", "stimulus", "stim"}), "Difficulty"
+
+    raise ValueError("No difficulty-like column found for this task.")
+
+
+def _difficulty_labels(difficulty: pd.Series) -> pd.Series:
+    difficulty = pd.Series(difficulty).reset_index(drop=True)
+    numeric = pd.to_numeric(difficulty, errors="coerce")
+    if numeric.notna().all():
+        return numeric.astype(float).map(lambda value: f"{value:g}")
+    return difficulty.astype(str)
+
+
+def build_session_trial_outcomes_data(
+    plot_df,
+    *,
+    task_name: str,
+    subject,
+    session,
+    adapter=None,
+) -> tuple[pd.DataFrame, str, str]:
+    behavioral_cols = getattr(adapter, "behavioral_cols", {}) or {}
+    session_col = pick_existing_column(
+        plot_df,
+        ["session", getattr(adapter, "session_col", None), behavioral_cols.get("session"), "Session"],
+    )
+    trial_col = pick_existing_column(
+        plot_df,
+        ["trial", "trial_idx", behavioral_cols.get("trial"), behavioral_cols.get("trial_idx"), "Trial"],
+    )
+    correct_col = pick_existing_column(
+        plot_df,
+        ["correct_bool", "performance", behavioral_cols.get("performance"), "Hit", "hit"],
+    )
+    if session_col is None or trial_col is None or correct_col is None:
+        raise ValueError("Session plot needs session, trial, and correctness columns.")
+
+    session_df = (
+        plot_df
+        .filter(
+            (pl.col("subject").cast(pl.Utf8) == str(subject))
+            & (pl.col(session_col).cast(pl.Utf8) == str(session))
+        )
+        .sort(trial_col)
+    )
+    if session_df.height == 0:
+        raise ValueError("No trials for the selected subject/session.")
+
+    pdf = session_df.to_pandas()
+    x = np.arange(len(pdf), dtype=float)
+    difficulty, ylabel = _difficulty_values(pdf, task_name)
+    difficulty = pd.Series(difficulty)
+    valid = difficulty.notna().to_numpy()
+    if not valid.any():
+        raise ValueError("No valid difficulty values for this session.")
+
+    correct = _coerce_correct_values(pdf[correct_col])
+    x = x[valid]
+    difficulty_label = _difficulty_labels(difficulty[valid]).to_numpy()
+    correct = correct[valid]
+
+    edges = np.empty(len(x) + 1, dtype=float)
+    if len(x) == 1:
+        edges[:] = [x[0] - 0.5, x[0] + 0.5]
+    else:
+        midpoints = (x[:-1] + x[1:]) / 2.0
+        edges[1:-1] = midpoints
+        edges[0] = x[0] - (midpoints[0] - x[0])
+        edges[-1] = x[-1] + (x[-1] - midpoints[-1])
+
+    return (
+        pd.DataFrame(
+            {
+                "trial_x": x,
+                "trial_left": edges[:-1],
+                "trial_right": edges[1:],
+                "difficulty_label": difficulty_label,
+                "correct": correct.astype(bool),
+            }
+        ),
+        "Trial number (within session)",
+        ylabel,
+    )
+
+
+def plot_session_trial_outcomes(
+    data: pd.DataFrame,
+    *,
+    xlabel: str = "Trial number (within session)",
+    easy_difficulty: str | None = None,
+    trial_tick_step: int = 20,
+    ax: plt.Axes | None = None,
+    figsize=(6, 3),
+    dpi=150,
+):
+    fig, ax = resolve_single_axis(ax=ax, figsize=figsize, constrained_layout=False)
+    if data.empty:
+        ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
+        ax.axis("off")
+        return fig, ax
+
+    df = data.copy().reset_index(drop=True)
+    has_easy_selection = easy_difficulty not in {None, "None"}
+    df["is_easy"] = (
+        has_easy_selection
+        & (df["difficulty_label"].astype(str) == str(easy_difficulty))
+    )
+    df["color"] = [
+        "#006d2c" if correct and easy else
+        "#2ca02c" if correct else
+        "#7f0000" if easy else
+        "#d62728"
+        for correct, easy in zip(df["correct"], df["is_easy"], strict=False)
+    ]
+
+    fig.set_dpi(dpi)
+    for _, row in df.iterrows():
+        ax.add_patch(
+            mpatches.Rectangle(
+                (row["trial_left"], -0.38),
+                row["trial_right"] - row["trial_left"],
+                0.76,
+                facecolor=row["color"],
+                alpha=0.75,
+                linewidth=0,
+            )
+        )
+
+    ax.set_xlabel(xlabel)
+    ax.set_xlim(df["trial_left"].iloc[0], df["trial_right"].iloc[-1])
+    last_trial = int(df["trial_x"].max())
+    ax.set_xticks(list(range(0, last_trial + 1, int(trial_tick_step))))
+    ax.set_ylim(-0.5, 0.5)
+    ax.set_yticks([])
+    ax.set_ylabel("")
+
+    legend_handles = [
+        mpatches.Patch(color="#2ca02c", alpha=0.75, label="Correct"),
+        mpatches.Patch(color="#d62728", alpha=0.75, label="Incorrect"),
+    ]
+    if has_easy_selection:
+        legend_handles.extend(
+            [
+                mpatches.Patch(color="#006d2c", alpha=0.75, label=f"Easy correct ({easy_difficulty})"),
+                mpatches.Patch(color="#7f0000", alpha=0.75, label=f"Easy incorrect ({easy_difficulty})"),
+            ]
+        )
+    ax.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.25),
+        ncol=len(legend_handles),
+        frameon=False,
+    )
+    sns.despine(ax=ax, left=True)
+    fig.tight_layout()
+    return fig, ax
+
+
+def build_session_repetition_data(
+    plot_df,
+    *,
+    subject,
+    session,
+    window: int,
+    adapter=None,
+) -> pd.DataFrame:
+    behavioral_cols = getattr(adapter, "behavioral_cols", {}) or {}
+    session_col = pick_existing_column(
+        plot_df,
+        ["session", getattr(adapter, "session_col", None), behavioral_cols.get("session"), "Session"],
+    )
+    trial_col = pick_existing_column(
+        plot_df,
+        ["trial_idx", "trial", behavioral_cols.get("trial_idx"), behavioral_cols.get("trial"), "Trial"],
+    )
+    response_col = pick_existing_column(
+        plot_df,
+        ["response", "choices", "choice", behavioral_cols.get("response"), "Choice"],
+    )
+    stimulus_col = pick_existing_column(
+        plot_df,
+        ["stimulus", "stim", "side", behavioral_cols.get("stimulus"), "Side"],
+    )
+    if session_col is None or trial_col is None or response_col is None or stimulus_col is None:
+        raise ValueError("Example repetition plot needs session, trial, response, and stimulus columns.")
+
+    session_df = (
+        plot_df
+        .filter(
+            (pl.col("subject").cast(pl.Utf8) == str(subject))
+            & (pl.col(session_col).cast(pl.Utf8) == str(session))
+        )
+        .sort(trial_col)
+    )
+    if session_df.height == 0:
+        raise ValueError("No trials for the selected subject/session.")
+
+    data = (
+        session_df
+        .select([trial_col, response_col, stimulus_col])
+        .to_pandas()
+        .rename(columns={trial_col: "trial", response_col: "response", stimulus_col: "stimulus"})
+        .reset_index(drop=True)
+    )
+    data["trial_x"] = np.arange(len(data))
+    data["previous_response"] = data["response"].shift(1)
+    data["previous_stimulus"] = data["stimulus"].shift(1)
+    data["response_repeat"] = data["response"].eq(data["previous_response"]).fillna(False)
+    data["stimulus_repeat"] = data["stimulus"].eq(data["previous_stimulus"]).fillna(False)
+    data["response_repeat_window_count"] = (
+        data["response_repeat"].astype(float).rolling(int(window), min_periods=1).sum()
+    )
+    data["stimulus_repeat_window_count"] = (
+        data["stimulus_repeat"].astype(float).rolling(int(window), min_periods=1).sum()
+    )
+    return data
+
+
+def plot_session_response_raster(
+    data: pd.DataFrame,
+    *,
+    ax: plt.Axes | None = None,
+    figsize=(6, 1.6),
+    dpi=150,
+):
+    fig, ax = resolve_single_axis(ax=ax, figsize=figsize, constrained_layout=False)
+    fig.set_dpi(dpi)
+    response_labels = sorted(data["response"].dropna().unique(), key=lambda value: str(value))
+    response_y = {value: index for index, value in enumerate(response_labels)}
+    colors = sns.color_palette("tab10", n_colors=max(len(response_labels), 1))
+
+    for idx, response in enumerate(response_labels):
+        mask = data["response"].eq(response)
+        ax.scatter(
+            data.loc[mask, "trial_x"],
+            [response_y[response]] * int(mask.sum()),
+            s=10,
+            color=colors[idx],
+            label=str(response),
+        )
+
+    ax.set_xlabel("Trial number (within session)")
+    ax.set_ylabel("Response")
+    ax.set_yticks(list(response_y.values()))
+    ax.set_yticklabels([str(label) for label in response_labels])
+    ax.set_xlim(-0.5, len(data) - 0.5)
+    if len(response_labels) > 1:
+        ax.legend(title="Response", frameon=False, loc="upper right")
+    sns.despine(ax=ax)
+    fig.tight_layout()
+    return fig, ax
+
+
+def plot_session_repetition_running_count(
+    data: pd.DataFrame,
+    *,
+    window: int,
+    ax: plt.Axes | None = None,
+    figsize=None,
+    dpi=150,
+):
+    fig, ax = resolve_single_axis(
+        ax=ax,
+        figsize=fig_size(1, 3) if figsize is None else figsize,
+        constrained_layout=False,
+    )
+    fig.set_dpi(dpi)
+    ax.plot(
+        data["trial_x"],
+        data["response_repeat_window_count"],
+        color="tab:brown",
+        linewidth=1.5,
+        label="Response repetition",
+    )
+    ax.plot(
+        data["trial_x"],
+        data["stimulus_repeat_window_count"],
+        color="tab:blue",
+        linewidth=1.5,
+        label="Stimulus repetition",
+    )
+    ax.set_xlabel("Trial number (within session)")
+    ax.set_ylabel(f"Repetitions / {int(window)} trials")
+    ax.set_ylim(0, int(window))
+    ax.set_xlim(-0.5, len(data) - 0.5)
+    ax.legend(frameon=False, loc="lower right")
+    sns.despine(ax=ax)
+    fig.tight_layout()
+    return fig, ax
+
+
+def _drug_label_expr():
+    drug_number = pl.col("drug").cast(pl.Float64, strict=False)
+    drug_text = pl.col("drug").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+    return (
+        pl.when(drug_number == 0)
+        .then(pl.lit("Saline"))
+        .when(drug_number == 1)
+        .then(pl.lit("Drug"))
+        .when(drug_text == "saline")
+        .then(pl.lit("Saline"))
+        .when(drug_text.is_in(["drug", "nr2b"]))
+        .then(pl.lit("Drug"))
+        .otherwise(pl.lit(None, dtype=pl.Utf8))
+        .alias("drug_label")
+    )
+
+
+def _overlapping_rolling_binomial_variance(n_windows, window: int, p: float) -> float | None:
+    if n_windows is None or n_windows < 2:
+        return None
+    n_windows = int(n_windows)
+    sigma2 = p * (1 - p)
+    gamma0 = sigma2 / window
+    max_lag = min(window - 1, n_windows - 1)
+    lag_sum = (
+        max_lag * n_windows * window
+        - (n_windows + window) * max_lag * (max_lag + 1) / 2
+        + max_lag * (max_lag + 1) * (2 * max_lag + 1) / 6
+    )
+    mean_variance = (
+        n_windows * gamma0
+        + 2 * sigma2 * lag_sum / (window ** 2)
+    ) / (n_windows ** 2)
+    return n_windows * (gamma0 - mean_variance) / (n_windows - 1)
+
+
+def _repetition_variance_for_task(get_adapter, task_name: str, task_label: str, drug_col: str, window: int):
+    adapter = get_adapter(task_name)
+    df = adapter.subject_filter(adapter.read_dataset())
+    if drug_col not in df.columns:
+        return None
+
+    subject_col = pick_existing_column(df, ["subject", "Subject"])
+    session_col = pick_existing_column(df, ["session", "Session"])
+    trial_col = pick_existing_column(df, ["trial_idx", "Trial", "trial"])
+    response_col = pick_existing_column(df, ["response", "Choice", "choice", "choices"])
+    stimulus_col = pick_existing_column(df, ["stimulus", "Side", "side", "stim"])
+    if any(col is None for col in [subject_col, session_col, trial_col, response_col, stimulus_col]):
+        return None
+
+    group_cols = ["subject", "drug_label", "session"]
+    return (
+        df
+        .select(
+            pl.col(subject_col).alias("subject"),
+            pl.col(session_col).alias("session"),
+            pl.col(trial_col).alias("trial_idx"),
+            pl.col(response_col).alias("response"),
+            pl.col(stimulus_col).alias("stimulus"),
+            pl.col(drug_col).alias("drug"),
+        )
+        .with_columns(_drug_label_expr())
+        .drop_nulls(["subject", "session", "trial_idx", "response", "stimulus", "drug_label"])
+        .sort(["subject", "drug_label", "session", "trial_idx"])
+        .with_columns(pl.col("trial_idx").cum_count().over(group_cols).alias("trial_position"))
+        .filter(pl.col("trial_position") > 10)
+        .with_columns(
+            pl.col("response").shift().over(group_cols).alias("previous_response"),
+            pl.col("stimulus").shift().over(group_cols).alias("previous_stimulus"),
+        )
+        .drop_nulls(["previous_response", "previous_stimulus"])
+        .with_columns(
+            (pl.col("response") == pl.col("previous_response")).alias("response_repeat"),
+            (pl.col("stimulus") == pl.col("previous_stimulus")).alias("stimulus_repeat"),
+        )
+        .with_columns(
+            pl.col("response_repeat")
+            .cast(pl.Float64)
+            .rolling_mean(window_size=window, min_samples=window)
+            .over(group_cols)
+            .alias("response_repeat_window_fraction"),
+            pl.col("stimulus_repeat")
+            .cast(pl.Float64)
+            .rolling_mean(window_size=window, min_samples=window)
+            .over(group_cols)
+            .alias("stimulus_repeat_window_fraction"),
+        )
+        .group_by(group_cols)
+        .agg(
+            pl.col("response_repeat_window_fraction").var().alias("response_repeat_variance"),
+            pl.col("stimulus_repeat_window_fraction").var().alias("stimulus_repeat_variance"),
+            pl.col("stimulus_repeat_window_fraction").is_not_null().sum().alias("n_windows"),
+        )
+        .with_columns(
+            pl.lit(task_name).alias("task"),
+            pl.lit(task_label).alias("task_label"),
+        )
+        .with_columns(
+            pl.struct(["task_label", "n_windows"])
+            .map_elements(
+                lambda row: _overlapping_rolling_binomial_variance(
+                    row["n_windows"],
+                    window,
+                    1 / 3 if row["task_label"] == "MCDR" else 0.5,
+                ),
+                return_dtype=pl.Float64,
+            )
+            .alias("stimulus_repeat_binomial_variance")
+        )
+    )
+
+
+def build_repetition_variance_by_drug_task(
+    get_adapter,
+    *,
+    window: int,
+    task_specs: Sequence[tuple[str, str, str]] | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    if task_specs is None:
+        task_specs = [
+            ("2AFC_DRUG", "2AFC", "Drug"),
+            ("2ADC_DRUG", "2ADC", "drug_code"),
+            ("MCDR", "MCDR", "condition"),
+        ]
+
+    variance_frames = [
+        frame
+        for frame in (
+            _repetition_variance_for_task(get_adapter, task_name, task_label, drug_col, int(window))
+            for task_name, task_label, drug_col in task_specs
+        )
+        if frame is not None and not frame.is_empty()
+    ]
+    if variance_frames:
+        by_session = pl.concat(variance_frames, how="diagonal_relaxed")
+    else:
+        by_session = pl.DataFrame(
+            schema={
+                "subject": pl.Utf8,
+                "drug_label": pl.Utf8,
+                "session": pl.Int64,
+                "response_repeat_variance": pl.Float64,
+                "stimulus_repeat_variance": pl.Float64,
+                "n_windows": pl.UInt32,
+                "stimulus_repeat_binomial_variance": pl.Float64,
+                "task": pl.Utf8,
+                "task_label": pl.Utf8,
+            }
+        )
+
+    by_task = (
+        by_session
+        .group_by(["task", "task_label", "subject", "drug_label"])
+        .agg(
+            pl.col("response_repeat_variance").mean(),
+            pl.col("stimulus_repeat_variance").mean(),
+            pl.col("stimulus_repeat_binomial_variance").mean(),
+        )
+    )
+    long = (
+        by_task
+        .unpivot(
+            index=["task", "task_label", "subject", "drug_label"],
+            on=["response_repeat_variance", "stimulus_repeat_variance"],
+            variable_name="signal",
+            value_name="variance",
+        )
+        .with_columns(
+            pl.col("signal").replace(
+                {
+                    "response_repeat_variance": "Repetition",
+                    "stimulus_repeat_variance": "Stimulus",
+                }
+            )
+        )
+        .drop_nulls("variance")
+        .to_pandas()
+    )
+    baselines = dict(
+        by_task
+        .group_by("task_label")
+        .agg(pl.col("stimulus_repeat_binomial_variance").mean().alias("variance"))
+        .to_pandas()
+        .set_index("task_label")["variance"]
+    )
+    return long, baselines
+
+
+def plot_drug_repetition_variance_by_task(
+    data: pd.DataFrame,
+    baselines: dict,
+    *,
+    task_order: Sequence[str] = ("2AFC", "2ADC", "MCDR"),
+    signal_order: Sequence[str] = ("Repetition", "Stimulus"),
+    drug_order: Sequence[str] = ("Saline", "Drug"),
+    ax: Sequence[plt.Axes] | None = None,
+    figsize=None,
+):
+    from math import isfinite
+    from scipy.stats import ttest_1samp
+    from statannotations.Annotator import Annotator
+
+    fig, axes = resolve_axes(
+        ax,
+        n_axes=len(task_order),
+        figsize=fig_size(1, 3) if figsize is None else figsize,
+        squeeze=False,
+        sharey=True,
+    )
+    legend_handles = []
+    legend_labels = []
+
+    for axis, task_label in zip(axes, task_order, strict=False):
+        task_data = data[data["task_label"] == task_label]
+        if task_data.empty:
+            axis.axis("off")
+            axis.set_title(task_label)
+            continue
+
+        sns.boxplot(
+            data=task_data,
+            x="signal",
+            y="variance",
+            order=list(signal_order),
+            hue="drug_label",
+            hue_order=list(drug_order),
+            palette={"Saline": "tab:gray", "Drug": "tab:pink"},
+            ax=axis,
+            **BOXPLOT_STYLE,
+        )
+        baseline = baselines.get(task_label)
+        if baseline is not None and np.isfinite(baseline):
+            axis.axhline(
+                baseline,
+                color="tab:blue",
+                linestyle="--",
+                label="Stimulus binomial",
+            )
+        axis.set_title(task_label)
+        axis.set_xlabel("")
+        axis.set_ylabel("Variance of running fraction" if axis is axes[0] else "")
+        if not legend_handles:
+            handles, labels = axis.get_legend_handles_labels()
+            legend = dict(zip(labels, handles, strict=False))
+            legend_handles = list(legend.values())
+            legend_labels = list(legend.keys())
+        if axis.get_legend() is not None:
+            axis.get_legend().remove()
+
+        if baseline is None or not np.isfinite(baseline):
+            continue
+        pairs = []
+        pvalues = []
+        for signal in signal_order:
+            for drug_label in drug_order:
+                values = task_data.loc[
+                    (task_data["signal"] == signal)
+                    & (task_data["drug_label"] == drug_label),
+                    "variance",
+                ].dropna()
+                if len(values) < 2:
+                    continue
+                pvalue = ttest_1samp(values, popmean=baseline).pvalue
+                if isfinite(pvalue):
+                    pairs.append(((signal, drug_label), (signal, drug_label)))
+                    pvalues.append(pvalue)
+        if pairs:
+            annotator = Annotator(
+                axis,
+                pairs,
+                data=task_data,
+                x="signal",
+                y="variance",
+                hue="drug_label",
+                order=list(signal_order),
+                hue_order=list(drug_order),
+            )
+            annotator.configure(line_width=0, text_format="star", verbose=0)
+            annotator.set_pvalues_and_annotate(pvalues)
+
+    if legend_handles:
+        fig.legend(
+            legend_handles,
+            legend_labels,
+            frameon=False,
+            loc="lower center",
+            ncol=len(legend_labels),
+            bbox_to_anchor=(0.5, -0.15),
+        )
+    sns.despine(fig=fig)
+    return fig, axes
+
+
+def animal_chunk_histogram(chunk_lengths: pd.DataFrame, *, group_cols, stat: str) -> pd.DataFrame:
+    group_cols = list(group_cols)
+    counts = (
+        chunk_lengths
+        .groupby(["subject", *group_cols, "chunk_length"], observed=True)
+        .size()
+        .rename("count")
+        .reset_index()
+    )
+    counts["frequency"] = (
+        counts["count"]
+        / counts.groupby(["subject", *group_cols], observed=True)["count"].transform("sum")
+    )
+    counts["n_subjects"] = counts.groupby(group_cols, observed=True)["subject"].transform("nunique")
+    counts["hist_weight"] = (
+        counts["frequency"] if stat == "probability" else counts["count"]
+    ) / counts["n_subjects"]
+    return counts
+
+
+def _transition_chunks_for_sequence(plot_df, task_name: str, sequence_col: str, sequence_label: str):
+    trials = (
+        plot_df
+        .select(["subject", "session", "trial_idx", sequence_col])
+        .to_pandas()
+        .dropna(subset=[sequence_col])
+        .sort_values(["subject", "session", "trial_idx"])
+    )
+    trials["previous_value"] = (
+        trials.groupby(["subject", "session"], observed=True)[sequence_col].shift(1)
+    )
+    trials = trials.dropna(subset=["previous_value"])
+    trials["transition"] = (
+        trials[sequence_col]
+        .eq(trials["previous_value"])
+        .map({True: "repeating", False: "alternating"})
+    )
+    trials["transition_chunk"] = (
+        trials
+        .groupby(["subject", "session"], observed=True)["transition"]
+        .transform(lambda transition: transition.ne(transition.shift()).cumsum())
+    )
+    chunks = (
+        trials
+        .groupby(["subject", "session", "transition", "transition_chunk"], observed=True)
+        .size()
+        .rename("chunk_length")
+        .reset_index()
+    )
+    task_labels = {"2AFC": "2AFC", "2AFC_delay": "2ADC", "2ADC": "2ADC", "MCDR": "MCDR"}
+    chunks["task"] = task_name
+    chunks["task_label"] = task_labels.get(task_name, task_name)
+    chunks["sequence"] = sequence_label
+    repeat_probability = {
+        "task": task_name,
+        "task_label": task_labels.get(task_name, task_name),
+        "sequence": sequence_label,
+        "p_repeat": (trials["transition"] == "repeating").mean(),
+    }
+    return chunks, repeat_probability
+
+
+def build_transition_chunks_by_task(plot_payloads: dict, task_names: Sequence[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    chunk_frames = []
+    repeat_probability_rows = []
+    for task_name in task_names:
+        plot_df = plot_payloads[task_name]["plot_df"]
+        available_columns = set(plot_df.columns)
+        for sequence_col, sequence_label in [("response", "Choices"), ("stimulus", "Stimulus")]:
+            if {"subject", "session", "trial_idx", sequence_col}.issubset(available_columns):
+                chunks, repeat_probability = _transition_chunks_for_sequence(
+                    plot_df,
+                    task_name,
+                    sequence_col,
+                    sequence_label,
+                )
+                chunk_frames.append(chunks)
+                repeat_probability_rows.append(repeat_probability)
+
+    return (
+        pd.concat(chunk_frames, ignore_index=True) if chunk_frames else pd.DataFrame(),
+        pd.DataFrame(repeat_probability_rows),
+    )
+
+
+def two_afc_repeat_alternate_trials(plot_df) -> pd.DataFrame:
+    df = plot_df.to_pandas() if hasattr(plot_df, "to_pandas") else pd.DataFrame(plot_df)
+    subject_col = pick_existing_column(df, ["subject"])
+    session_col = pick_existing_column(df, ["session", "Session"])
+    trial_col = pick_existing_column(df, ["trial_idx", "trial", "Trial"])
+    choice_col = pick_existing_column(df, ["response", "choice", "choices", "Choice"])
+    correct_col = pick_existing_column(df, ["correct_bool", "performance", "Hit", "hit"])
+    if any(col is None for col in [subject_col, session_col, trial_col, choice_col, correct_col]):
+        return pd.DataFrame()
+
+    out = df[[subject_col, session_col, trial_col, choice_col, correct_col]].copy()
+    out.columns = ["subject", "session", "trial", "choice", "correct"]
+    out["correct"] = _coerce_correct_values(out["correct"]).astype(float)
+    out["trial"] = pd.to_numeric(out["trial"], errors="coerce")
+    out = out.dropna(subset=["subject", "session", "trial", "choice", "correct"])
+    out = out.sort_values(["subject", "session", "trial"])
+    out["previous_choice"] = out.groupby(["subject", "session"], observed=True)["choice"].shift(1)
+    out = out.dropna(subset=["previous_choice"]).copy()
+    out["transition"] = [
+        "Repeating" if choice == previous else "Alternating"
+        for choice, previous in zip(out["choice"], out["previous_choice"], strict=False)
+    ]
+    return out
+
+
+def two_afc_transition_chunk_lengths(plot_df) -> pd.DataFrame:
+    trials = two_afc_repeat_alternate_trials(plot_df)
+    if trials.empty:
+        return trials
+    chunks = []
+    for (_subject, _session), session_df in trials.groupby(["subject", "session"], observed=True):
+        session_df = session_df.copy()
+        session_df["chunk"] = (session_df["transition"] != session_df["transition"].shift()).cumsum()
+        chunks.append(
+            session_df.groupby("chunk", as_index=False, observed=True)
+            .agg(
+                subject=("subject", "first"),
+                session=("session", "first"),
+                transition=("transition", "first"),
+                chunk_length=("transition", "size"),
+            )
+        )
+    return pd.concat(chunks, ignore_index=True)
+
+
+def two_afc_session_repeat_alternate_accuracy(plot_df) -> pd.DataFrame:
+    trials = two_afc_repeat_alternate_trials(plot_df)
+    if trials.empty:
+        return trials
+    accuracy = (
+        trials.groupby(["subject", "session", "transition"], observed=True)["correct"]
+        .mean()
+        .unstack("transition")
+        .reset_index()
+    )
+    if {"Repeating", "Alternating"}.difference(accuracy.columns):
+        return pd.DataFrame()
+    return accuracy.rename(
+        columns={
+            "Repeating": "repeat_accuracy",
+            "Alternating": "alternate_accuracy",
+        }
+    ).dropna(subset=["repeat_accuracy", "alternate_accuracy"])
 
 
 def plot_prepared_weight_family(
@@ -1854,6 +2645,174 @@ def plot_corrected_behavior_autocorrelograms(
     return fig, axes
 
 
+def draw_closed_loop_autocorrelogram_overlay_panel(
+    ax: plt.Axes,
+    signal: str,
+    data_ac: pd.DataFrame,
+    glm_ac: pd.DataFrame | None = None,
+    glmhmm_ac: pd.DataFrame | None = None,
+    *,
+    colors: dict[str, str] | None = None,
+    data_label: str = "Data",
+    glm_label: str = "GLM",
+    glmhmm_label: str = "GLM-HMM",
+    ylabel: str = "Autocorrelation",
+) -> None:
+    colors = {
+        "data": "tab:blue",
+        "glm": "tab:gray",
+        "glmhmm": "tab:red",
+        **(colors or {}),
+    }
+    data_ac = to_pandas_df(data_ac)
+    glm_ac = to_pandas_df(glm_ac) if glm_ac is not None else pd.DataFrame()
+    glmhmm_ac = to_pandas_df(glmhmm_ac) if glmhmm_ac is not None else pd.DataFrame()
+
+    data_sub = (
+        data_ac[data_ac["signal"] == signal].sort_values("lag")
+        if "signal" in data_ac.columns
+        else pd.DataFrame()
+    )
+    if data_sub.empty:
+        ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
+        ax.axis("off")
+        return
+
+    yerr = (
+        data_sub["autocorr_sem"].to_numpy(dtype=float)
+        if "autocorr_sem" in data_sub.columns
+        else None
+    )
+    ax.errorbar(
+        data_sub["lag"],
+        data_sub["autocorr"],
+        yerr=yerr,
+        fmt="o",
+        capsize=0,
+        ms=3,
+        color=colors["data"],
+        ecolor=colors["data"],
+        label=data_label,
+        zorder=4,
+    )
+    for label, model_ac, color in (
+        (glm_label, glm_ac, colors["glm"]),
+        (glmhmm_label, glmhmm_ac, colors["glmhmm"]),
+    ):
+        sub = (
+            model_ac[model_ac["signal"] == signal].sort_values("lag")
+            if "signal" in model_ac.columns
+            else pd.DataFrame()
+        )
+        if sub.empty or "autocorr" not in sub.columns:
+            continue
+        ax.plot(sub["lag"], sub["autocorr"], color=color, label=label, zorder=3)
+
+    ax.axhline(0.0, color="0.5", ls="--")
+    ax.set_title("Outcomes" if signal == "Outcome" else "Repetitions")
+    ax.set_xlabel("Lag")
+    ax.set_ylabel(ylabel)
+    if signal == "Repetition":
+        ax.set_ylim(top=0.15)
+    else:
+        ax.set_ylim(top=0.05)
+    ax.legend(frameon=False)
+
+
+def plot_closed_loop_autocorrelogram_overlay(
+    data_ac: pd.DataFrame,
+    glm_ac: pd.DataFrame,
+    glmhmm_ac: pd.DataFrame | None = None,
+    *,
+    axes: Sequence[plt.Axes] | None = None,
+    figsize=None,
+) -> plt.Figure:
+    if figsize is None:
+        figsize = fig_size(1, 2)
+    fig, axes = resolve_axes(
+        axes=axes,
+        n_axes=2,
+        figsize=figsize,
+        squeeze=False,
+        constrained_layout=True,
+    )
+    for ax, signal in zip(axes, ("Outcome", "Repetition"), strict=True):
+        draw_closed_loop_autocorrelogram_overlay_panel(
+            ax,
+            signal,
+            data_ac,
+            glm_ac,
+            glmhmm_ac,
+        )
+    return fig
+
+
+def plot_closed_loop_autocorrelograms_by_task(
+    autocorrelograms_by_task: dict,
+    *,
+    task_order: Sequence[str] | None = None,
+    task_labels: dict[str, str] | None = None,
+    figsize=None,
+) -> plt.Figure:
+    task_order = list(task_order or autocorrelograms_by_task)
+    task_labels = task_labels or {}
+    if figsize is None:
+        figsize = (7.0, 2.0 * max(1, len(task_order)))
+    fig, axes = plt.subplots(
+        len(task_order),
+        2,
+        figsize=figsize,
+        squeeze=False,
+        layout="constrained",
+        sharex=True,
+    )
+    for row_idx, task_name in enumerate(task_order):
+        payload = autocorrelograms_by_task[task_name]
+        for col_idx, signal in enumerate(("Outcome", "Repetition")):
+            ax = axes[row_idx, col_idx]
+            draw_closed_loop_autocorrelogram_overlay_panel(
+                ax,
+                signal,
+                payload["data"]["autocorr"],
+                payload.get("glm", {}).get("autocorr"),
+                payload.get("glmhmm", {}).get("autocorr"),
+            )
+            if col_idx == 0:
+                ax.set_ylabel(f"{task_labels.get(task_name, task_name)}\nAutocorrelation")
+            else:
+                ax.set_ylabel("")
+            if row_idx < len(task_order) - 1:
+                ax.set_xlabel("")
+    return fig
+
+
+def save_closed_loop_autocorrelogram_overlay_panels(
+    data_ac: pd.DataFrame,
+    glm_ac: pd.DataFrame,
+    glmhmm_ac: pd.DataFrame | None,
+    out_dir,
+    *,
+    stem_prefix: str,
+) -> list:
+    saved_paths = []
+    for signal in ("Outcome", "Repetition"):
+        fig, ax = plt.subplots(figsize=fig_size(2, 1), layout="constrained")
+        draw_closed_loop_autocorrelogram_overlay_panel(
+            ax,
+            signal,
+            data_ac,
+            glm_ac,
+            glmhmm_ac,
+        )
+        stem = out_dir / f"{stem_prefix}_closed_loop_autocorrelogram_{signal.lower()}"
+        fig.savefig(stem.with_suffix(".png"), dpi=300)
+        fig.savefig(stem.with_suffix(".svg"))
+        fig.savefig(stem.with_suffix(".pdf"))
+        plt.close(fig)
+        saved_paths.extend([stem.with_suffix(".png"), stem.with_suffix(".svg"), stem.with_suffix(".pdf")])
+    return saved_paths
+
+
 def psychometric_repeat(
     plot_df,
     ax=None,
@@ -1970,6 +2929,7 @@ __all__ = [
     "apply_axis_style",
     "centered_numeric_group_palette",
     "make_single_panel_figure",
+    "draw_closed_loop_autocorrelogram_overlay_panel",
     "plot_empirical_accuracy_curve",
     "plot_action_trace_counterfactual_lag_match",
     "plot_action_trace_counterfactual_rb",
@@ -1977,6 +2937,8 @@ __all__ = [
     "plot_action_trace_parameter_fixed_lag_match",
     "plot_action_trace_parameter_fixed_rb",
     "plot_action_trace_parameter_fixed_subject_scatter",
+    "plot_closed_loop_autocorrelogram_overlay",
+    "plot_closed_loop_autocorrelograms_by_task",
     "plot_corrected_behavior_autocorrelograms",
     "plot_session_accuracy_repetition_timescale",
     "plot_session_behavior_autocorrelogram",
@@ -1988,4 +2950,5 @@ __all__ = [
     "plot_simple_summary",
     "resolve_axes",
     "resolve_single_axis",
+    "save_closed_loop_autocorrelogram_overlay_panels",
 ]

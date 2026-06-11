@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -4155,6 +4156,825 @@ def prepare_corrected_behavior_autocorrelograms(
             "seed": int(seed),
         },
     }
+
+
+def autocorrelogram_array_subjects(out_dir, suffix: str, *, k: int | None = None) -> list[str]:
+    subjects = []
+    pattern = f"*_{suffix}" if k is None else f"*_K{k}_{suffix}"
+    for path in sorted(out_dir.glob(pattern)):
+        subject = path.name.removesuffix(f"_{suffix}")
+        if k is not None:
+            subject = subject.removesuffix(f"_K{k}")
+        subjects.append(subject)
+    return subjects
+
+
+def fitted_lag_weights(adapter, subject: str, target_col: str) -> dict[int, float]:
+    from glmhmmt.tasks.fitted_regressors import (
+        mean_feature_weights_from_fit,
+        resolved_source_features,
+        subject_feature_weights_from_fit,
+    )
+
+    spec_attr = {
+        "choice_lag_param": "choice_lag_param_spec",
+        "at_choice_param": "at_choice_param_spec",
+    }.get(target_col)
+    if spec_attr is None or not hasattr(adapter, spec_attr):
+        return {}
+
+    spec = getattr(adapter, spec_attr)
+    try:
+        weights = subject_feature_weights_from_fit(spec, subject)
+    except (FileNotFoundError, ValueError):
+        weights = mean_feature_weights_from_fit(spec)
+
+    out = {}
+    for feature in resolved_source_features(spec):
+        match = re.fullmatch(r"choice_lag_(\d+)", str(feature))
+        if match and feature in weights:
+            out[int(match.group(1))] = float(weights[feature])
+    return out
+
+
+def autocorrelogram_class_count(arrays: dict) -> int:
+    p_pred = np.asarray(arrays.get("p_pred", []), dtype=float)
+    if p_pred.ndim == 2 and p_pred.shape[1] > 0:
+        return int(p_pred.shape[1])
+    y = np.asarray(arrays.get("y", []), dtype=float)
+    finite = y[np.isfinite(y)]
+    return int(np.nanmax(finite) + 1) if finite.size else 2
+
+
+def normalize_probability_vector(probs: np.ndarray) -> np.ndarray:
+    out = np.asarray(probs, dtype=float).copy()
+    out = np.clip(out, 1e-12, np.inf)
+    total = float(np.sum(out))
+    if not np.isfinite(total) or total <= 0:
+        return np.full_like(out, 1.0 / out.size, dtype=float)
+    return out / total
+
+
+def apply_autocorrelogram_lapse(
+    probs: np.ndarray,
+    *,
+    previous_choice: int | None,
+    lapse_mode: str,
+    lapse_rates: np.ndarray,
+) -> np.ndarray:
+    out = normalize_probability_vector(probs)
+    if previous_choice is None:
+        return out
+
+    num_classes = out.size
+    lapse_rates = np.asarray(lapse_rates, dtype=float).reshape(-1)
+    if lapse_mode == "class" and lapse_rates.size:
+        class_rates = lapse_rates[:num_classes]
+        total_mass = float(np.sum(class_rates))
+        out = class_rates + (1.0 - total_mass) * out
+    elif lapse_mode == "history":
+        repeat_rate = float(lapse_rates[0]) if lapse_rates.size > 0 else 0.0
+        alternate_rate = float(lapse_rates[1]) if lapse_rates.size > 1 else 0.0
+        repeat_target = np.zeros(num_classes, dtype=float)
+        repeat_target[int(previous_choice)] = 1.0
+        alternate_target = np.full(num_classes, 1.0 / max(1, num_classes - 1), dtype=float)
+        alternate_target[int(previous_choice)] = 0.0
+        out = (1.0 - repeat_rate - alternate_rate) * out
+        out += repeat_rate * repeat_target + alternate_rate * alternate_target
+    elif lapse_mode == "history_conditioned":
+        repeat_rates = lapse_rates[:num_classes]
+        alternate_rates = lapse_rates[num_classes : 2 * num_classes]
+        repeat_rate = float(repeat_rates[int(previous_choice)]) if repeat_rates.size > previous_choice else 0.0
+        alternate_rate = (
+            float(alternate_rates[int(previous_choice)])
+            if alternate_rates.size > previous_choice
+            else 0.0
+        )
+        repeat_target = np.zeros(num_classes, dtype=float)
+        repeat_target[int(previous_choice)] = 1.0
+        alternate_target = np.full(num_classes, 1.0 / max(1, num_classes - 1), dtype=float)
+        alternate_target[int(previous_choice)] = 0.0
+        out = (1.0 - repeat_rate - alternate_rate) * out
+        out += repeat_rate * repeat_target + alternate_rate * alternate_target
+    return normalize_probability_vector(out)
+
+
+def infer_autocorrelogram_correct_class(
+    subject_df: pd.DataFrame,
+    adapter,
+    arrays: dict | None = None,
+) -> np.ndarray:
+    behavioral_cols = dict(getattr(adapter, "behavioral_cols", {}) or {})
+    stimulus_col = behavioral_cols.get("stimulus")
+    performance_col = behavioral_cols.get("performance")
+
+    if (
+        arrays is not None
+        and stimulus_col in subject_df.columns
+        and performance_col in subject_df.columns
+    ):
+        y = np.asarray(arrays.get("y", []), dtype=float)
+        if y.shape[0] == len(subject_df):
+            performance = pd.to_numeric(subject_df[performance_col], errors="coerce")
+            tmp = pd.DataFrame(
+                {
+                    "stimulus": subject_df[stimulus_col].to_numpy(),
+                    "performance": performance.to_numpy(dtype=float),
+                    "class": y,
+                }
+            )
+            mapping = {}
+            for stim_value, group in tmp[tmp["performance"] > 0].groupby("stimulus", observed=True):
+                finite_classes = group["class"][np.isfinite(group["class"])]
+                if finite_classes.empty:
+                    continue
+                mode = finite_classes.astype(int).mode(dropna=True)
+                if not mode.empty:
+                    mapping[stim_value] = int(mode.iloc[0])
+            if mapping:
+                return np.asarray(
+                    [mapping.get(value, np.nan) for value in subject_df[stimulus_col].to_numpy()],
+                    dtype=float,
+                )
+
+    if stimulus_col not in subject_df.columns:
+        return np.full(len(subject_df), np.nan, dtype=float)
+
+    stimulus = pd.to_numeric(subject_df[stimulus_col], errors="coerce").to_numpy(dtype=float)
+    if arrays is not None:
+        num_classes = autocorrelogram_class_count(arrays)
+        class_values = np.arange(num_classes, dtype=float)
+        if np.isin(stimulus[np.isfinite(stimulus)], class_values).all():
+            return stimulus
+    return np.where(
+        np.isin(stimulus, [0.0, 1.0]),
+        stimulus,
+        np.where(np.isfinite(stimulus), (stimulus > 0.0).astype(float), np.nan),
+    )
+
+
+def autocorrelogram_session_starts(sessions: np.ndarray) -> np.ndarray:
+    starts = np.zeros(len(sessions), dtype=int)
+    start = 0
+    for idx in range(len(sessions)):
+        if idx > 0 and sessions[idx] != sessions[idx - 1]:
+            start = idx
+        starts[idx] = start
+    return starts
+
+
+def autocorrelogram_history_value(
+    choices: np.ndarray,
+    trial_idx: int,
+    lag: int,
+    starts: np.ndarray,
+    choice_history_values: dict[int, float] | None = None,
+) -> float:
+    source_idx = trial_idx - int(lag)
+    if source_idx < starts[trial_idx]:
+        return 0.0
+    choice = choices[source_idx]
+    if not np.isfinite(choice):
+        return 0.0
+    choice_idx = int(choice)
+    if choice_history_values is not None and choice_idx in choice_history_values:
+        return float(choice_history_values[choice_idx])
+    return float(2.0 * choice_idx - 1.0)
+
+
+def infer_autocorrelogram_choice_history_values(
+    y: np.ndarray,
+    base_X: np.ndarray,
+    sessions: np.ndarray,
+    x_cols: list[str],
+) -> dict[int, float]:
+    """Infer class-to-history coding from saved direct choice-lag columns."""
+    y = np.asarray(y, dtype=float)
+    base_X = np.asarray(base_X, dtype=float)
+    if y.shape[0] != base_X.shape[0]:
+        return {}
+
+    values_by_class: dict[int, list[float]] = {}
+    for col_idx, col in enumerate(x_cols):
+        match = re.fullmatch(r"choice_lag_(\d+)", str(col))
+        if not match:
+            continue
+        lag = int(match.group(1))
+        if lag <= 0 or lag >= len(y):
+            continue
+        same_session = sessions[lag:] == sessions[:-lag]
+        source_y = y[:-lag][same_session]
+        lag_values = base_X[lag:, col_idx][same_session]
+        finite = np.isfinite(source_y) & np.isfinite(lag_values)
+        for class_value, lag_value in zip(source_y[finite], lag_values[finite], strict=False):
+            values_by_class.setdefault(int(class_value), []).append(float(lag_value))
+
+    out = {}
+    for class_value, values in values_by_class.items():
+        if values:
+            out[int(class_value)] = float(np.nanmedian(values))
+    return out
+
+
+def closed_loop_autocorrelogram_x(
+    base_x: np.ndarray,
+    *,
+    trial_idx: int,
+    choices: np.ndarray,
+    starts: np.ndarray,
+    x_cols: list[str],
+    lag_param_weights: dict[str, dict[int, float]],
+    choice_history_values: dict[int, float] | None = None,
+) -> np.ndarray:
+    x = np.asarray(base_x, dtype=float).copy()
+    for col_idx, col in enumerate(x_cols):
+        match = re.fullmatch(r"choice_lag_(\d+)", str(col))
+        if match:
+            x[col_idx] = autocorrelogram_history_value(
+                choices,
+                trial_idx,
+                int(match.group(1)),
+                starts,
+                choice_history_values=choice_history_values,
+            )
+        elif col in lag_param_weights:
+            x[col_idx] = sum(
+                weight * autocorrelogram_history_value(
+                    choices,
+                    trial_idx,
+                    lag,
+                    starts,
+                    choice_history_values=choice_history_values,
+                )
+                for lag, weight in lag_param_weights[col].items()
+            )
+        elif col == "prev_choice":
+            x[col_idx] = autocorrelogram_history_value(
+                choices,
+                trial_idx,
+                1,
+                starts,
+                choice_history_values=choice_history_values,
+            )
+    return x
+
+
+def simulate_subject_closed_loop_autocorrelogram(
+    subject_df: pd.DataFrame,
+    arrays: dict,
+    *,
+    adapter,
+    subject: str,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    from glmhmmt.glm import glm_probs_from_weights
+
+    base_X = np.asarray(arrays["X"], dtype=float)
+    x_cols = [str(v) for v in np.asarray(arrays.get("X_cols", []), dtype=object).tolist()]
+    if base_X.ndim != 2 or base_X.shape[0] != len(subject_df):
+        raise ValueError(f"{subject}: X rows ({base_X.shape}) do not match data rows ({len(subject_df)}).")
+
+    weights = np.asarray(arrays["emission_weights"], dtype=float)
+    if weights.ndim == 2:
+        weights = weights[None, :, :]
+    if weights.ndim != 3:
+        raise ValueError(f"{subject}: expected emission_weights with 3 dimensions, got {weights.shape}.")
+
+    K = int(weights.shape[0])
+    num_classes = autocorrelogram_class_count(arrays)
+    baseline_class_idx = int(np.asarray(arrays.get("baseline_class_idx", 0)).reshape(()))
+    lapse_mode = str(np.asarray(arrays.get("lapse_mode", "none")).reshape(()))
+    lapse_rates = np.asarray(arrays.get("lapse_rates", []), dtype=float)
+    transition_matrix = np.asarray(arrays.get("transition_matrix", np.eye(K)), dtype=float)
+    initial_probs = normalize_probability_vector(np.asarray(arrays.get("initial_probs", np.ones(K) / K), dtype=float))
+
+    sessions = subject_df[adapter.behavioral_cols["session"]].to_numpy()
+    starts = autocorrelogram_session_starts(sessions)
+    choices = np.full(len(subject_df), np.nan, dtype=float)
+    states = np.zeros(len(subject_df), dtype=int)
+    choice_history_values = infer_autocorrelogram_choice_history_values(
+        np.asarray(arrays.get("y", []), dtype=float),
+        base_X,
+        sessions,
+        x_cols,
+    )
+    lag_param_weights = {
+        col: fitted_lag_weights(adapter, subject, col)
+        for col in ("choice_lag_param", "at_choice_param")
+        if col in x_cols
+    }
+
+    for trial_idx in range(len(subject_df)):
+        if trial_idx == starts[trial_idx]:
+            state = int(rng.choice(K, p=initial_probs))
+        else:
+            state_probs = normalize_probability_vector(transition_matrix[states[trial_idx - 1]])
+            state = int(rng.choice(K, p=state_probs))
+        states[trial_idx] = state
+
+        x_trial = closed_loop_autocorrelogram_x(
+            base_X[trial_idx],
+            trial_idx=trial_idx,
+            choices=choices,
+            starts=starts,
+            x_cols=x_cols,
+            lag_param_weights=lag_param_weights,
+            choice_history_values=choice_history_values,
+        )
+        probs = glm_probs_from_weights(
+            x_trial[None, :],
+            weights[state],
+            baseline_class_idx=baseline_class_idx,
+            num_classes=num_classes,
+        )[0]
+        previous_choice = int(choices[trial_idx - 1]) if trial_idx > starts[trial_idx] else None
+        probs = apply_autocorrelogram_lapse(
+            probs,
+            previous_choice=previous_choice,
+            lapse_mode=lapse_mode,
+            lapse_rates=lapse_rates,
+        )
+        choices[trial_idx] = int(rng.choice(num_classes, p=probs))
+
+    correct_class = infer_autocorrelogram_correct_class(subject_df, adapter, arrays)
+    performance = (choices == correct_class).astype(float)
+    performance[~np.isfinite(correct_class)] = np.nan
+    return choices, performance
+
+
+def closed_loop_arrays_store_from_views(views: dict) -> dict:
+    """Convert SubjectFitView objects to the arrays dict used by closed-loop simulation."""
+    arrays_store = {}
+    for subject, view in views.items():
+        arrays = {
+            "X": np.asarray(view.X),
+            "X_cols": np.asarray(view.feat_names, dtype=object),
+            "y": np.asarray(view.y),
+            "emission_weights": np.asarray(view.emission_weights),
+            "baseline_class_idx": np.asarray(view.baseline_class_idx),
+            "lapse_mode": np.asarray(view.lapse_mode),
+        }
+        if view.p_pred is not None:
+            arrays["p_pred"] = np.asarray(view.p_pred)
+        if view.lapse_rates is not None:
+            arrays["lapse_rates"] = np.asarray(view.lapse_rates)
+        if view.initial_probs is not None:
+            arrays["initial_probs"] = np.asarray(view.initial_probs)
+        if view.transition_matrix is not None:
+            arrays["transition_matrix"] = np.asarray(view.transition_matrix)
+        arrays_store[str(subject)] = arrays
+    return arrays_store
+
+
+def prepare_closed_loop_model_autocorrelograms(
+    df_all: pl.DataFrame,
+    arrays_store: dict | None = None,
+    *,
+    views: dict | None = None,
+    adapter,
+    n_simulations: int,
+    max_lag: int,
+    seed: int,
+    min_cross_pairs: int = 20,
+    max_cross_pairs: int = 80,
+    progress_label: str = "closed-loop simulations",
+) -> dict:
+    from glmhmmt.notebook_support.analysis_common import select_subject_behavior_df
+    from tqdm.auto import tqdm
+
+    if arrays_store is None:
+        if views is None:
+            raise ValueError("Provide either arrays_store or views.")
+        arrays_store = closed_loop_arrays_store_from_views(views)
+
+    rng = np.random.default_rng(seed)
+    frames = []
+    n_simulations = int(n_simulations)
+    total_jobs = len(arrays_store) * n_simulations
+    with tqdm(total=total_jobs, desc=progress_label, unit="sim") as progress:
+        for subject, arrays in arrays_store.items():
+            subject_df_pl = select_subject_behavior_df(
+                df_all,
+                subject=subject,
+                sort_col=adapter.sort_col,
+                session_col=adapter.session_col,
+                min_session_length=1,
+            )
+            if subject_df_pl.height == 0:
+                progress.update(n_simulations)
+                continue
+            subject_df = subject_df_pl.to_pandas()
+            sessions = subject_df[adapter.behavioral_cols["session"]].to_numpy()
+            trial_index = subject_df[adapter.behavioral_cols["trial"]].to_numpy()
+            for sim_idx in range(n_simulations):
+                choices, performance = simulate_subject_closed_loop_autocorrelogram(
+                    subject_df,
+                    arrays,
+                    adapter=adapter,
+                    subject=str(subject),
+                    rng=rng,
+                )
+                frames.append(
+                    pd.DataFrame(
+                        {
+                            "subject": f"{subject}__closed_loop_{sim_idx:03d}",
+                            "session": sessions,
+                            "trial_index": trial_index,
+                            "response": choices,
+                            "performance": performance,
+                        }
+                    )
+                )
+                progress.update()
+
+    simulated_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    prepared = prepare_corrected_behavior_autocorrelograms(
+        simulated_df,
+        subject_col="subject",
+        session_col="session",
+        choice_col="response",
+        outcome_col="performance",
+        trial_index_col="trial_index",
+        max_lag=max_lag,
+        min_cross_pairs=min_cross_pairs,
+        max_cross_pairs=max_cross_pairs,
+        seed=seed,
+    )
+    prepared["simulated_df"] = simulated_df
+    prepared["meta"] = {
+        **prepared.get("meta", {}),
+        "n_simulations": n_simulations,
+        "simulation": "closed_loop_model",
+    }
+    return prepared
+
+
+def animal_chunk_histogram_weights(
+    chunk_lengths: pd.DataFrame,
+    *,
+    group_cols: Sequence[str],
+    stat: str,
+) -> pd.DataFrame:
+    """Average per-subject chunk-length counts/frequencies for plotting."""
+    group_cols = list(group_cols)
+    counts = (
+        chunk_lengths
+        .groupby(["subject", *group_cols, "chunk_length"], observed=True)
+        .size()
+        .rename("count")
+        .reset_index()
+    )
+    counts["frequency"] = (
+        counts["count"]
+        / counts.groupby(["subject", *group_cols], observed=True)["count"].transform("sum")
+    )
+    counts["n_subjects"] = counts.groupby(group_cols, observed=True)["subject"].transform("nunique")
+    counts["hist_weight"] = (
+        counts["frequency"] if stat == "probability" else counts["count"]
+    ) / counts["n_subjects"]
+    return counts
+
+
+def build_transition_chunk_plot_data(
+    plot_dfs: dict,
+    task_names: Sequence[str],
+    *,
+    stat: str = "count",
+    task_labels: dict[str, str] | None = None,
+    task_order: Sequence[str] = ("2ADC", "2AFC", "MCDR"),
+    transition_palette: dict[str, str] | None = None,
+    max_chunk_length: int = 100,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str], pd.DataFrame]:
+    """Build transition chunk tables and tidy plot data for task choice sequences."""
+    task_labels = {
+        "2AFC": "2AFC",
+        "2AFC_delay": "2ADC",
+        "2ADC": "2ADC",
+        "MCDR": "MCDR",
+        **(task_labels or {}),
+    }
+    transition_palette = transition_palette or {
+        "repeating": "tab:brown",
+        "alternating": "tab:purple",
+    }
+
+    def transition_chunks_for_task(task_name: str, sequence_col: str, sequence_label: str):
+        trials = (
+            plot_dfs[task_name]
+            .select(["subject", "session", "trial_idx", sequence_col])
+            .to_pandas()
+            .dropna(subset=[sequence_col])
+            .sort_values(["subject", "session", "trial_idx"])
+        )
+        trials["previous_value"] = (
+            trials.groupby(["subject", "session"], observed=True)[sequence_col].shift(1)
+        )
+        trials = trials.dropna(subset=["previous_value"])
+        trials["transition"] = (
+            trials[sequence_col]
+            .eq(trials["previous_value"])
+            .map({True: "repeating", False: "alternating"})
+        )
+        trials["transition_chunk"] = (
+            trials
+            .groupby(["subject", "session"], observed=True)["transition"]
+            .transform(lambda transition: transition.ne(transition.shift()).cumsum())
+        )
+        chunks = (
+            trials
+            .groupby(["subject", "session", "transition", "transition_chunk"], observed=True)
+            .size()
+            .rename("chunk_length")
+            .reset_index()
+        )
+        chunks["task"] = task_name
+        chunks["task_label"] = task_labels.get(task_name, task_name)
+        chunks["sequence"] = sequence_label
+        repeat_probability = {
+            "task": task_name,
+            "task_label": task_labels.get(task_name, task_name),
+            "sequence": sequence_label,
+            "p_repeat": (trials["transition"] == "repeating").mean(),
+        }
+        return chunks, repeat_probability
+
+    chunk_frames = []
+    repeat_probability_rows = []
+    for task_name in task_names:
+        for sequence_col, sequence_label in [("response", "Choices"), ("stimulus", "Stimulus")]:
+            if {"subject", "session", "trial_idx", sequence_col}.issubset(plot_dfs[task_name].columns):
+                chunks, repeat_probability = transition_chunks_for_task(
+                    task_name,
+                    sequence_col,
+                    sequence_label,
+                )
+                chunk_frames.append(chunks)
+                repeat_probability_rows.append(repeat_probability)
+
+    transition_chunk_lengths = (
+        pd.concat(chunk_frames, ignore_index=True)
+        if chunk_frames
+        else pd.DataFrame()
+    )
+    transition_repeat_probabilities = pd.DataFrame(repeat_probability_rows)
+    plot_x = np.arange(1, int(max_chunk_length) + 1)
+
+    def geometric_chunk_probability(chunk_lengths, repeat_probability, transition):
+        continue_probability = (
+            repeat_probability
+            if transition == "repeating"
+            else 1.0 - repeat_probability
+        )
+        return (1.0 - continue_probability) * (continue_probability ** (chunk_lengths - 1))
+
+    def repeat_probability_for(task_label, sequence):
+        matches = transition_repeat_probabilities.loc[
+            (transition_repeat_probabilities["task_label"] == task_label)
+            & (transition_repeat_probabilities["sequence"] == sequence),
+            "p_repeat",
+        ]
+        if matches.empty:
+            return None
+        return float(matches.iloc[0])
+
+    plot_rows = []
+    for task_label in task_order:
+        data = transition_chunk_lengths[
+            (transition_chunk_lengths["task_label"] == task_label)
+            & (transition_chunk_lengths["sequence"] == "Choices")
+        ]
+        if data.empty:
+            continue
+
+        hist_data = animal_chunk_histogram_weights(
+            data,
+            group_cols=["transition"],
+            stat=stat,
+        )
+        choice_probability = repeat_probability_for(task_label, "Choices")
+        for transition in transition_palette:
+            transition_data = hist_data[hist_data["transition"] == transition]
+            transition_total = transition_data["hist_weight"].sum()
+            animal_y = (
+                transition_data
+                .groupby("chunk_length", observed=True)["hist_weight"]
+                .sum()
+                .reindex(plot_x, fill_value=0)
+                .sort_index()
+                .to_numpy(dtype=float)
+            )
+            plot_rows.extend(
+                {
+                    "task_label": task_label,
+                    "chunk_length": chunk_length,
+                    "transition": transition,
+                    "source": "Data",
+                    "weight": weight,
+                }
+                for chunk_length, weight in zip(plot_x, animal_y, strict=False)
+            )
+            if choice_probability is not None:
+                generated_y = geometric_chunk_probability(
+                    plot_x,
+                    choice_probability,
+                    transition,
+                )
+                if stat == "count":
+                    generated_y = generated_y * transition_total
+                plot_rows.extend(
+                    {
+                        "task_label": task_label,
+                        "chunk_length": chunk_length,
+                        "transition": transition,
+                        "source": "Independent choices",
+                        "weight": weight,
+                    }
+                    for chunk_length, weight in zip(plot_x, generated_y, strict=False)
+                )
+
+    transition_chunk_plot_data = pd.DataFrame(plot_rows)
+    return (
+        transition_chunk_lengths,
+        transition_chunk_plot_data,
+        transition_palette,
+        transition_repeat_probabilities,
+    )
+
+
+def build_transition_chunk_drug_plot_data(
+    get_adapter,
+    *,
+    task_specs: Sequence[tuple[str, str, str]] = (
+        ("2AFC_DRUG", "2AFC", "Drug"),
+        ("2ADC_DRUG", "2ADC", "drug_code"),
+        ("MCDR", "MCDR", "Drug"),
+    ),
+    task_order: Sequence[str] = ("2AFC", "2ADC", "MCDR"),
+    drug_order: Sequence[str] = ("No drug", "Drug"),
+    transition_palette: dict[str, str] | None = None,
+    max_chunk_length: int = 100,
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Build tidy drug-condition transition chunk plot data."""
+    transition_palette = transition_palette or {
+        "repeating": "tab:brown",
+        "alternating": "tab:purple",
+    }
+    x_values = np.arange(1, int(max_chunk_length) + 1)
+
+    def drug_label(series):
+        numeric = pd.to_numeric(series, errors="coerce")
+        label = pd.Series(pd.NA, index=series.index, dtype="object")
+        label[numeric == 0] = "No drug"
+        label[numeric == 1] = "Drug"
+        text = series.astype(str).str.strip().str.lower()
+        label[text.isin(["saline", "no drug", "nodrug"])] = "No drug"
+        label[text.isin(["drug", "nr2b"])] = "Drug"
+        return label
+
+    def transition_chunks_for_drug_task(task_name, task_label, drug_col):
+        adapter = get_adapter(task_name)
+        df = adapter.subject_filter(adapter.read_dataset()).to_pandas()
+        drug_col = pick_existing_column(df, [drug_col, "Drug", "condition", "drug_code"])
+        subject_col = pick_existing_column(df, ["subject", "Subject"])
+        session_col = pick_existing_column(df, ["session", "Session"])
+        trial_col = pick_existing_column(df, ["trial_idx", "Trial", "trial"])
+        response_col = pick_existing_column(df, ["response", "Choice", "choice", "choices"])
+        if any(col is None for col in [drug_col, subject_col, session_col, trial_col, response_col]):
+            raise ValueError(f"{task_name}: missing columns needed for drug transition chunks.")
+
+        trials = df[
+            [subject_col, session_col, trial_col, response_col, drug_col]
+        ].copy()
+        trials.columns = ["subject", "session", "trial_idx", "response", "drug"]
+        trials["drug_label"] = drug_label(trials["drug"])
+        trials = (
+            trials
+            .dropna(subset=["subject", "session", "trial_idx", "response", "drug_label"])
+            .sort_values(["subject", "drug_label", "session", "trial_idx"])
+        )
+        trials["previous_response"] = (
+            trials
+            .groupby(["subject", "drug_label", "session"], observed=True)["response"]
+            .shift(1)
+        )
+        trials = trials.dropna(subset=["previous_response"])
+        trials["transition"] = (
+            trials["response"]
+            .eq(trials["previous_response"])
+            .map({True: "repeating", False: "alternating"})
+        )
+        trials["transition_chunk"] = (
+            trials
+            .groupby(["subject", "drug_label", "session"], observed=True)["transition"]
+            .transform(lambda transition: transition.ne(transition.shift()).cumsum())
+        )
+        chunks = (
+            trials
+            .groupby(
+                ["subject", "drug_label", "session", "transition", "transition_chunk"],
+                observed=True,
+            )
+            .size()
+            .rename("chunk_length")
+            .reset_index()
+        )
+        chunks["task"] = task_name
+        chunks["task_label"] = task_label
+        repeat_probabilities = (
+            trials
+            .assign(is_repeating=trials["transition"] == "repeating")
+            .groupby("drug_label", observed=True)["is_repeating"]
+            .mean()
+            .rename("p_repeat")
+            .reset_index()
+        )
+        repeat_probabilities["task"] = task_name
+        repeat_probabilities["task_label"] = task_label
+        return chunks, repeat_probabilities
+
+    chunk_frames = []
+    repeat_probability_frames = []
+    for task_name, task_label, drug_col in task_specs:
+        chunks, repeat_probabilities = transition_chunks_for_drug_task(
+            task_name,
+            task_label,
+            drug_col,
+        )
+        chunk_frames.append(chunks)
+        repeat_probability_frames.append(repeat_probabilities)
+
+    chunk_lengths = pd.concat(chunk_frames, ignore_index=True)
+    repeat_probabilities = pd.concat(repeat_probability_frames, ignore_index=True)
+
+    def geometric_chunk_probability(chunk_lengths, repeat_probability, transition):
+        continue_probability = (
+            repeat_probability
+            if transition == "repeating"
+            else 1.0 - repeat_probability
+        )
+        return (1.0 - continue_probability) * (continue_probability ** (chunk_lengths - 1))
+
+    def repeat_probability_for(task_label, drug_label):
+        matches = repeat_probabilities.loc[
+            (repeat_probabilities["task_label"] == task_label)
+            & (repeat_probabilities["drug_label"] == drug_label),
+            "p_repeat",
+        ]
+        return float(matches.iloc[0])
+
+    plot_rows = []
+    for task_label in task_order:
+        for current_drug_label in drug_order:
+            data = chunk_lengths[
+                (chunk_lengths["task_label"] == task_label)
+                & (chunk_lengths["drug_label"] == current_drug_label)
+            ]
+            hist_data = animal_chunk_histogram_weights(
+                data,
+                group_cols=["drug_label", "transition"],
+                stat="probability",
+            )
+            choice_probability = repeat_probability_for(task_label, current_drug_label)
+
+            for transition in transition_palette:
+                transition_data = hist_data[hist_data["transition"] == transition]
+                animal_y = (
+                    transition_data
+                    .groupby("chunk_length", observed=True)["hist_weight"]
+                    .sum()
+                    .reindex(x_values, fill_value=0)
+                    .sort_index()
+                    .to_numpy(dtype=float)
+                )
+                generated_y = geometric_chunk_probability(
+                    x_values,
+                    choice_probability,
+                    transition,
+                )
+                plot_rows.extend(
+                    {
+                        "task_label": task_label,
+                        "drug_label": current_drug_label,
+                        "chunk_length": chunk_length,
+                        "transition": transition,
+                        "source": "Data",
+                        "weight": weight,
+                    }
+                    for chunk_length, weight in zip(x_values, animal_y, strict=False)
+                )
+                plot_rows.extend(
+                    {
+                        "task_label": task_label,
+                        "drug_label": current_drug_label,
+                        "chunk_length": chunk_length,
+                        "transition": transition,
+                        "source": "Independent choices",
+                        "weight": weight,
+                    }
+                    for chunk_length, weight in zip(x_values, generated_y, strict=False)
+                )
+
+    return pd.DataFrame(plot_rows), transition_palette
 
 
 def prepare_glm_simulated_corrected_behavior_autocorrelograms(
