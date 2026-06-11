@@ -1854,6 +1854,116 @@ def plot_corrected_behavior_autocorrelograms(
     return fig, axes
 
 
+def psychometric_repeat(
+    plot_df,
+    ax=None,
+    figsize=fig_size(n_cols=3),
+    title="",
+    color="tab:blue",
+    *,
+    session_col,
+    trial_col,
+    choice_col,
+    stimulus_col,
+    subject_col="subject",
+    delay_col=None,
+    difficulty_col=None,
+    is_mcdr=False,
+):
+    df_pd = plot_df.to_pandas().copy() if hasattr(plot_df, "to_pandas") else pd.DataFrame(plot_df).copy()
+
+    required_cols = [subject_col, session_col, trial_col, choice_col, stimulus_col]
+    missing_cols = [column for column in required_cols if column not in df_pd.columns]
+    optional_cols = [column for column in [delay_col, difficulty_col] if column is not None]
+    missing_cols.extend(column for column in optional_cols if column not in df_pd.columns)
+    if missing_cols:
+        raise KeyError(f"psychometric_repeat missing dataframe columns: {', '.join(missing_cols)}")
+
+    sort_cols = [subject_col, session_col, trial_col]
+    plot_df = df_pd.sort_values(sort_cols, kind="stable").copy()
+    plot_df["choice"] = pd.to_numeric(plot_df[choice_col], errors="coerce")
+    plot_df["previous_choice"] = plot_df.groupby(
+        [subject_col, session_col],
+        observed=True,
+    )["choice"].shift(1)
+    plot_df["_repeat"] = (plot_df["choice"] == plot_df["previous_choice"]).astype(float)
+
+    if is_mcdr:
+        baseline = 1.0 / 3.0
+    else:
+        choice_values = set(plot_df["choice"].dropna().unique().tolist())
+        if choice_values.issubset({-1.0, 1.0}):
+            plot_df["previous_choice_sign"] = plot_df["previous_choice"]
+        elif choice_values.issubset({0.0, 1.0}):
+            plot_df["previous_choice_sign"] = (2.0 * plot_df["previous_choice"]) - 1.0
+        else:
+            raise ValueError("psychometric_repeat expects binary choices unless is_mcdr=True.")
+        baseline = 0.5
+
+    signed_stimulus = pd.to_numeric(plot_df[stimulus_col], errors="coerce")
+    x_order = None
+    x_tick_labels = None
+    if delay_col is not None:
+        x_values = (
+            pd.to_numeric(plot_df[delay_col], errors="coerce").abs()
+            * np.sign(signed_stimulus)
+            * plot_df["previous_choice_sign"]
+        )
+        x_order = ["neg_0.1", "neg_1", "neg_3", "neg_10", "pos_10", "pos_3", "pos_1", "pos_0.1"]
+        x_tick_labels = ["-0", "-1", "-3", "-10", "10", "3", "1", "0"]
+
+        delay_magnitude = pd.Series(x_values, index=plot_df.index).abs()
+        delay_label = np.where(
+            np.isclose(delay_magnitude, 0.1),
+            "0.1",
+            delay_magnitude.round().astype("Int64").astype(str),
+        )
+        delay_side = np.where(x_values < 0, "neg", "pos")
+        x_values = pd.Series(delay_side, index=plot_df.index) + "_" + pd.Series(delay_label, index=plot_df.index)
+        xlabel = "Delay x choice$_{-1}$"
+    elif is_mcdr:
+        if difficulty_col is None:
+            raise ValueError("psychometric_repeat requires difficulty_col when is_mcdr=True.")
+        difficulty_labels = plot_df[difficulty_col].astype(str).map(
+            {
+                "VG": "VG",
+                "DS": "DS",
+                "DM": "DM",
+                "DL": "DL",
+            }
+        )
+        current_target = pd.to_numeric(plot_df[stimulus_col], errors="coerce")
+        side_labels = np.where(current_target == plot_df["previous_choice"], "pos", "neg")
+        x_values = pd.Series(side_labels, index=plot_df.index) + "_" + difficulty_labels
+        x_order = ["neg_VG", "neg_DS", "neg_DM", "neg_DL", "pos_DL", "pos_DM", "pos_DS", "pos_VG"]
+        x_tick_labels = ["-VG", "-DS", "-DM", "-DL", "DL", "DM", "DS", "VG"]
+        xlabel = "Difficulty. x choice$_{-1}$"
+    else:
+        x_values = signed_stimulus * plot_df["previous_choice_sign"]
+        x_values = pd.Series(x_values, index=plot_df.index).mask(lambda values: np.isclose(values, 0.0), 0.0)
+        xlabel = "Stim. x choice$_{-1}$"
+        x_tick_labels = [-20, -8, "", "", 0, "", "", 8, 20]
+
+    plot_df["_repeat_x"] = x_values
+    plot_df = plot_df.dropna(subset=["_repeat_x", "_repeat", "previous_choice"]).copy()
+
+    return plot_mean_over_data(
+        plot_df,
+        x_col="_repeat_x",
+        y_col="_repeat",
+        subject_col=subject_col,
+        x_order=x_order,
+        x_tick_labels=x_tick_labels,
+        xlabel=xlabel,
+        ylabel=r"$p(\mathrm{repeat})$",
+        title=title,
+        baseline=baseline,
+        baseline_area=False,
+        color=color,
+        ax=ax,
+        figsize=figsize,
+    )
+
 
 __all__ = [
     "add_shared_figure_legend",
