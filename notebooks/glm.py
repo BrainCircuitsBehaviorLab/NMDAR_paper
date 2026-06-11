@@ -387,6 +387,8 @@ def _(
                 baseline_class_idx=adapter.baseline_class_idx,
                 condition_filter=model_cfg.condition_filter,
                 emission_model=emission_model,
+                cv_mode=model_cfg.cv_mode,
+                cv_repeats=model_cfg.cv_repeats,
             )
         mm_widget.saved_model_name = _selected_id
         mm_widget.alias_error = ""

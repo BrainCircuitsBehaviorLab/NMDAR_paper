@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -1469,7 +1469,19 @@ def _(
 
 
 @app.cell
-def _(adapter, fig_size, mo, np, pd, plot_df_all, plots, plt, save_plot, selected, views):
+def _(
+    adapter,
+    fig_size,
+    mo,
+    np,
+    pd,
+    plot_df_all,
+    plots,
+    plt,
+    save_plot,
+    selected,
+    views,
+):
     _views_sel = {s: views[s] for s in selected}
     _evidence_figsize = fig_size(3, 1)
 

@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import polars as pl
+from tqdm.auto import tqdm
 
 from src.utils import fig_size
 
@@ -25,6 +26,11 @@ MIN_CROSS_PAIRS = 20
 MAX_CROSS_PAIRS = 80
 SEED = 1
 
+colors = {
+    "data": "tab:blue",
+    "glm": "tab:gray",
+    "glmhmm": "tab:red",
+}
 
 PROJECT_ROOT = next(
     (
@@ -298,41 +304,47 @@ def prepare_closed_loop_model_autocorrelograms(
     n_simulations: int,
     max_lag: int,
     seed: int,
+    progress_label: str = "closed-loop simulations",
 ) -> dict:
     rng = np.random.default_rng(seed)
     frames = []
-    for subject, arrays in arrays_store.items():
-        subject_df_pl = select_subject_behavior_df(
-            df_all,
-            subject=subject,
-            sort_col=adapter.sort_col,
-            session_col=adapter.session_col,
-            min_session_length=2,
-        )
-        if subject_df_pl.height == 0:
-            continue
-        subject_df = subject_df_pl.to_pandas()
-        sessions = subject_df[adapter.behavioral_cols["session"]].to_numpy()
-        trial_index = subject_df[adapter.behavioral_cols["trial"]].to_numpy()
-        for sim_idx in range(int(n_simulations)):
-            choices, performance = simulate_subject_closed_loop(
-                subject_df,
-                arrays,
-                adapter=adapter,
-                subject=str(subject),
-                rng=rng,
+    n_simulations = int(n_simulations)
+    total_jobs = len(arrays_store) * n_simulations
+    with tqdm(total=total_jobs, desc=progress_label, unit="sim") as progress:
+        for subject, arrays in arrays_store.items():
+            subject_df_pl = select_subject_behavior_df(
+                df_all,
+                subject=subject,
+                sort_col=adapter.sort_col,
+                session_col=adapter.session_col,
+                min_session_length=2,
             )
-            frames.append(
-                pd.DataFrame(
-                    {
-                        "subject": f"{subject}__closed_loop_{sim_idx:03d}",
-                        "session": sessions,
-                        "trial_index": trial_index,
-                        "response": choices,
-                        "performance": performance,
-                    }
+            if subject_df_pl.height == 0:
+                progress.update(n_simulations)
+                continue
+            subject_df = subject_df_pl.to_pandas()
+            sessions = subject_df[adapter.behavioral_cols["session"]].to_numpy()
+            trial_index = subject_df[adapter.behavioral_cols["trial"]].to_numpy()
+            for sim_idx in range(n_simulations):
+                choices, performance = simulate_subject_closed_loop(
+                    subject_df,
+                    arrays,
+                    adapter=adapter,
+                    subject=str(subject),
+                    rng=rng,
                 )
-            )
+                frames.append(
+                    pd.DataFrame(
+                        {
+                            "subject": f"{subject}__closed_loop_{sim_idx:03d}",
+                            "session": sessions,
+                            "trial_index": trial_index,
+                            "response": choices,
+                            "performance": performance,
+                        }
+                    )
+                )
+                progress.update()
 
     simulated_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     prepared = prepare_corrected_behavior_autocorrelograms(
@@ -351,50 +363,78 @@ def prepare_closed_loop_model_autocorrelograms(
     return prepared
 
 
+def draw_overlay_panel(
+    ax: plt.Axes,
+    signal: str,
+    data_ac: pd.DataFrame,
+    glm_ac: pd.DataFrame,
+    glmhmm_ac: pd.DataFrame,
+) -> None:
+    data_sub = data_ac[data_ac["signal"] == signal].sort_values("lag")
+    ax.errorbar(
+        data_sub["lag"],
+        data_sub["autocorr"],
+        yerr=data_sub.get("autocorr_sem"),
+        fmt="o",
+        capsize=0,
+        ms=3,
+        color=colors["data"],
+        ecolor=colors["data"],
+        label="Data",
+        zorder=4,
+    )
+    for label, model_ac, color in (
+        # (f"GLM {GLM_MODEL_ID}", glm_ac, colors["glm"]),
+        (f"GLM", glm_ac, colors["glm"]),
+        # (f"GLM-HMM {GLMHMM_MODEL_ID}", glmhmm_ac, colors["glmhmm"]),
+        # (f"GLM-HMM", glmhmm_ac, colors["glmhmm"]),
+    ):
+        sub = model_ac[model_ac["signal"] == signal].sort_values("lag")
+        if sub.empty:
+            continue
+        ax.plot(sub["lag"], sub["autocorr"], color=color, label=label, zorder=3)
+    
+    ax.axhline(0.0, color="0.5", ls="--")
+    ax.set_title("Outcomes" if signal == "Outcome" else "Repetitions")
+    ax.set_xlabel("Lag")
+    ax.set_ylabel("Autocorrelation")
+    if signal == "Repetition":
+        ax.set_ylim(top = 0.15)
+    else: 
+        ax.set_ylim(top = 0.05)
+    ax.legend(frameon=False)
+
+
 def plot_overlay(data_ac: pd.DataFrame, glm_ac: pd.DataFrame, glmhmm_ac: pd.DataFrame) -> plt.Figure:
     fig, axes = plt.subplots(1, 2, figsize=fig_size(1, 2), layout="constrained")
-    colors = {
-        "data": "#1f77b4",
-        "glm": "#333333",
-        "glmhmm": "#c23b22",
-    }
     for ax, signal in zip(axes, ("Outcome", "Repetition"), strict=True):
-        data_sub = data_ac[data_ac["signal"] == signal].sort_values("lag")
-        ax.errorbar(
-            data_sub["lag"],
-            data_sub["autocorr"],
-            yerr=data_sub.get("autocorr_sem"),
-            fmt="o",
-            ms=3.5,
-            capsize=2,
-            color=colors["data"],
-            ecolor=colors["data"],
-            elinewidth=0.9,
-            label="Data",
-            zorder=4,
-        )
-        for label, model_ac, color in (
-            (f"GLM {GLM_MODEL_ID}", glm_ac, colors["glm"]),
-            (f"GLM-HMM {GLMHMM_MODEL_ID}", glmhmm_ac, colors["glmhmm"]),
-        ):
-            sub = model_ac[model_ac["signal"] == signal].sort_values("lag")
-            if sub.empty:
-                continue
-            ax.plot(sub["lag"], sub["autocorr"], lw=1.8, color=color, label=label, zorder=3)
-        ax.axhline(0.0, color="0.55", lw=0.8, ls="--", alpha=0.7)
-        ax.set_title("Choice outcomes" if signal == "Outcome" else "Repeated responses")
-        ax.set_xlabel("Lag")
-        ax.set_ylabel("Corrected autocorrelation")
-        ax.set_ylim(-0.075, 0.20)
-        ax.legend(frameon=False, fontsize=7)
+        draw_overlay_panel(ax, signal, data_ac, glm_ac, glmhmm_ac)
     return fig
+
+
+def save_overlay_panels(
+    data_ac: pd.DataFrame,
+    glm_ac: pd.DataFrame,
+    glmhmm_ac: pd.DataFrame,
+    out_dir: Path,
+) -> list[Path]:
+    saved_paths = []
+    for signal in ("Outcome", "Repetition"):
+        fig, ax = plt.subplots(figsize=fig_size(2, 1), layout="constrained")
+        draw_overlay_panel(ax, signal, data_ac, glm_ac, glmhmm_ac)
+        stem = out_dir / f"{TASK}_closed_loop_autocorrelogram_{signal.lower()}"
+        fig.savefig(stem.with_suffix(".png"), dpi=300)
+        fig.savefig(stem.with_suffix(".svg"))
+        fig.savefig(stem.with_suffix(".pdf"))
+        plt.close(fig)
+        saved_paths.extend([stem.with_suffix(".png"), stem.with_suffix(".svg"), stem.with_suffix(".pdf")])
+    return saved_paths
 
 
 def main():
     configure_paths(config_path=PROJECT_ROOT / "config.toml")
     paths = get_runtime_paths()
     plt.style.use(PROJECT_ROOT / "styles" / "paper.mplstyle")
-
     adapter = get_adapter(TASK)
     df_all = adapter.read_dataset()
     df_all = adapter.subject_filter(df_all)
@@ -458,6 +498,7 @@ def main():
         n_simulations=N_SIMULATIONS,
         max_lag=MAX_LAG,
         seed=SEED,
+        progress_label="GLM closed-loop simulations",
     )
     glmhmm_autocorr = prepare_closed_loop_model_autocorrelograms(
         df_model,
@@ -466,6 +507,7 @@ def main():
         n_simulations=N_SIMULATIONS,
         max_lag=MAX_LAG,
         seed=SEED + 100,
+        progress_label="GLM-HMM closed-loop simulations",
     )
 
     out_dir = paths.RESULTS / "plots" / "autocorrelograms_closed_loop"
@@ -479,12 +521,20 @@ def main():
         glm_autocorr["autocorr"],
         glmhmm_autocorr["autocorr"],
     )
+    panel_paths = save_overlay_panels(
+        data_autocorr["autocorr"],
+        glm_autocorr["autocorr"],
+        glmhmm_autocorr["autocorr"],
+        out_dir,
+    )
     png_path = out_dir / f"{TASK}_closed_loop_autocorrelograms.png"
     pdf_path = out_dir / f"{TASK}_closed_loop_autocorrelograms.pdf"
     fig.savefig(png_path, dpi=300)
     fig.savefig(pdf_path)
     print(f"Saved {png_path}")
     print(f"Saved {pdf_path}")
+    for panel_path in panel_paths:
+        print(f"Saved {panel_path}")
     print(f"Subjects: {len(subjects)}; simulations per model: {N_SIMULATIONS}")
 
 

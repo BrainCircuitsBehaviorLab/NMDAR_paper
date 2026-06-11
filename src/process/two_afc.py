@@ -62,7 +62,7 @@ _NUM_REWARD_LAGS = 40
 _NUM_DIFFICULTY_LAGS = 20
 _NUM_DAY_REWARD_LAGS = 5
 _FILTERED_REGRESSOR_TAU = 4.0
-_RAW_PARAM_MODEL_ID = "one hot2"
+_RAW_PARAM_MODEL_ID = "one hot"
 _TRANSITION_PARAM_MODEL_ID = "one hot"
 EMISSION_COLS: list[str] = [
     "bias",
@@ -120,7 +120,8 @@ _CHOICE_LAG_PARAM_CORRECT_COL = "choice_lag_param_correct"
 def _fitted_weight_spec(
     *,
     target_name: str,
-    source_feature_prefixes: tuple[str, ...],
+    source_feature_prefixes: tuple[str, ...] = (),
+    source_features: tuple[str, ...] = (),
     fit_task: str = "2AFC",
     fit_model_id: str = _RAW_PARAM_MODEL_ID,
     exclude_features: tuple[str, ...] = (),
@@ -133,6 +134,7 @@ def _fitted_weight_spec(
         fit_model_kind="glm",
         fit_model_id=fit_model_id,
         arrays_suffix="glm_arrays.npz",
+        source_features=source_features,
         source_feature_prefixes=source_feature_prefixes,
         exclude_features=exclude_features,
         excluded_subjects=excluded_subjects,
@@ -180,7 +182,7 @@ def _at_choice_param_spec(
         target_name=target_name,
         fit_task=fit_task,
         fit_model_id=fit_model_id,
-        source_feature_prefixes=("choice_lag_",),
+        source_features=tuple(lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)),
     )
 
 
@@ -194,7 +196,7 @@ def _choice_lag_param_spec(
         target_name=target_name,
         fit_task=fit_task,
         fit_model_id=fit_model_id,
-        source_feature_prefixes=("choice_lag_",),
+        source_features=tuple(lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)),
     )
 
 
@@ -208,8 +210,7 @@ def _choice_lag_param_2_spec(
         target_name=target_name,
         fit_task=fit_task,
         fit_model_id=fit_model_id,
-        source_feature_prefixes=("choice_lag_",),
-        exclude_features=("choice_lag_01",),
+        source_features=tuple(lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)[1:]),
     )
 
 
@@ -223,7 +224,7 @@ def _choice_lag_param_correct_spec(
         target_name=target_name,
         fit_task=fit_task,
         fit_model_id=fit_model_id,
-        source_feature_prefixes=("choice_lag_corr_",),
+        source_features=tuple(lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)),
     )
 
 
@@ -334,11 +335,13 @@ def _infer_stim_abs_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
     existing = numeric_prefixed(columns, "stim_")
     if existing:
         return existing
+    fallback = [f"stim_{level}" for level in _all_stim_abs_levels()]
     if "ILD" not in columns:
-        return []
+        return fallback
     ild_series = df["ILD"].drop_nulls() if isinstance(df, pl.DataFrame) else df["ILD"].dropna()
     stim_abs_levels = sorted({int(abs(v)) for v in ild_series.to_list()})
-    return [f"stim_{stim_abs}" for stim_abs in stim_abs_levels]
+    inferred = [f"stim_{stim_abs}" for stim_abs in stim_abs_levels]
+    return list(dict.fromkeys([*inferred, *fallback]))
 
 
 def _infer_abs_ild_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
@@ -346,11 +349,13 @@ def _infer_abs_ild_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str
     existing = numeric_prefixed(columns, "abs_ILD_hot_")
     if existing:
         return existing
+    fallback = [f"abs_ILD_hot_{level}" for level in _all_stim_abs_levels()]
     if "ILD" not in columns:
-        return []
+        return fallback
     ild_series = df["ILD"].drop_nulls() if isinstance(df, pl.DataFrame) else df["ILD"].dropna()
     stim_abs_levels = sorted({int(abs(v)) for v in ild_series.to_list()})
-    return [f"abs_ILD_hot_{stim_abs}" for stim_abs in stim_abs_levels]
+    inferred = [f"abs_ILD_hot_{stim_abs}" for stim_abs in stim_abs_levels]
+    return list(dict.fromkeys([*inferred, *fallback]))
 
 
 def _difficulty_hot_names(levels: Sequence[int]) -> list[str]:
@@ -1296,9 +1301,18 @@ class TwoAFCAdapter(TaskAdapter):
             default_cols.extend(_infer_bias_hot_cols_from_df(df))
             default_cols.extend(_infer_stim_abs_cols_from_df(df))
             default_cols.extend(_infer_abs_ild_hot_cols_from_df(df))
-            default_cols.extend(numeric_prefixed(columns, "choice_lag_"))
-            default_cols.extend(numeric_prefixed(columns, "choice_lag_corr_"))
-            default_cols.extend(numeric_prefixed(columns, "choice_lag_inc_"))
+            default_cols.extend(
+                numeric_prefixed(columns, "choice_lag_")
+                or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+            )
+            default_cols.extend(
+                numeric_prefixed(columns, "choice_lag_corr_")
+                or lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)
+            )
+            default_cols.extend(
+                numeric_prefixed(columns, "choice_lag_inc_")
+                or lag_names("choice_lag_inc_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             default_cols.extend([c for c in columns if c.startswith("sf_")])
         return list(dict.fromkeys(default_cols))
 
@@ -1336,19 +1350,28 @@ class TwoAFCAdapter(TaskAdapter):
             ]
         )
         available_cols.extend(
-            numeric_prefixed(list(df.columns), "choice_lag_")
+            (
+                numeric_prefixed(list(df.columns), "choice_lag_")
+                or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             if df is not None
-            else lag_names("choice_lag_", 15)
+            else lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
         )
         available_cols.extend(
-            numeric_prefixed(list(df.columns), "choice_lag_corr_")
+            (
+                numeric_prefixed(list(df.columns), "choice_lag_corr_")
+                or lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             if df is not None
-            else lag_names("choice_lag_corr_", 15)
+            else lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)
         )
         available_cols.extend(
-            numeric_prefixed(list(df.columns), "choice_lag_inc_")
+            (
+                numeric_prefixed(list(df.columns), "choice_lag_inc_")
+                or lag_names("choice_lag_inc_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             if df is not None
-            else lag_names("choice_lag_inc_", 15)
+            else lag_names("choice_lag_inc_", _NUM_LEGACY_CHOICE_LAGS)
         )
         if df is not None:
             available_cols.extend([c for c in df.columns if c.startswith("sf_")])
@@ -1369,20 +1392,44 @@ class TwoAFCAdapter(TaskAdapter):
         resolved_ecols: list[str] = []
         family_aliases = {}
         if df is not None:
-            choice_lag_cols = numeric_prefixed(list(df.columns), "choice_lag_")
+            columns = list(df.columns)
+            choice_lag_cols = (
+                numeric_prefixed(columns, "choice_lag_")
+                or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+            )
+            choice_lag_corr_cols = (
+                numeric_prefixed(columns, "choice_lag_corr_")
+                or lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)
+            )
+            choice_lag_inc_cols = (
+                numeric_prefixed(columns, "choice_lag_inc_")
+                or lag_names("choice_lag_inc_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             stim_abs_cols = _infer_stim_abs_cols_from_df(df)
             abs_ild_hot_cols = _infer_abs_ild_hot_cols_from_df(df)
             family_aliases = {
                 "bias_hot": _infer_bias_hot_cols_from_df(df),
                 "choice_lag": choice_lag_cols,
                 "at_choice_lag": choice_lag_cols,
-                "choice_lag_correct": numeric_prefixed(list(df.columns), "choice_lag_corr_"),
-                "choice_lag_inc": numeric_prefixed(list(df.columns), "choice_lag_inc_"),
-                "choice_lag_15_lags": numeric_prefixed(list(df.columns), "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
-                "choice_lag_50_lags": numeric_prefixed(list(df.columns), "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+                "choice_lag_correct": choice_lag_corr_cols,
+                "choice_lag_inc": choice_lag_inc_cols,
+                "choice_lag_15_lags": (
+                    numeric_prefixed(columns, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS)
+                    or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+                ),
+                "choice_lag_50_lags": (
+                    numeric_prefixed(columns, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS)
+                    or lag_names("choice_lag_", _NUM_MEDIUM_CHOICE_LAGS)
+                ),
                 "choice_lag_100_lags": choice_lag_cols,
-                "at_choice_lag_15_lags": numeric_prefixed(list(df.columns), "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
-                "at_choice_lag_50_lags": numeric_prefixed(list(df.columns), "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+                "at_choice_lag_15_lags": (
+                    numeric_prefixed(columns, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS)
+                    or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+                ),
+                "at_choice_lag_50_lags": (
+                    numeric_prefixed(columns, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS)
+                    or lag_names("choice_lag_", _NUM_MEDIUM_CHOICE_LAGS)
+                ),
                 "at_choice_lag_100_lags": choice_lag_cols,
                 "stim_hot": [col for col in stim_abs_cols if col != "stim_0"],
                 "stim_one_hot": [col for col in stim_abs_cols if col != "stim_0"],
@@ -1434,7 +1481,7 @@ class TwoAFCAdapter(TaskAdapter):
             raise ValueError(
                 f"Unknown transition_cols: {bad_u}. Available: {allowed_ucols}"
             )
-        return {"X_cols": list(resolved_ecols), "U_cols": list(requested_ucols)}
+        return {"X_cols": list(dict.fromkeys(resolved_ecols)), "U_cols": list(requested_ucols)}
 
     def build_emission_groups(self, available_cols: List[str]) -> list[dict]:
         return _build_emission_groups(list(available_cols))

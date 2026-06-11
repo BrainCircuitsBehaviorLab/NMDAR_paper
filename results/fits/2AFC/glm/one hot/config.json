@@ -21,7 +21,8 @@
         "stim_4",
         "stim_8",
         "stim_20",
-        "bias"
+        "bias",
+        "choice_lag_15_lags"
     ],
     "requested_emission_cols": [
         "choice_lag_01",
@@ -43,7 +44,8 @@
         "stim_4",
         "stim_8",
         "stim_20",
-        "bias"
+        "bias",
+        "choice_lag_15_lags"
     ],
     "resolved_emission_cols": [
         "choice_lag_01",
@@ -65,7 +67,8 @@
         "stim_4",
         "stim_8",
         "stim_20",
-        "bias"
+        "bias",
+        "choice_lag_15_lags"
     ],
     "num_classes": 2,
     "lapse_mode": "none",
@@ -76,5 +79,7 @@
     "baseline_class_idx": 0,
     "emission_model": "standard",
     "model_id": "one hot",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5,
     "condition_filter": "all"
 }

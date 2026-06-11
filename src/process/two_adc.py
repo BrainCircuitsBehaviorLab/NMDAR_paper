@@ -151,7 +151,7 @@ _CHOICE_LAG_PARAM_SPEC = FittedWeightRegressorSpec(
     fit_model_kind="glm",
     fit_model_id=_RAW_PARAM_MODEL_ID,
     arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=("choice_lag_",),
+    source_features=tuple(lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)),
 )
 _CHOICE_LAG_PARAM_CORRECT_SPEC = FittedWeightRegressorSpec(
     target_name="choice_lag_param_correct",
@@ -159,7 +159,7 @@ _CHOICE_LAG_PARAM_CORRECT_SPEC = FittedWeightRegressorSpec(
     fit_model_kind="glm",
     fit_model_id=_RAW_PARAM_MODEL_ID,
     arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=("choice_lag_corr_",),
+    source_features=tuple(lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)),
 )
 _CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
     target_name="choice_lag_param_2",
@@ -167,8 +167,7 @@ _CHOICE_LAG_PARAM_2_SPEC = FittedWeightRegressorSpec(
     fit_model_kind="glm",
     fit_model_id=_RAW_PARAM_MODEL_ID,
     arrays_suffix="glm_arrays.npz",
-    source_feature_prefixes=("choice_lag_",),
-    exclude_features=("choice_lag_01",),
+    source_features=tuple(lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)[1:]),
 )
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
@@ -1491,7 +1490,10 @@ class TwoAFCDelayAdapter(TaskAdapter):
                     for col in delay_hot_cols
                 ]
             bias_hot_cols = _infer_bias_hot_cols_from_df(df)
-            choice_lag_cols = numeric_prefixed(list(df.columns), "choice_lag_")
+            choice_lag_cols = (
+                numeric_prefixed(list(df.columns), "choice_lag_")
+                or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+            )
 
         default_cols = [
             *self.emission_cols,
@@ -1536,19 +1538,28 @@ class TwoAFCDelayAdapter(TaskAdapter):
             ]
         )
         available_cols.extend(
-            numeric_prefixed(list(df.columns), "choice_lag_")
+            (
+                numeric_prefixed(list(df.columns), "choice_lag_")
+                or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             if df is not None
-            else lag_names("choice_lag_", 15)
+            else lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
         )
         available_cols.extend(
-            numeric_prefixed(list(df.columns), "choice_lag_corr_")
+            (
+                numeric_prefixed(list(df.columns), "choice_lag_corr_")
+                or lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             if df is not None
-            else lag_names("choice_lag_corr_", 15)
+            else lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)
         )
         available_cols.extend(
-            numeric_prefixed(list(df.columns), "choice_lag_inc_")
+            (
+                numeric_prefixed(list(df.columns), "choice_lag_inc_")
+                or lag_names("choice_lag_inc_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             if df is not None
-            else lag_names("choice_lag_inc_", 15)
+            else lag_names("choice_lag_inc_", _NUM_LEGACY_CHOICE_LAGS)
         )
         if df is not None:
             delay_hot_cols = _infer_delay_hot_cols_from_df(df)
@@ -1581,19 +1592,42 @@ class TwoAFCDelayAdapter(TaskAdapter):
                     f"stim_x_delay_hot_{col.removeprefix(_DELAY_HOT_COL_PREFIX)}"
                     for col in delay_hot_cols
                 ]
-            choice_lag_cols = numeric_prefixed(columns, "choice_lag_")
+            choice_lag_cols = (
+                numeric_prefixed(columns, "choice_lag_")
+                or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+            )
+            choice_lag_corr_cols = (
+                numeric_prefixed(columns, "choice_lag_corr_")
+                or lag_names("choice_lag_corr_", _NUM_LEGACY_CHOICE_LAGS)
+            )
+            choice_lag_inc_cols = (
+                numeric_prefixed(columns, "choice_lag_inc_")
+                or lag_names("choice_lag_inc_", _NUM_LEGACY_CHOICE_LAGS)
+            )
             family_aliases = {
                 "bias_hot": _infer_bias_hot_cols_from_df(df),
                 "delay_hot": delay_hot_cols,
                 "choice_lag": choice_lag_cols,
                 "at_choice_lag": choice_lag_cols,
-                "choice_lag_correct": numeric_prefixed(columns, "choice_lag_corr_"),
-                "choice_lag_inc": numeric_prefixed(columns, "choice_lag_inc_"),
-                "choice_lag_15_lags": numeric_prefixed(columns, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
-                "choice_lag_50_lags": numeric_prefixed(columns, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+                "choice_lag_correct": choice_lag_corr_cols,
+                "choice_lag_inc": choice_lag_inc_cols,
+                "choice_lag_15_lags": (
+                    numeric_prefixed(columns, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS)
+                    or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+                ),
+                "choice_lag_50_lags": (
+                    numeric_prefixed(columns, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS)
+                    or lag_names("choice_lag_", _NUM_MEDIUM_CHOICE_LAGS)
+                ),
                 "choice_lag_100_lags": choice_lag_cols,
-                "at_choice_lag_15_lags": numeric_prefixed(columns, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS),
-                "at_choice_lag_50_lags": numeric_prefixed(columns, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS),
+                "at_choice_lag_15_lags": (
+                    numeric_prefixed(columns, "choice_lag_", max_count=_NUM_LEGACY_CHOICE_LAGS)
+                    or lag_names("choice_lag_", _NUM_LEGACY_CHOICE_LAGS)
+                ),
+                "at_choice_lag_50_lags": (
+                    numeric_prefixed(columns, "choice_lag_", max_count=_NUM_MEDIUM_CHOICE_LAGS)
+                    or lag_names("choice_lag_", _NUM_MEDIUM_CHOICE_LAGS)
+                ),
                 "at_choice_lag_100_lags": choice_lag_cols,
                 "stim_x_delay_hot": stim_x_delay_hot_cols,
                 "stim_x_delay_one_hot": stim_x_delay_hot_cols,

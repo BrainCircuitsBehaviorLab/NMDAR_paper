@@ -145,5 +145,7 @@
     "baseline_class_idx": 1,
     "emission_model": "standard",
     "model_id": "one hot",
+    "cv_mode": "none",
+    "cv_repeats": 0,
     "condition_filter": "all"
 }

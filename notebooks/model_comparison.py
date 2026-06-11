@@ -26,7 +26,6 @@ def _():
     from glmhmmt.plots_common import custom_boxplot
     from plot_saver import make_plot_saver
     from src.process.common import adapter_behavioral_column
-    from src.plots.common import paper_boxplot
     sns.set_style("white")
     sns.set_context("paper")
     return (
@@ -44,12 +43,34 @@ def _():
         mo,
         model_aliases_for_kind,
         np,
-        paper_boxplot,
         paths,
         pl,
         plt,
         sns,
     )
+
+
+@app.cell
+def _(mo, save_plot):
+    def panel(title, fig=None, stem=None, description=None):
+        content = [mo.md(f"#### {title}")]
+
+        if fig is not None:
+            content.append(fig)
+            if stem is not None:
+                content.append(save_plot(fig, description or title.lower(), stem=stem))
+
+        return mo.vstack(content, align="center")
+
+    BOXPLOT_STYLE = dict(
+        fill=False,
+        boxprops={"color": "0.5"},
+        whiskerprops={"color": "0.5"},
+        medianprops={"linewidth": 2},
+        showfliers=False,
+        showcaps=False,
+    )
+    return BOXPLOT_STYLE, panel
 
 
 @app.cell
@@ -345,7 +366,6 @@ def _(pl, results_long, selected_model_specs, ui_K_range, ui_subjects):
                 & pl.col("K").is_between(K_min, K_max)
             )
         )
-    results_filtered
     return (results_filtered,)
 
 
@@ -436,7 +456,6 @@ def _(pl, results_filtered, ui_bic_baseline):
             .join(_baseline_bic, on="subject", how="left")
             .with_columns(((pl.col("bic") - pl.col("bic_baseline"))/pl.col("bic_baseline")).alias("bic_delta"))
         )
-    results_plot
     return (results_plot,)
 
 
@@ -514,8 +533,7 @@ def _(pl, results_filtered):
         ])
         .sort(["model_kind", "model_alias", "K"])
     )
-    agg
-    return (agg,)
+    return
 
 
 @app.cell
@@ -606,12 +624,6 @@ def _(Line2D, mo, np, pl, plt, results_filtered, sns, ui_highlight_subject):
     sns.despine(ax=_ax_ll_bits)
     _fig_ll_bits.tight_layout()
     _fig_ll_bits
-    return
-
-
-@app.cell
-def _(agg):
-    agg
     return
 
 
@@ -913,7 +925,10 @@ def _(mo, results_long):
     _pair_options = {}
     for _row in _spec_rows:
         _kind = _row["model_kind"]
-        _K = int(_row["K"])
+        if _kind != "glm":
+            _K = int(_row["K"])
+        else:
+            _K = 1
         _alias = _row["model_alias"]
         _kind_label = _MODEL_KIND_LABELS.get(_kind, str(_kind).upper())
         _label = f"{_kind_label} K={_K}: {_alias}"
@@ -1101,6 +1116,12 @@ def _(
 
 
 @app.cell
+def _(pairwise_metrics_b):
+    pairwise_metrics_b
+    return
+
+
+@app.cell
 def _(
     mo,
     pairwise_K_a,
@@ -1119,7 +1140,7 @@ def _(
     ui_pairwise_scoring_key_a,
     ui_pairwise_scoring_key_b,
 ):
-    _notes = [
+    notes = [
         f"- Comparing A `{pairwise_kind_a}` / `{pairwise_alias_a}` / `K={pairwise_K_a}` vs B `{pairwise_kind_b}` / `{pairwise_alias_b}` / `K={pairwise_K_b}`.",
         f"- Common metric subjects: **{len(pairwise_common_subjects)} / {len(requested_subjects)}**.",
         f"- Common cached fit subjects for state-level plots: **{len(pairwise_cached_common_subjects)} / {len(requested_subjects)}**.",
@@ -1142,6 +1163,12 @@ def _(
     if pairwise_fit_error_b:
         _notes.append(f"- State-level cache for B could not be loaded: `{pairwise_fit_error_b}`")
     mo.md("\n".join(_notes))
+    return
+
+
+@app.cell
+def _(pairwise_metrics_b):
+    pairwise_metrics_b
     return
 
 
@@ -1260,40 +1287,71 @@ def _(
             "delta_bic",
         ])
     )
-    return (
-        pairwise_metric_delta_summary,
-        pairwise_metric_deltas,
-        pairwise_metric_summary,
-        pairwise_metrics,
-    )
+    pairwise_metrics
+    return (pairwise_metric_deltas,)
 
 
 @app.cell
 def _(
+    fig_size,
     mo,
-    pairwise_metric_delta_summary,
+    pairwise_alias_a,
+    pairwise_alias_b,
     pairwise_metric_deltas,
-    pairwise_metric_summary,
-    pairwise_metrics,
+    panel,
+    plt,
+    pretty_names,
+    sns,
 ):
-    mo.stop(pairwise_metrics.is_empty(), mo.md("No paired metrics were found for the selected aliases and `K`."))
-    mo.vstack(
-        [
-            mo.md("#### Paired metrics"),
-            pairwise_metric_summary,
-            mo.md("Mean deltas are computed as **B - A**."),
-            pairwise_metric_delta_summary,
-            pairwise_metric_deltas,
-        ]
+    mo.stop(
+        pairwise_metric_deltas.is_empty(),
+        mo.md("No common subject metrics were found for the selected model fits."),
+    )
+
+    pairwise_ll_scatter = pairwise_metric_deltas.to_pandas()
+
+    fig_pairwise_ll, ax_pairwise_ll = plt.subplots(figsize = fig_size(2,1))
+
+    sns.scatterplot(
+        data=pairwise_ll_scatter,
+        x="ll_a",
+        y="ll_b",
+        ax=ax_pairwise_ll,
+    )
+
+    pairwise_ll_xlim = ax_pairwise_ll.get_xlim()
+    pairwise_ll_ylim = ax_pairwise_ll.get_ylim()
+    pairwise_ll_min = min(*pairwise_ll_xlim, *pairwise_ll_ylim)
+    pairwise_ll_max = max(*pairwise_ll_xlim, *pairwise_ll_ylim)
+
+    ax_pairwise_ll.plot(
+        [pairwise_ll_min, pairwise_ll_max],
+        [pairwise_ll_min, pairwise_ll_max],
+        linestyle="--",
+        color=ax_pairwise_ll.spines["left"].get_edgecolor(),
+        linewidth=ax_pairwise_ll.spines["left"].get_linewidth(),
+    )
+    ax_pairwise_ll.set_xlim(pairwise_ll_min, pairwise_ll_max)
+    ax_pairwise_ll.set_ylim(pairwise_ll_min, pairwise_ll_max)
+    ax_pairwise_ll.set_aspect("equal", adjustable="box")
+    ax_pairwise_ll.set_xlabel(f"Model A: {pretty_names[pairwise_alias_a]}")
+    ax_pairwise_ll.set_ylabel(f"Model B: {pretty_names[pairwise_alias_b]}")
+    sns.despine(ax=ax_pairwise_ll)
+
+    panel(
+        "Pairwise test LL",
+        fig_pairwise_ll,
+        stem=f"pairwise_test_ll_scatter_{pairwise_alias_a}_{pairwise_alias_b}",
+        description="Pairwise model A vs model B test LL scatter",
     )
     return
 
 
 @app.cell
 def _(
+    BOXPLOT_STYLE,
     mo,
     np,
-    paper_boxplot,
     pairwise_alias_a,
     pairwise_alias_b,
     pairwise_metric_deltas,
@@ -1354,11 +1412,12 @@ def _(
         _finite = _delta[np.isfinite(_delta)]
         _ax.axhline(0, color="0.35", linewidth=1.0, linestyle="--", alpha=0.75, zorder=0)
         if len(_finite) > 0:
-            paper_boxplot(
+            sns.boxplot(
                 y=_finite,
                 ax=_ax,
                 color = "tab:red",
                 width=.5,
+                **BOXPLOT_STYLE
             )
         _p_txt = p_label(_finite)
         _ax.set_ylim(*_ylim)
@@ -1809,10 +1868,10 @@ def _(
 
 @app.cell
 def _(
+    BOXPLOT_STLYE,
     fig_size,
     mo,
     np,
-    paper_boxplot,
     pairwise_K_a,
     pairwise_K_b,
     pairwise_adapter_a,
@@ -1866,10 +1925,10 @@ def _(
         if chance is not None:
             _ax.axhline(chance, ls="--", lw=1, c="gray")
 
-        paper_boxplot(
+        sns.boxplot(
             data=df, x="state_label", y="value", hue="model_alias",
             order=order, hue_order=models, palette=palette2,
-            width=.55, ax=_ax,
+            width=.55, ax=_ax, **BOXPLOT_STLYE
         )
 
         for i, state in enumerate(order):

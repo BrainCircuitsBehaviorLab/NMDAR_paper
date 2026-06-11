@@ -2,6 +2,11 @@
     "task": "2AFC_delay",
     "tau": 50,
     "emission_cols": [
+        "stim_x_delay_hot_0p1",
+        "stim_x_delay_hot_1",
+        "stim_x_delay_hot_3",
+        "stim_x_delay_hot_10",
+        "bias",
         "choice_lag_01",
         "choice_lag_02",
         "choice_lag_03",
@@ -16,36 +21,22 @@
         "choice_lag_12",
         "choice_lag_13",
         "choice_lag_14",
-        "choice_lag_15",
-        "stim_x_delay_hot_0p1",
-        "stim_x_delay_hot_1",
-        "stim_x_delay_hot_3",
-        "stim_x_delay_hot_10",
-        "bias"
+        "choice_lag_15"
     ],
     "requested_emission_cols": [
-        "choice_lag_01",
-        "choice_lag_02",
-        "choice_lag_03",
-        "choice_lag_04",
-        "choice_lag_05",
-        "choice_lag_06",
-        "choice_lag_07",
-        "choice_lag_08",
-        "choice_lag_09",
-        "choice_lag_10",
-        "choice_lag_11",
-        "choice_lag_12",
-        "choice_lag_13",
-        "choice_lag_14",
-        "choice_lag_15",
         "stim_x_delay_hot_0p1",
         "stim_x_delay_hot_1",
         "stim_x_delay_hot_3",
         "stim_x_delay_hot_10",
-        "bias"
+        "bias",
+        "choice_lag_15_lags"
     ],
     "resolved_emission_cols": [
+        "stim_x_delay_hot_0p1",
+        "stim_x_delay_hot_1",
+        "stim_x_delay_hot_3",
+        "stim_x_delay_hot_10",
+        "bias",
         "choice_lag_01",
         "choice_lag_02",
         "choice_lag_03",
@@ -60,12 +51,7 @@
         "choice_lag_12",
         "choice_lag_13",
         "choice_lag_14",
-        "choice_lag_15",
-        "stim_x_delay_hot_0p1",
-        "stim_x_delay_hot_1",
-        "stim_x_delay_hot_3",
-        "stim_x_delay_hot_10",
-        "bias"
+        "choice_lag_15"
     ],
     "num_classes": 2,
     "lapse_mode": "none",
@@ -75,5 +61,7 @@
     "seed": 0,
     "baseline_class_idx": 1,
     "emission_model": "standard",
-    "model_id": "one hot"
+    "model_id": "one hot",
+    "cv_mode": "none",
+    "cv_repeats": 0
 }
