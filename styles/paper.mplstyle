@@ -5,8 +5,5 @@ axes.spines.right: False
 # Grid off
 axes.grid: False
 
-# Savefig tight
-savefig.bbox: tight 
-
 # Keep text editable in SVG
 svg.fonttype: none

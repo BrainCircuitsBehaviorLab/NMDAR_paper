@@ -1,18 +1,12 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
 @app.cell
 def _():
     import marimo as mo
-
-    return
-
-
-@app.cell
-def _():
     import polars as pl
     import pandas as pd
     import numpy as np
@@ -20,11 +14,14 @@ def _():
     from pathlib import Path
     paths = get_runtime_paths()
     DATA_PATH = Path("/Users/javierrodriguezmartinez/NMDAR_paper/data/")
-    return DATA_PATH, paths, pd, pl
+    return DATA_PATH, Path, paths, pd, pl
 
 
 @app.cell
-def _(DATA_PATH, paths, pl):
+def _(DATA_PATH, Path, paths, pl):
+    data_path = Path(__file__).parents[1] / "data"
+    print(data_path)
+
     df = pl.read_csv(
         DATA_PATH / "raw" / "tiffany_complete.csv",
         infer_schema_length=None,
@@ -39,6 +36,14 @@ def _(DATA_PATH, paths, pl):
 def _(paths, pl):
     prueba = pl.read_parquet(paths.DATA_PATH / "tiffany.parquet")
     return
+
+
+app._unparsable_cell(
+    r"""
+    prueba.
+    """,
+    name="_"
+)
 
 
 @app.cell
