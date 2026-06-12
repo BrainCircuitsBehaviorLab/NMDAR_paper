@@ -159,7 +159,7 @@ def _(mo):
 
 
 @app.cell
-def _(get_adapter):
+def _(get_adapter, pl):
     task_names = ("2AFC_delay", "2AFC", "MCDR")
     model_name = "one hot"
     adapters = {_task_name: get_adapter(_task_name) for _task_name in task_names}
@@ -171,6 +171,10 @@ def _(get_adapter):
         _task_name: _adapter.subject_filter(_adapter.read_dataset())
         for _task_name, _adapter in adapters.items()
     }
+    dfs["2AFC"] = dfs["2AFC"].filter(pl.col("subject") != "326")
+    dfs["MCDR"] = dfs["MCDR"].filter(
+        pl.col("subject").is_in([f"B{i}" for i in range(16, 32)])
+    )
 
     subjects_by_task = {
         _task_name: list(_df["subject"].unique())
@@ -248,8 +252,7 @@ def _(plt):
         ],
         figsize = (10,10)
     )
-
-    return axd, fig
+    return (axd,)
 
 
 @app.cell(hide_code=True)
@@ -572,36 +575,33 @@ def _(mo):
     return
 
 
-@app.cell
-def _(mo):
-    _df = mo.sql(
-        f"""
-        plt.figure(figsize=fig_size(3,1), constrained_layout=True)
-        stim_2ADC = plt.gca()
-        stim_2ADC = axd["p"]
+@app.cell(hide_code=True)
+def _(axd, boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
 
-        # Filter to just have lagged choices
-        _plot_df = weight_dfs["2AFC_delay"].filter(pl.col("feature").str.contains("stim")) 
-        _order = sorted(_plot_df["feature"].unique(), key=lambda x: float(x.split("stim_x_delay_hot_")[-1].replace("p", ".")), reverse=True)
-        sns.boxplot(
-            data=_plot_df,
-            x="feature",
-            y="weight",
-            order = _order,
-            color="tab:gray",
-            ax=stim_2ADC,
-            **boxplot_STYLE,
-        )
-        stim_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-        stim_2ADC.set_title("2ADC Stimulus")
-        stim_2ADC.set_xlabel("")
-        stim_2ADC.set_ylabel("Weight")
-        stim_2ADC.set_xlabel("Delay")
-        stim_2ADC.set_xticklabels([10 ,3,1, 0.1])
-        plt.savefig(path_panels / "2ADC_stim.svg")
-        stim_2ADC
-        """
+    plt.figure(figsize=fig_size(3,1), constrained_layout=True)
+    stim_2ADC = plt.gca()
+    stim_2ADC = axd["p"]
+
+    # Filter to just have lagged choices
+    _plot_df = weight_dfs["2AFC_delay"].filter(pl.col("feature").str.contains("stim")) 
+    _order = sorted(_plot_df["feature"].unique(), key=lambda x: float(x.split("stim_x_delay_hot_")[-1].replace("p", ".")), reverse=True)
+    sns.boxplot(
+        data=_plot_df,
+        x="feature",
+        y="weight",
+        order = _order,
+        color="tab:gray",
+        ax=stim_2ADC,
+        **boxplot_STYLE,
     )
+    stim_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+    stim_2ADC.set_title("2ADC Stimulus")
+    stim_2ADC.set_xlabel("")
+    stim_2ADC.set_ylabel("Weight")
+    stim_2ADC.set_xlabel("Delay")
+    stim_2ADC.set_xticklabels([10 ,3,1, 0.1])
+    plt.savefig(path_panels / "2ADC_stim.svg")
+    stim_2ADC
     return
 
 
@@ -962,7 +962,11 @@ def _(
 
 @app.cell
 def _(plot_session_response_raster, session_repetition_data):
-    fig_response_raster, _ = plot_session_response_raster(session_repetition_data)
+    fig_response_raster, _ = plot_session_response_raster(
+        session_repetition_data,
+        color_by="correctness",
+        y_axis="level",
+    )
     fig_response_raster
     return
 
@@ -1017,12 +1021,40 @@ def _(mo):
 
 
 @app.cell
-def _(adapters, build_session_repetition_data, fig_size, pl, plot_dfs, plt):
+def _(
+    adapters,
+    autocorrelograms_by_task,
+    build_session_repetition_data,
+    fig_size,
+    pl,
+    plot_dfs,
+    plt,
+):
     _subject = "C37"
     _session = 35
     _subject_df  = plot_dfs["2AFC_delay"].filter(pl.col("subject") == _subject, pl.col("session") == _session)
     session_repetition_data_2ADC = build_session_repetition_data(
         _subject_df,
+        subject=_subject,
+        session=_session,
+        adapter=adapters["2AFC_delay"],
+        window = 20,
+    )
+    _subject_sim_df = (
+        pl.from_pandas(autocorrelograms_by_task["2AFC_delay"]["glm"]["simulated_df"])
+        .filter(
+            (pl.col("subject") == f"{_subject}__closed_loop_000")
+            & (pl.col("session").cast(pl.Utf8) == str(_session))
+        )
+        .sort("trial_index")
+        .rename({"trial_index": "trial"})
+        .with_columns(
+            pl.lit(_subject).alias("subject"),
+            pl.Series("stimulus", session_repetition_data_2ADC["stimulus"].to_numpy()),
+        )
+    )
+    session_repetition_data_2ADC_glm = build_session_repetition_data(
+        _subject_sim_df,
         subject=_subject,
         session=_session,
         adapter=adapters["2AFC_delay"],
@@ -1046,6 +1078,14 @@ def _(adapters, build_session_repetition_data, fig_size, pl, plot_dfs, plt):
         linewidth=1.5,
         label="Stimulus",
         data=session_repetition_data_2ADC
+    )
+    single_session_2ADC.plot(
+        "trial_x",
+        "response_repeat_window_fraction",
+        color="tab:gray",
+        linewidth=1.5,
+        label="GLM",
+        data=session_repetition_data_2ADC_glm
     )
     single_session_2ADC.set_xlabel("Trial number (within session)")
     single_session_2ADC.set_ylabel("Repetition fraction")
@@ -1142,8 +1182,11 @@ def _(mo):
 
 @app.cell
 def _(
+    autocorrelograms_by_task,
     build_transition_chunk_plot_data,
     chunk_hist_stat,
+    pd,
+    pl,
     plot_dfs,
     task_names,
     transition_palette,
@@ -1156,6 +1199,32 @@ def _(
             transition_palette=transition_palette,
         )
     )
+
+    # Same for GLMs
+    _, _glm_transition_chunk_plot_data, _, _ = build_transition_chunk_plot_data(
+        {
+            _task: pl.from_pandas(
+                autocorrelograms_by_task[_task]["glm"]["simulated_df"].rename(
+                    columns={"trial_index": "trial_idx"}
+                )
+            )
+            for _task in task_names
+        },
+        task_names,
+        stat=chunk_hist_stat,
+        transition_palette=transition_palette,
+    )
+    # Concat data
+    transition_chunk_plot_data = pd.concat(
+        [
+            transition_chunk_plot_data,
+            _glm_transition_chunk_plot_data.query("source == 'Data'").assign(source="GLM"),
+        ],
+        ignore_index=True,
+    )
+
+    # To plot only repetition
+    transition_chunk_plot_data = transition_chunk_plot_data[transition_chunk_plot_data["transition"] != "alternating"]
     return (
         transition_chunk_lengths_by_task,
         transition_chunk_plot_data,
@@ -1187,10 +1256,11 @@ def _(
         data=transition_chunk_plot_data[transition_chunk_plot_data["task_label"] == "2ADC"],
         x="chunk_length",
         y="weight",
-        hue="transition",
+        # hue="transition",
+        color = "tab:brown",
         style="source",
         palette=transition_palette,
-        dashes={"Data": "", "Independent choices": (2, 2)},
+        dashes={"Data": "", "Independent choices": (2, 2), "GLM": (4, 1)},
         markers=False,
         errorbar=None,
         ax=consec_rep_2ADC,
@@ -1236,10 +1306,11 @@ def _(
         data=transition_chunk_plot_data[transition_chunk_plot_data["task_label"] == "2AFC"],
         x="chunk_length",
         y="weight",
-        hue="transition",
+        # hue="transition",
+        color = "tab:brown",
         style="source",
         palette=transition_palette,
-        dashes={"Data": "", "Independent choices": (2, 2)},
+        dashes={"Data": "", "Independent choices": (2, 2), "GLM": (4, 1)},
         markers=False,
         errorbar=None,
         ax=consec_rep_2AFC,
@@ -1286,10 +1357,11 @@ def _(
         data=transition_chunk_plot_data[transition_chunk_plot_data["task_label"] == "MCDR"],
         x="chunk_length",
         y="weight",
-        hue="transition",
+        # hue="transition",
+        color = "tab:brown",
         style="source",
         palette=transition_palette,
-        dashes={"Data": "", "Independent choices": (2, 2)},
+        dashes={"Data": "", "Independent choices": (2, 2), "GLM": (4, 1)},
         markers=False,
         errorbar=None,
         ax=consec_rep_MCDR,

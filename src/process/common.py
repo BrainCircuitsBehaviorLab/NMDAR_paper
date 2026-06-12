@@ -4276,6 +4276,11 @@ def infer_autocorrelogram_correct_class(
         y = np.asarray(arrays.get("y", []), dtype=float)
         if y.shape[0] == len(subject_df):
             performance = pd.to_numeric(subject_df[performance_col], errors="coerce")
+            num_classes = autocorrelogram_class_count(arrays)
+            if num_classes == 2:
+                correct_class = np.where(performance.to_numpy(dtype=float) > 0, y, 1.0 - y)
+                correct_class[~np.isfinite(y) | ~np.isfinite(performance.to_numpy(dtype=float))] = np.nan
+                return correct_class
             tmp = pd.DataFrame(
                 {
                     "stimulus": subject_df[stimulus_col].to_numpy(),
