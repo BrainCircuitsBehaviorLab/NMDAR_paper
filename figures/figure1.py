@@ -56,6 +56,7 @@ def _(Path, fig_size, plt, sns):
     sns.set_theme(style='ticks', context='notebook')
     plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
     figsize = fig_size(n_cols=3)
+    plt.rcParams["svg.fonttype"] = 'none'
     return (figsize,)
 
 

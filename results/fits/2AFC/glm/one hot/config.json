@@ -21,8 +21,7 @@
         "stim_4",
         "stim_8",
         "stim_20",
-        "bias",
-        "choice_lag_15_lags"
+        "bias"
     ],
     "requested_emission_cols": [
         "choice_lag_01",
@@ -67,8 +66,7 @@
         "stim_4",
         "stim_8",
         "stim_20",
-        "bias",
-        "choice_lag_15_lags"
+        "bias"
     ],
     "num_classes": 2,
     "lapse_mode": "none",

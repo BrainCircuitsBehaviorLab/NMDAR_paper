@@ -147,6 +147,7 @@ def _(mo):
 def _(Path, plt, sns):
     sns.set_theme(style='ticks', context='notebook')
     plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    plt.rcParams["svg.fonttype"] = 'none'
     return
 
 
@@ -306,10 +307,14 @@ def _(mo):
 
 
 @app.cell
-def _(autocorrelograms_by_task, fig_size, path_panels, plt):
-    fig_autocorrelograms_2ADC, (ax_autocorrelograms_2ADC_outcome, ax_autocorrelograms_2ADC_repetition) = plt.subplots(
-        1, 2, figsize=fig_size(1,2), constrained_layout=True, sharex=True
+def _(autocorrelograms_by_task, fig_size, mo, path_panels, plt):
+    fig_autocorrelograms_2ADC_outcome, ax_autocorrelograms_2ADC_outcome = plt.subplots(
+        figsize=fig_size(2,1), constrained_layout=True
     )
+    fig_autocorrelograms_2ADC_repetition, ax_autocorrelograms_2ADC_repetition = plt.subplots(
+        figsize=fig_size(2,1), constrained_layout=True
+    )
+
     _data_ac = autocorrelograms_by_task["2AFC_delay"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["2AFC_delay"]["glm"]["autocorr"]
     _colors = {
@@ -318,8 +323,8 @@ def _(autocorrelograms_by_task, fig_size, path_panels, plt):
     }
     for _signal, _ax in (
         ("Outcome", ax_autocorrelograms_2ADC_outcome),
-        ("Repetition", ax_autocorrelograms_2ADC_repetition),
-    ):
+        ("Repetition", ax_autocorrelograms_2ADC_repetition)):
+        _fig = fig_autocorrelograms_2ADC_outcome if _signal == "Outcome" else fig_autocorrelograms_2ADC_repetition
         _data_sub = _data_ac[_data_ac["signal"] == _signal].sort_values("lag")
         _ax.errorbar(
             _data_sub["lag"],
@@ -350,16 +355,29 @@ def _(autocorrelograms_by_task, fig_size, path_panels, plt):
         else:
             _ax.set_ylim(top=0.075)
         _ax.legend(frameon=False)
-    plt.savefig(path_panels / "2ADC_autocorrelograms.svg")
-    fig_autocorrelograms_2ADC
+        _fig.savefig(path_panels / f"2ADC_autocorrelogram_{_signal.lower()}.svg")
+
+    mo.hstack([fig_autocorrelograms_2ADC_outcome, fig_autocorrelograms_2ADC_repetition], justify="start", gap=1)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2AFC
+    """)
     return
 
 
 @app.cell
-def _(autocorrelograms_by_task, fig_size, path_panels, plt):
-    fig_autocorrelograms_2AFC, (ax_autocorrelograms_2AFC_outcome, ax_autocorrelograms_2AFC_repetition) = plt.subplots(
-        1, 2, figsize=fig_size(1,2), constrained_layout=True, sharex=True
+def _(autocorrelograms_by_task, fig_size, mo, path_panels, plt):
+    fig_autocorrelograms_2AFC_outcome, ax_autocorrelograms_2AFC_outcome = plt.subplots(
+        figsize=fig_size(2,1), constrained_layout=True
     )
+    fig_autocorrelograms_2AFC_repetition, ax_autocorrelograms_2AFC_repetition = plt.subplots(
+        figsize=fig_size(2,1), constrained_layout=True
+    )
+
     _data_ac = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["2AFC"]["glm"]["autocorr"]
     _colors = {
@@ -368,8 +386,8 @@ def _(autocorrelograms_by_task, fig_size, path_panels, plt):
     }
     for _signal, _ax in (
         ("Outcome", ax_autocorrelograms_2AFC_outcome),
-        ("Repetition", ax_autocorrelograms_2AFC_repetition),
-    ):
+        ("Repetition", ax_autocorrelograms_2AFC_repetition)):
+        _fig = fig_autocorrelograms_2AFC_outcome if _signal == "Outcome" else fig_autocorrelograms_2AFC_repetition
         _data_sub = _data_ac[_data_ac["signal"] == _signal].sort_values("lag")
         _ax.errorbar(
             _data_sub["lag"],
@@ -400,16 +418,40 @@ def _(autocorrelograms_by_task, fig_size, path_panels, plt):
         else:
             _ax.set_ylim(top=0.1)
         _ax.legend(frameon=False)
-    plt.savefig(path_panels / "2AFC_autocorrelograms.svg")
-    fig_autocorrelograms_2AFC
+        _fig.savefig(path_panels / f"2AFC_autocorrelogram_{_signal.lower()}.svg")
+
+    mo.hstack([fig_autocorrelograms_2AFC_outcome, fig_autocorrelograms_2AFC_repetition], justify="start", gap=1)
+    return (
+        fig_autocorrelograms_2AFC_outcome,
+        fig_autocorrelograms_2AFC_repetition,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### MCDR
+    """)
     return
 
 
 @app.cell
-def _(autocorrelograms_by_task, fig_size, path_panels, plt):
-    fig_autocorrelograms_MCDR, (ax_autocorrelograms_MCDR_outcome, ax_autocorrelograms_MCDR_repetition) = plt.subplots(
-        1, 2, figsize=fig_size(1,2), constrained_layout=True, sharex=True
+def _(
+    autocorrelograms_by_task,
+    fig_autocorrelograms_2AFC_outcome,
+    fig_autocorrelograms_2AFC_repetition,
+    fig_size,
+    mo,
+    path_panels,
+    plt,
+):
+    fig_autocorrelograms_MCDR_outcome, ax_autocorrelograms_MCDR_outcome = plt.subplots(
+        figsize=fig_size(2,1), constrained_layout=True
     )
+    fig_autocorrelograms_MCDR_repetition, ax_autocorrelograms_MCDR_repetition = plt.subplots(
+        figsize=fig_size(2,1), constrained_layout=True
+    )
+
     _data_ac = autocorrelograms_by_task["MCDR"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["MCDR"]["glm"]["autocorr"]
     _colors = {
@@ -418,8 +460,8 @@ def _(autocorrelograms_by_task, fig_size, path_panels, plt):
     }
     for _signal, _ax in (
         ("Outcome", ax_autocorrelograms_MCDR_outcome),
-        ("Repetition", ax_autocorrelograms_MCDR_repetition),
-    ):
+        ("Repetition", ax_autocorrelograms_MCDR_repetition)):
+        _fig = fig_autocorrelograms_2AFC_outcome if _signal == "Outcome" else fig_autocorrelograms_2AFC_repetition
         _data_sub = _data_ac[_data_ac["signal"] == _signal].sort_values("lag")
         _ax.errorbar(
             _data_sub["lag"],
@@ -450,8 +492,9 @@ def _(autocorrelograms_by_task, fig_size, path_panels, plt):
         else:
             _ax.set_ylim(top=0.05)
         _ax.legend(frameon=False)
-    plt.savefig(path_panels / "MCDR_autocorrelograms.svg")
-    fig_autocorrelograms_MCDR
+        _fig.savefig(path_panels / f"MCDR_autocorrelogram_{_signal.lower()}.svg")
+
+    mo.hstack([fig_autocorrelograms_MCDR_outcome, fig_autocorrelograms_MCDR_repetition], justify="start", gap=1)
     return
 
 
@@ -481,7 +524,7 @@ def _(mo):
 
 @app.cell
 def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(3,1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
     prev_choices_2ADC = plt.gca()
 
     # Filter to just have lagged choices
@@ -497,7 +540,7 @@ def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
         **boxplot_STYLE,
     )
     prev_choices_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    prev_choices_2ADC.set_title("2ADC Prev. choices")
+    # prev_choices_2ADC.set_title("2ADC")
     prev_choices_2ADC.set_ylabel("Weight")
     prev_choices_2ADC.set_xlabel("Lag")
     prev_choices_2ADC.set_xticklabels([str(i) if i == 1 or i % 5 == 0 else "" for i in range(1, len(_order) + 1)])
@@ -516,7 +559,7 @@ def _(mo):
 
 @app.cell
 def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(3,1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
     stim_2ADC = plt.gca()
 
     # Filter to just have lagged choices
@@ -532,7 +575,7 @@ def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
         **boxplot_STYLE,
     )
     stim_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    stim_2ADC.set_title("2ADC Stimulus")
+    # stim_2ADC.set_title("2ADC")
     stim_2ADC.set_xlabel("")
     stim_2ADC.set_ylabel("Weight")
     stim_2ADC.set_xlabel("Delay")
@@ -560,7 +603,7 @@ def _(mo):
 
 @app.cell
 def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(3,1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
     prev_choices_2AFC = plt.gca()
 
     # Filter to just have lagged choices
@@ -576,7 +619,7 @@ def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
         **boxplot_STYLE,
     )
     prev_choices_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    prev_choices_2AFC.set_title("2AFC ")
+    # prev_choices_2AFC.set_title("2AFC")
     prev_choices_2AFC.set_ylabel("Weight")
     prev_choices_2AFC.set_xlabel("Lag")
     prev_choices_2AFC.set_xticklabels([str(i) if i == 1 or i % 5 == 0 else "" for i in range(1, len(_order) + 1)])
@@ -595,7 +638,7 @@ def _(mo):
 
 @app.cell
 def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(3,1))
+    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
     stim_2AFC = plt.gca()
 
     # Filter to just have lagged choices
@@ -611,9 +654,9 @@ def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
         **boxplot_STYLE,
     )
     stim_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    stim_2AFC.set_title("2AFC Stimulus")
+    # stim_2AFC.set_title("2AFC")
     stim_2AFC.set_ylabel("Weight")
-    stim_2AFC.set_xlabel("Lag")
+    stim_2AFC.set_xlabel("ILD")
     stim_2AFC.set_xticklabels([2,4,8, 70])
     plt.savefig(path_panels / "2AFC_stim.svg")
     stim_2AFC
@@ -647,7 +690,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(3,1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
     prev_choices_MCDR = plt.gca()
 
     # Filter to just have lagged choices
@@ -663,7 +706,7 @@ def _(
         **boxplot_STYLE,
     )
     prev_choices_MCDR.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    prev_choices_MCDR.set_title("MCDR Prev. choices")
+    # prev_choices_MCDR.set_title("MCDR")
     prev_choices_MCDR.set_ylabel("Weight")
     prev_choices_MCDR.set_xlabel("Lag")
     prev_choices_MCDR.set_xticklabels([str(i) if i == 1 or i % 5 == 0 else "" for i in range(1, len(_order) + 1)])
@@ -691,7 +734,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(3,1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
     stim_MCDR = plt.gca()
 
     # Filter to just have lagged choices
@@ -707,10 +750,10 @@ def _(
         **boxplot_STYLE,
     )
     stim_MCDR.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    stim_MCDR.set_title("MCDR Stimulus")
+    # stim_MCDR.set_title("MCDR")
     stim_MCDR.set_ylabel("Weight")
-    stim_MCDR.set_xlabel("Stimulus")
-    stim_MCDR.set_xticklabels([1,2,3,4])
+    stim_MCDR.set_xlabel("Difficulty")
+    stim_MCDR.set_xticklabels([1, 2, 3, 4])
     plt.savefig(path_panels / "MCDR_stim.svg")
     stim_MCDR
     return
@@ -934,15 +977,7 @@ def _(mo):
 
 
 @app.cell
-def _(
-    adapters,
-    build_session_repetition_data,
-    fig_size,
-    pl,
-    plot_dfs,
-    plt,
-    single_session_2AFC,
-):
+def _(adapters, build_session_repetition_data, fig_size, pl, plot_dfs, plt):
     _subject = "C37"
     _session = 35
     _subject_df  = plot_dfs["2AFC_delay"].filter(pl.col("subject") == _subject, pl.col("session") == _session)
@@ -976,7 +1011,7 @@ def _(
     single_session_2ADC.set_ylabel(f"Repetitions / {int(20)} trials")
     single_session_2ADC.set_ylim(0, int(20))
     single_session_2ADC.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
-    single_session_2AFC.legend(frameon=False, loc="lower right")
+    single_session_2ADC.legend(frameon=False, loc="lower right")
     return
 
 
@@ -1024,7 +1059,7 @@ def _(adapters, build_session_repetition_data, fig_size, pl, plot_dfs, plt):
     single_session_2AFC.set_ylim(0, int(20))
     single_session_2AFC.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
     single_session_2AFC.legend(frameon=False, loc="lower right")
-    return (single_session_2AFC,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -1123,8 +1158,8 @@ def _(
     consec_rep_2ADC.set_xlim(0, 30)
     consec_rep_2ADC.set_ylim(1, 1e4)
     consec_rep_2ADC.set_yscale("log")
-    consec_rep_2ADC.set_title("2ADC Choices")
-    consec_rep_2ADC.set_xlabel("Chunk length")
+    # consec_rep_2ADC.set_title("2ADC")
+    consec_rep_2ADC.set_xlabel("Consecutive choices")
     consec_rep_2ADC.set_ylabel(chunk_hist_ylabel)
     _handles, _labels = consec_rep_2ADC.get_legend_handles_labels()
     consec_rep_2ADC.legend(
@@ -1172,7 +1207,7 @@ def _(
     consec_rep_2AFC.set_xlim(0, 30)
     consec_rep_2AFC.set_ylim(1, 1e4)
     consec_rep_2AFC.set_yscale("log")
-    consec_rep_2AFC.set_title("2AFC")
+    # consec_rep_2AFC.set_title("2AFC")
     consec_rep_2AFC.set_xlabel("Consecutive choices")
     consec_rep_2AFC.set_ylabel(chunk_hist_ylabel)
     _handles, _labels = consec_rep_2AFC.get_legend_handles_labels()
@@ -1373,7 +1408,7 @@ def _(
             [l for l in _labels if l not in ["transition", "source"]],
             frameon=False,
         )
-    
+
     consec_rep_2AFC_saline.set_ylabel("Frequency")
     consec_rep_2AFC_Drug.set_ylabel("")
     plt.savefig(path_panels / "2AFC_drug_choice_transition_chunks.svg")
@@ -1836,11 +1871,6 @@ def _(chi2, np, pd, transition_chunk_lengths_by_task):
     )
 
     transition_chunk_distribution_subject_summary
-    return
-
-
-@app.cell
-def _():
     return
 
 
