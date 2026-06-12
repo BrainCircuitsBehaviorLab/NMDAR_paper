@@ -7,3 +7,6 @@ axes.grid: False
 
 # Savefig tight
 savefig.bbox: tight 
+
+# Keep text editable in SVG
+svg.fonttype: none

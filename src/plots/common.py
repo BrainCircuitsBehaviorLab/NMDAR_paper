@@ -382,11 +382,17 @@ def build_session_repetition_data(
     data["previous_stimulus"] = data["stimulus"].shift(1)
     data["response_repeat"] = data["response"].eq(data["previous_response"]).fillna(False)
     data["stimulus_repeat"] = data["stimulus"].eq(data["previous_stimulus"]).fillna(False)
-    data["response_repeat_window_count"] = (
-        data["response_repeat"].astype(float).rolling(int(window), min_periods=1).sum()
+    window = int(window)
+    response_repeat = data["response_repeat"].astype(float)
+    stimulus_repeat = data["stimulus_repeat"].astype(float)
+    data["repeat_window_n"] = response_repeat.rolling(window, min_periods=1).count()
+    data["response_repeat_window_count"] = response_repeat.rolling(window, min_periods=1).sum()
+    data["stimulus_repeat_window_count"] = stimulus_repeat.rolling(window, min_periods=1).sum()
+    data["response_repeat_window_fraction"] = (
+        data["response_repeat_window_count"] / data["repeat_window_n"]
     )
-    data["stimulus_repeat_window_count"] = (
-        data["stimulus_repeat"].astype(float).rolling(int(window), min_periods=1).sum()
+    data["stimulus_repeat_window_fraction"] = (
+        data["stimulus_repeat_window_count"] / data["repeat_window_n"]
     )
     return data
 
@@ -442,23 +448,23 @@ def plot_session_repetition_running_count(
     fig.set_dpi(dpi)
     ax.plot(
         data["trial_x"],
-        data["response_repeat_window_count"],
+        data["response_repeat_window_fraction"],
         color="tab:brown",
         linewidth=1.5,
-        label="Response repetition",
+        label="Response",
     )
     ax.plot(
         data["trial_x"],
-        data["stimulus_repeat_window_count"],
+        data["stimulus_repeat_window_fraction"],
         color="tab:blue",
         linewidth=1.5,
-        label="Stimulus repetition",
+        label="Stimulus",
     )
     ax.set_xlabel("Trial number (within session)")
-    ax.set_ylabel(f"Repetitions / {int(window)} trials")
-    ax.set_ylim(0, int(window))
+    ax.set_ylabel("Repetition fraction")
+    ax.set_ylim(0, 1)
     ax.set_xlim(-0.5, len(data) - 0.5)
-    ax.legend(frameon=False, loc="lower right")
+    ax.legend(frameon=False, loc="upper left")
     sns.despine(ax=ax)
     fig.tight_layout()
     return fig, ax

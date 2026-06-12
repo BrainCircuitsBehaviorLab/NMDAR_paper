@@ -4376,6 +4376,46 @@ def infer_autocorrelogram_choice_history_values(
     return out
 
 
+def infer_autocorrelogram_choice_indicator_classes(
+    y: np.ndarray,
+    base_X: np.ndarray,
+    sessions: np.ndarray,
+    x_cols: list[str],
+) -> dict[str, int]:
+    """Infer side-coded one-hot choice-lag columns, e.g. choice_lag_01L."""
+    y = np.asarray(y, dtype=float)
+    base_X = np.asarray(base_X, dtype=float)
+    if y.shape[0] != base_X.shape[0]:
+        return {}
+
+    out: dict[str, int] = {}
+    for col_idx, col in enumerate(x_cols):
+        match = re.fullmatch(r"choice_lag_(\d+)([A-Za-z]+)", str(col))
+        if not match:
+            continue
+        lag = int(match.group(1))
+        if lag <= 0 or lag >= len(y):
+            continue
+        same_session = sessions[lag:] == sessions[:-lag]
+        source_y = y[:-lag][same_session]
+        lag_values = base_X[lag:, col_idx][same_session]
+        finite = np.isfinite(source_y) & np.isfinite(lag_values)
+        if not finite.any():
+            continue
+
+        class_scores = {}
+        for class_value in np.unique(source_y[finite]).astype(int):
+            class_mask = finite & (source_y == class_value)
+            if class_mask.any():
+                class_scores[int(class_value)] = float(np.nanmean(lag_values[class_mask]))
+        if not class_scores:
+            continue
+        best_class, best_score = max(class_scores.items(), key=lambda item: item[1])
+        if best_score > 0.5:
+            out[str(col)] = int(best_class)
+    return out
+
+
 def closed_loop_autocorrelogram_x(
     base_x: np.ndarray,
     *,
@@ -4385,6 +4425,7 @@ def closed_loop_autocorrelogram_x(
     x_cols: list[str],
     lag_param_weights: dict[str, dict[int, float]],
     choice_history_values: dict[int, float] | None = None,
+    choice_indicator_classes: dict[str, int] | None = None,
 ) -> np.ndarray:
     x = np.asarray(base_x, dtype=float).copy()
     for col_idx, col in enumerate(x_cols):
@@ -4397,7 +4438,17 @@ def closed_loop_autocorrelogram_x(
                 starts,
                 choice_history_values=choice_history_values,
             )
-        elif col in lag_param_weights:
+        else:
+            side_match = re.fullmatch(r"choice_lag_(\d+)([A-Za-z]+)", str(col))
+            if side_match:
+                source_idx = trial_idx - int(side_match.group(1))
+                if source_idx < starts[trial_idx] or not np.isfinite(choices[source_idx]):
+                    x[col_idx] = 0.0
+                else:
+                    class_idx = (choice_indicator_classes or {}).get(str(col))
+                    x[col_idx] = float(class_idx is not None and int(choices[source_idx]) == class_idx)
+                continue
+        if col in lag_param_weights:
             x[col_idx] = sum(
                 weight * autocorrelogram_history_value(
                     choices,
@@ -4458,6 +4509,12 @@ def simulate_subject_closed_loop_autocorrelogram(
         sessions,
         x_cols,
     )
+    choice_indicator_classes = infer_autocorrelogram_choice_indicator_classes(
+        np.asarray(arrays.get("y", []), dtype=float),
+        base_X,
+        sessions,
+        x_cols,
+    )
     lag_param_weights = {
         col: fitted_lag_weights(adapter, subject, col)
         for col in ("choice_lag_param", "at_choice_param")
@@ -4480,6 +4537,7 @@ def simulate_subject_closed_loop_autocorrelogram(
             x_cols=x_cols,
             lag_param_weights=lag_param_weights,
             choice_history_values=choice_history_values,
+            choice_indicator_classes=choice_indicator_classes,
         )
         probs = glm_probs_from_weights(
             x_trial[None, :],

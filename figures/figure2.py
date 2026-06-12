@@ -99,7 +99,6 @@ def _():
         np,
         pd,
         pl,
-        plot_session_repetition_running_count,
         plot_session_response_raster,
         plt,
         prepare_closed_loop_model_autocorrelograms,
@@ -145,7 +144,7 @@ def _(mo):
 
 @app.cell
 def _(Path, plt, sns):
-    sns.set_theme(style='ticks', context='notebook')
+    sns.set_theme(style='ticks', context='paper')
     plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = 'none'
     return
@@ -235,6 +234,22 @@ def _(mo):
     # Plots
     """)
     return
+
+
+@app.cell
+def _(plt):
+    fig, axd = plt.subplot_mosaic(
+        [
+            ["a", "a",  "b", "b"],
+            ["c1", "c2", "e", "e"],
+            ["f", "f", "h", "h"],
+            ["i", "i", "k", "k"],
+            ["l", "m", "p", "q"],
+        ],
+        figsize = (10,10)
+    )
+
+    return axd, fig
 
 
 @app.cell(hide_code=True)
@@ -558,30 +573,35 @@ def _(mo):
 
 
 @app.cell
-def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
-    stim_2ADC = plt.gca()
+def _(mo):
+    _df = mo.sql(
+        f"""
+        plt.figure(figsize=fig_size(3,1), constrained_layout=True)
+        stim_2ADC = plt.gca()
+        stim_2ADC = axd["p"]
 
-    # Filter to just have lagged choices
-    _plot_df = weight_dfs["2AFC_delay"].filter(pl.col("feature").str.contains("stim")) 
-    _order = sorted(_plot_df["feature"].unique(), key=lambda x: float(x.split("stim_x_delay_hot_")[-1].replace("p", ".")), reverse=True)
-    sns.boxplot(
-        data=_plot_df,
-        x="feature",
-        y="weight",
-        order = _order,
-        color="tab:gray",
-        ax=stim_2ADC,
-        **boxplot_STYLE,
+        # Filter to just have lagged choices
+        _plot_df = weight_dfs["2AFC_delay"].filter(pl.col("feature").str.contains("stim")) 
+        _order = sorted(_plot_df["feature"].unique(), key=lambda x: float(x.split("stim_x_delay_hot_")[-1].replace("p", ".")), reverse=True)
+        sns.boxplot(
+            data=_plot_df,
+            x="feature",
+            y="weight",
+            order = _order,
+            color="tab:gray",
+            ax=stim_2ADC,
+            **boxplot_STYLE,
+        )
+        stim_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+        stim_2ADC.set_title("2ADC Stimulus")
+        stim_2ADC.set_xlabel("")
+        stim_2ADC.set_ylabel("Weight")
+        stim_2ADC.set_xlabel("Delay")
+        stim_2ADC.set_xticklabels([10 ,3,1, 0.1])
+        plt.savefig(path_panels / "2ADC_stim.svg")
+        stim_2ADC
+        """
     )
-    stim_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    # stim_2ADC.set_title("2ADC")
-    stim_2ADC.set_xlabel("")
-    stim_2ADC.set_ylabel("Weight")
-    stim_2ADC.set_xlabel("Delay")
-    stim_2ADC.set_xticklabels([10 ,3,1, 0.1])
-    plt.savefig(path_panels / "2ADC_stim.svg")
-    stim_2ADC
     return
 
 
@@ -602,9 +622,10 @@ def _(mo):
 
 
 @app.cell
-def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
+def _(axd, boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
+    plt.figure(figsize=fig_size(3,1), constrained_layout=True)
     prev_choices_2AFC = plt.gca()
+    prev_choices_2AFC = axd["q"]
 
     # Filter to just have lagged choices
     _plot_df = weight_dfs["2AFC"].filter(pl.col("feature").str.contains("choice_lag")) 
@@ -947,12 +968,31 @@ def _(plot_session_response_raster, session_repetition_data):
 
 
 @app.cell
-def _(plot_session_repetition_running_count, session_repetition_data):
-    fig_session_repetition_running_count, _ = plot_session_repetition_running_count(
-        session_repetition_data,
-        window=20,
+def _(fig_size, plt, session_repetition_data):
+    plt.figure(figsize=fig_size(1,3), constrained_layout=True)
+    single_session = plt.gca()
+
+    single_session.plot(
+        "trial_x",
+        "response_repeat_window_fraction",
+        color="tab:brown",
+        linewidth=1.5,
+        label="Response",
+        data=session_repetition_data
     )
-    fig_session_repetition_running_count
+    single_session.plot(
+        "trial_x",
+        "stimulus_repeat_window_fraction",
+        color="tab:blue",
+        linewidth=1.5,
+        label="Stimulus",
+        data=session_repetition_data
+    )
+    single_session.set_xlabel("Trial number (within session)")
+    single_session.set_ylabel("Repetition fraction")
+    single_session.set_ylim(0, 1)
+    single_session.set_xlim(-0.5, len(session_repetition_data) - 0.5)
+    single_session.legend(frameon=False, loc="lower right")
     return
 
 
@@ -993,23 +1033,23 @@ def _(adapters, build_session_repetition_data, fig_size, pl, plot_dfs, plt):
 
     single_session_2ADC.plot(
         "trial_x",
-        "response_repeat_window_count",
+        "response_repeat_window_fraction",
         color="tab:brown",
         linewidth=1.5,
-        label="Response repetition",
+        label="Response",
         data=session_repetition_data_2ADC
     )
     single_session_2ADC.plot(
         "trial_x",
-        "stimulus_repeat_window_count",
+        "stimulus_repeat_window_fraction",
         color="tab:blue",
         linewidth=1.5,
-        label="Stimulus repetition",
+        label="Stimulus",
         data=session_repetition_data_2ADC
     )
     single_session_2ADC.set_xlabel("Trial number (within session)")
-    single_session_2ADC.set_ylabel(f"Repetitions / {int(20)} trials")
-    single_session_2ADC.set_ylim(0, int(20))
+    single_session_2ADC.set_ylabel("Repetition fraction")
+    single_session_2ADC.set_ylim(0, 1)
     single_session_2ADC.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
     single_session_2ADC.legend(frameon=False, loc="lower right")
     return
@@ -1040,23 +1080,23 @@ def _(adapters, build_session_repetition_data, fig_size, pl, plot_dfs, plt):
 
     single_session_2AFC.plot(
         "trial_x",
-        "response_repeat_window_count",
+        "response_repeat_window_fraction",
         color="tab:brown",
         linewidth=1.5,
-        label="Response repetition",
+        label="Response",
         data=session_repetition_data_2AFC
     )
     single_session_2AFC.plot(
         "trial_x",
-        "stimulus_repeat_window_count",
+        "stimulus_repeat_window_fraction",
         color="tab:blue",
         linewidth=1.5,
-        label="Stimulus repetition",
+        label="Stimulus",
         data=session_repetition_data_2AFC
     )
     single_session_2AFC.set_xlabel("Trial number (within session)")
-    single_session_2AFC.set_ylabel(f"Repetitions / {int(20)} trials")
-    single_session_2AFC.set_ylim(0, int(20))
+    single_session_2AFC.set_ylabel("Repetition fraction")
+    single_session_2AFC.set_ylim(0, 1)
     single_session_2AFC.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
     single_session_2AFC.legend(frameon=False, loc="lower right")
     return

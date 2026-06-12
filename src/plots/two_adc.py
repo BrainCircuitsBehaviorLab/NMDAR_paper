@@ -933,10 +933,12 @@ def _plot_signed_delay_psych_panel(
     color: str,
     model_color: str | None = None,
     label: str | None = None,
+    model_label: str | None = None,
     choice_col: str = "response",
     pred_col: str = "p_pred",
     subj_col: str = "subject",
     weight_col: str | None = None,
+    background_style: str = "data",
     legend: bool = False,
     show_subject_lines: bool = True,
     show_weighted_points: bool = True,
@@ -955,23 +957,25 @@ def _plot_signed_delay_psych_panel(
         return
     x = summary["_x_code"].to_numpy(dtype=float)
     if show_subject_lines:
+        subject_line_color = "black" if background_style == "model" else color
         for _, grp in subject_summary.groupby(subj_col, observed=True):
             grp = grp.sort_values("_x_code")
             ax.plot(
                 grp["_x_code"].to_numpy(dtype=float),
                 grp["model_mean"].to_numpy(dtype=float),
                 "-",
-                color=color,
+                color=subject_line_color,
                 alpha=0.12,
                 zorder=2,
             )
 
     if show_model_line:
+        model_line_color = model_color or ("black" if background_style == "model" else color)
         ax.plot(
             x,
             summary["model_mean"].to_numpy(dtype=float),
-            color=model_color or color,
-            label="_nolegend_",
+            color=model_line_color,
+            label=model_label or "_nolegend_",
             zorder=6,
         )
     if show_weighted_points:
@@ -999,7 +1003,7 @@ def _plot_signed_delay_psych_panel(
     ax.set_xlabel("Signed delay")
     ax.set_ylabel(r"$P(\mathrm{right})$")
     if legend:
-        ax.legend(frameon=False)
+        ax.legend(frameon=False, fontsize=8)
 
 
 def plot_categorical_performance_all(
@@ -1021,7 +1025,7 @@ def plot_categorical_performance_all(
     style = dict(plot_kwargs)
     axes_arg = style.pop("axes", None)
     figsize_arg = style.pop("figsize", None)
-    del ild_col, views, X_cols, ild_max, background_style
+    del ild_col, views, X_cols, ild_max
     if hasattr(df, "to_pandas"):
         df_pd = df.to_pandas()
     else:
@@ -1042,9 +1046,14 @@ def plot_categorical_performance_all(
         axes[ax_idx],
         df_pd,
         color="#2b7bba",
+        model_color="black" if background_style == "model" else None,
+        label="Data",
+        model_label="Model",
         choice_col=choice_col,
         pred_col=pred_col,
         subj_col=subj_col,
+        background_style=background_style,
+        legend=background_style == "model",
     )
     ax_idx += 1
 
@@ -1055,9 +1064,14 @@ def plot_categorical_performance_all(
                 axes[ax_idx],
                 df_pd[df_pd[cond_col] == cond],
                 color=cond_colors.get(cond, "k"),
+                model_color="black" if background_style == "model" else None,
+                label="Data",
+                model_label="Model",
                 choice_col=choice_col,
                 pred_col=pred_col,
                 subj_col=subj_col,
+                background_style=background_style,
+                legend=background_style == "model",
             )
             ax_idx += 1
 
@@ -1068,9 +1082,14 @@ def plot_categorical_performance_all(
                 axes[ax_idx],
                 df_pd[df_pd[exp_col] == exp],
                 color=exp_palette[ei],
+                model_color="black" if background_style == "model" else None,
+                label="Data",
+                model_label="Model",
                 choice_col=choice_col,
                 pred_col=pred_col,
                 subj_col=subj_col,
+                background_style=background_style,
+                legend=background_style == "model",
             )
             ax_idx += 1
     fig.tight_layout()
