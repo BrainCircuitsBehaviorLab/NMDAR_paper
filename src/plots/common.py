@@ -185,6 +185,31 @@ def _difficulty_labels(difficulty: pd.Series) -> pd.Series:
     return difficulty.astype(str)
 
 
+def _session_level_column(plot_df, adapter=None) -> tuple[str | None, str | None, bool]:
+    behavioral_cols = getattr(adapter, "behavioral_cols", {}) or {}
+    task_key = getattr(adapter, "task_key", "")
+    task_label = getattr(adapter, "task_label", task_key)
+    psychometric_x_col = getattr(adapter, "psychometric_x_col", None)
+    accuracy_x_col = getattr(adapter, "accuracy_x_col", None)
+
+    if task_key in {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}:
+        column = pick_existing_column(
+            plot_df,
+            [psychometric_x_col, accuracy_x_col, "delay", "delay_raw", "delays"],
+        )
+        return column, "|Delay| level (s)" if column is not None else None, True
+
+    column = pick_existing_column(
+        plot_df,
+        [psychometric_x_col, accuracy_x_col, "ILD", "ild", "absILD", "stimulus", "stim", behavioral_cols.get("stimulus")],
+    )
+    if column is None:
+        return None, None, False
+    if column in {"ILD", "ild", "absILD"} or task_label == "2AFC":
+        return column, "|ILD| level (dB)", True
+    return column, "Stimulus level", False
+
+
 def build_session_trial_outcomes_data(
     plot_df,
     *,
@@ -356,6 +381,11 @@ def build_session_repetition_data(
         plot_df,
         ["stimulus", "stim", "side", behavioral_cols.get("stimulus"), "Side"],
     )
+    correct_col = pick_existing_column(
+        plot_df,
+        ["correct_bool", "performance", behavioral_cols.get("performance"), "Hit", "hit"],
+    )
+    level_col, level_ylabel, level_abs = _session_level_column(plot_df, adapter=adapter)
     if session_col is None or trial_col is None or response_col is None or stimulus_col is None:
         raise ValueError("Example repetition plot needs session, trial, response, and stimulus columns.")
 
@@ -370,13 +400,42 @@ def build_session_repetition_data(
     if session_df.height == 0:
         raise ValueError("No trials for the selected subject/session.")
 
+    select_cols = list(dict.fromkeys(
+        col for col in [trial_col, response_col, stimulus_col, correct_col, level_col] if col is not None
+    ))
+    rename_cols = {
+        trial_col: "trial",
+        response_col: "response",
+        stimulus_col: "stimulus",
+    }
+    if correct_col is not None:
+        rename_cols[correct_col] = "correct"
+    if level_col is not None and level_col not in rename_cols:
+        rename_cols[level_col] = "level"
+
     data = (
         session_df
-        .select([trial_col, response_col, stimulus_col])
+        .select(select_cols)
         .to_pandas()
-        .rename(columns={trial_col: "trial", response_col: "response", stimulus_col: "stimulus"})
+        .rename(columns=rename_cols)
         .reset_index(drop=True)
     )
+    if "correct" in data.columns:
+        data["correct"] = _coerce_correct_values(data["correct"])
+    if level_col is not None and "level" not in data.columns:
+        if level_col == trial_col:
+            data["level"] = data["trial"]
+        elif level_col == response_col:
+            data["level"] = data["response"]
+        elif level_col == stimulus_col:
+            data["level"] = data["stimulus"]
+        elif correct_col is not None and level_col == correct_col:
+            data["level"] = data["correct"]
+    if "level" in data.columns:
+        if level_abs:
+            data["level"] = pd.to_numeric(data["level"], errors="coerce").abs()
+        data["level_label"] = _difficulty_labels(data["level"])
+        data.attrs["level_ylabel"] = level_ylabel or "Level"
     data["trial_x"] = np.arange(len(data))
     data["previous_response"] = data["response"].shift(1)
     data["previous_stimulus"] = data["stimulus"].shift(1)
@@ -400,32 +459,90 @@ def build_session_repetition_data(
 def plot_session_response_raster(
     data: pd.DataFrame,
     *,
+    color_by: str = "response",
+    y_axis: str = "response",
     ax: plt.Axes | None = None,
     figsize=(6, 1.6),
     dpi=150,
 ):
     fig, ax = resolve_single_axis(ax=ax, figsize=figsize, constrained_layout=False)
     fig.set_dpi(dpi)
-    response_labels = sorted(data["response"].dropna().unique(), key=lambda value: str(value))
-    response_y = {value: index for index, value in enumerate(response_labels)}
-    colors = sns.color_palette("tab10", n_colors=max(len(response_labels), 1))
 
-    for idx, response in enumerate(response_labels):
-        mask = data["response"].eq(response)
-        ax.scatter(
-            data.loc[mask, "trial_x"],
-            [response_y[response]] * int(mask.sum()),
-            s=10,
-            color=colors[idx],
-            label=str(response),
+    if y_axis == "level":
+        if "level" not in data.columns:
+            raise ValueError("Level-axis raster needs a 'level' column in the session data.")
+        level_values = pd.Series(data["level"]).dropna()
+        numeric_levels = pd.to_numeric(level_values, errors="coerce")
+        if numeric_levels.notna().all():
+            level_order = sorted(level_values.unique(), key=lambda value: float(value))
+        else:
+            level_order = sorted(level_values.unique(), key=lambda value: str(value))
+        level_y = {value: index for index, value in enumerate(level_order)}
+        y_values = data["level"].map(level_y)
+        y_ticks = list(level_y.values())
+        label_lookup = (
+            data[["level", "level_label"]]
+            .drop_duplicates("level")
+            .set_index("level")["level_label"]
+            .to_dict()
+            if "level_label" in data.columns
+            else {}
         )
+        y_ticklabels = [str(label_lookup.get(level, level)) for level in level_order]
+        ylabel = data.attrs.get("level_ylabel", "Level")
+    elif y_axis == "response":
+        response_labels = sorted(data["response"].dropna().unique(), key=lambda value: str(value))
+        response_y = {value: index for index, value in enumerate(response_labels)}
+        y_values = data["response"].map(response_y)
+        y_ticks = list(response_y.values())
+        y_ticklabels = [str(label) for label in response_labels]
+        ylabel = "Response"
+    else:
+        raise ValueError("y_axis must be 'response' or 'level'.")
+
+    if color_by == "correctness":
+        if "correct" not in data.columns:
+            raise ValueError("Correctness-colored raster needs a 'correct' column in the session data.")
+        color_groups = [
+            (True, "Correct", "tab:green"),
+            (False, "Incorrect", "tab:red"),
+        ]
+        for value, label, color in color_groups:
+            mask = data["correct"].eq(value) & y_values.notna()
+            if not mask.any():
+                continue
+            ax.scatter(
+                data.loc[mask, "trial_x"],
+                y_values.loc[mask],
+                s=10,
+                color=color,
+                label=label,
+            )
+    elif color_by == "response":
+        response_labels = sorted(data["response"].dropna().unique(), key=lambda value: str(value))
+        colors = sns.color_palette("tab10", n_colors=max(len(response_labels), 1))
+        for idx, response in enumerate(response_labels):
+            mask = data["response"].eq(response) & y_values.notna()
+            if not mask.any():
+                continue
+            ax.scatter(
+                data.loc[mask, "trial_x"],
+                y_values.loc[mask],
+                s=10,
+                color=colors[idx],
+                label=str(response),
+            )
+    else:
+        raise ValueError("color_by must be 'response' or 'correctness'.")
 
     ax.set_xlabel("Trial number (within session)")
-    ax.set_ylabel("Response")
-    ax.set_yticks(list(response_y.values()))
-    ax.set_yticklabels([str(label) for label in response_labels])
+    ax.set_ylabel(ylabel)
+    ax.set_yticks(y_ticks)
+    ax.set_yticklabels(y_ticklabels)
     ax.set_xlim(-0.5, len(data) - 0.5)
-    if len(response_labels) > 1:
+    if color_by == "correctness":
+        ax.legend(title="Outcome", frameon=False, loc="upper right")
+    elif len(response_labels) > 1:
         ax.legend(title="Response", frameon=False, loc="upper right")
     sns.despine(ax=ax)
     fig.tight_layout()
