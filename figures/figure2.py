@@ -25,6 +25,7 @@ def _():
     import io
     import re
     from pathlib import Path
+    import os
 
     import marimo as mo
     import matplotlib.image as mpimg
@@ -37,8 +38,7 @@ def _():
     # Custom package and plots
     from glmhmmt.notebook_support.analysis_common import (
         build_trial_and_weights_df,
-        load_fit_arrays,
-    )
+        load_fit_arrays)
     from glmhmmt.plots.emissions import _fold_three_choice_raw_weights as fold_three_choice
     from glmhmmt.runtime import configure_paths, get_runtime_paths, load_app_config
     from glmhmmt.tasks import get_adapter
@@ -51,8 +51,7 @@ def _():
         build_transition_chunk_drug_plot_data,
         build_transition_chunk_plot_data,
         prepare_closed_loop_model_autocorrelograms,
-        prepare_corrected_behavior_autocorrelograms,
-    )
+        prepare_corrected_behavior_autocorrelograms)
     from src.plots.common import (
         animal_chunk_histogram,
         boxplot_STYLE,
@@ -65,8 +64,7 @@ def _():
         plot_session_response_raster,
         plot_session_trial_outcomes,
         two_afc_session_repeat_alternate_accuracy as build_two_afc_session_repeat_alternate_accuracy,
-        two_afc_transition_chunk_lengths as build_two_afc_transition_chunk_lengths,
-    )
+        two_afc_transition_chunk_lengths as build_two_afc_transition_chunk_lengths)
 
     return (
         Path,
@@ -89,6 +87,7 @@ def _():
         load_fit_arrays,
         mo,
         np,
+        os,
         pd,
         pl,
         plot_session_response_raster,
@@ -125,7 +124,8 @@ def _(mo):
 @app.cell
 def _():
     mount_figure = False
-    return (mount_figure,)
+    format = "png"
+    return format, mount_figure
 
 
 @app.cell(hide_code=True)
@@ -137,7 +137,7 @@ def _(mo):
 
 
 @app.cell
-def _(Path, configure_paths, get_runtime_paths):
+def _(Path, configure_paths, format, get_runtime_paths, os):
     ROOT = Path(__file__).resolve().parents[1]
 
     configure_paths(config_path=ROOT / "config.toml")
@@ -149,13 +149,11 @@ def _(Path, configure_paths, get_runtime_paths):
     project_path = Path(__file__).resolve().parents[1]
     print(project_path)
 
-    format = "pdf"
-
     path_panels = project_path / "figures" / "panels2" / format
-    import os
+
     os.makedirs(path_panels, exist_ok=True)
     print(path_panels)
-    return format, path_panels, paths
+    return path_panels, paths
 
 
 @app.cell(hide_code=True)
@@ -369,10 +367,10 @@ def _(
     path_panels,
     plt,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd["f"]
     ax_autocorrelograms_2ADC_outcome.clear()
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure else axd["i"]
     ax_autocorrelograms_2ADC_repetition.clear()
 
@@ -420,7 +418,6 @@ def _(
         if not mount_figure:
             _fig.savefig((path_panels / f"2ADC_autocorrelogram_{_signal.lower()}").with_suffix(f".{format}"))
 
-
     mo.hstack([ax_autocorrelograms_2ADC_outcome, ax_autocorrelograms_2ADC_repetition], justify="start", gap=1)
     return
 
@@ -444,10 +441,10 @@ def _(
     path_panels,
     plt,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd["h"]
     ax_autocorrelograms_2AFC_outcome.clear()
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure else axd["k"]
     ax_autocorrelograms_2AFC_repetition.clear()
 
@@ -509,9 +506,9 @@ def _(mo):
 @app.cell
 def _(autocorrelograms_by_task, fig_size, format, mo, path_panels, plt):
     fig_autocorrelograms_MCDR_outcome, ax_autocorrelograms_MCDR_outcome = plt.subplots(
-        figsize=fig_size(2, 2), constrained_layout=True)
+        figsize=fig_size(2), constrained_layout=True)
     fig_autocorrelograms_MCDR_repetition, ax_autocorrelograms_MCDR_repetition = plt.subplots(
-        figsize=fig_size(2, 2), constrained_layout=True)
+        figsize=fig_size(2), constrained_layout=True)
 
     _data_ac = autocorrelograms_by_task["MCDR"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["MCDR"]["glm"]["autocorr"]
@@ -596,7 +593,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(3), constrained_layout=True)
     prev_choices_2ADC = plt.gca() if not mount_figure else axd["m"]
     prev_choices_2ADC.clear()
 
@@ -644,7 +641,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(3), constrained_layout=True)
     stim_2ADC = plt.gca() if not mount_figure else axd["l"]
     stim_2ADC.clear()
 
@@ -700,7 +697,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(3), constrained_layout=True)
     prev_choices_2AFC = plt.gca() if not mount_figure else axd["q"]
     prev_choices_2AFC.clear()
 
@@ -748,7 +745,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(3), constrained_layout=True)
     stim_2AFC = plt.gca() if not mount_figure else axd["p"]
     stim_2AFC.clear()
 
@@ -803,7 +800,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
+    plt.figure(figsize=fig_size(3), constrained_layout=True)
     prev_choices_MCDR = plt.gca()
 
     # Filter to just have lagged choices
@@ -848,7 +845,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
+    plt.figure(figsize=fig_size(3), constrained_layout=True)
     stim_MCDR = plt.gca()
 
     # Filter to just have lagged choices
@@ -1161,7 +1158,7 @@ def _(
         label="Stimulus",
         data=session_repetition_data_2ADC
     )
-    single_session_2ADC.set_title("2ADC")
+    # single_session_2ADC.set_title("2ADC")
     single_session_2ADC.set_xlabel("Trial")
     single_session_2ADC.set_ylabel("Rep. fraction")
     single_session_2ADC.set_ylim(0, 1)
@@ -2080,11 +2077,6 @@ def _(fig, format, mount_figure, path_panels):
     if mount_figure:
         fig.savefig((path_panels / "figure2").with_suffix(f".{format}"))
     fig
-    return
-
-
-@app.cell
-def _():
     return
 
 
