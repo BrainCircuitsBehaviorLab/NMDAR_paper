@@ -124,9 +124,8 @@ def _(mo):
 
 @app.cell
 def _():
-    format = "png"
     mount_figure = False
-    return format, mount_figure
+    return (mount_figure,)
 
 
 @app.cell(hide_code=True)
@@ -138,7 +137,7 @@ def _(mo):
 
 
 @app.cell
-def _(Path, configure_paths, format, get_runtime_paths):
+def _(Path, configure_paths, get_runtime_paths):
     ROOT = Path(__file__).resolve().parents[1]
 
     configure_paths(config_path=ROOT / "config.toml")
@@ -150,11 +149,13 @@ def _(Path, configure_paths, format, get_runtime_paths):
     project_path = Path(__file__).resolve().parents[1]
     print(project_path)
 
+    format = "pdf"
+
     path_panels = project_path / "figures" / "panels2" / format
     import os
     os.makedirs(path_panels, exist_ok=True)
     print(path_panels)
-    return path_panels, paths
+    return format, path_panels, paths
 
 
 @app.cell(hide_code=True)
@@ -183,7 +184,7 @@ def _(mo):
 
 
 @app.cell
-def _(get_adapter):
+def _(get_adapter, pl):
     task_names = ("2AFC_delay", "2AFC", "MCDR")
     model_name = "one hot"
     adapters = {_task_name: get_adapter(_task_name) for _task_name in task_names}
@@ -195,6 +196,9 @@ def _(get_adapter):
         _task_name: _adapter.subject_filter(_adapter.read_dataset())
         for _task_name, _adapter in adapters.items()
     }
+    dfs["2AFC"] = dfs["2AFC"].filter(pl.col("subject") != "326")
+    dfs["MCDR"] = dfs["MCDR"].filter(pl.col("subject").str.contains("B"))
+
 
     subjects_by_task = {
         _task_name: list(_df["subject"].unique())
