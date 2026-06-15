@@ -506,9 +506,9 @@ def _(mo):
 @app.cell
 def _(autocorrelograms_by_task, fig_size, format, mo, path_panels, plt):
     fig_autocorrelograms_MCDR_outcome, ax_autocorrelograms_MCDR_outcome = plt.subplots(
-        figsize=fig_size(4))#, constrained_layout=True))
+        figsize=fig_size(2, 2), constrained_layout=True)
     fig_autocorrelograms_MCDR_repetition, ax_autocorrelograms_MCDR_repetition = plt.subplots(
-        figsize=fig_size(4))#, constrained_layout=True)
+        figsize=fig_size(2, 2), constrained_layout=True)
 
     _data_ac = autocorrelograms_by_task["MCDR"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["MCDR"]["glm"]["autocorr"]
