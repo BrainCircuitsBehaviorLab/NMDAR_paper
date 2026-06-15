@@ -13,7 +13,6 @@ app = marimo.App(width="full")
 @app.cell
 def _():
     # Imports
-
     from pathlib import Path
     import marimo as mo
     import numpy as np
@@ -54,7 +53,7 @@ def _():
 def _(Path, fig_size, plt, sns):
     # Set style
     sns.set_theme(style='ticks', context='notebook')
-    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     figsize = fig_size(n_cols=3)
     plt.rcParams["svg.fonttype"] = 'none'
     return (figsize,)
@@ -142,6 +141,7 @@ def _(df_2AFC_delay, figsize, path_panels, pl, plt, two_afc_delay_plots):
     two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'Saline'), ax=acc_2ADC, color="tab:gray", title="", label='Saline')
     two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'NR2B'), ax=acc_2ADC, color="tab:pink", title="", label='Drug')
     plt.savefig(f'{path_panels}/acc_2ADC.svg')
+    plt.savefig(f'{path_panels}/acc_2ADC.png')
     acc_2ADC
     return
 
@@ -204,6 +204,7 @@ def _(
     )
 
     plt.savefig(f'{path_panels}/p_right_2ADC.svg')
+    plt.savefig(f'{path_panels}/p_right_2ADC.png')
     p_right_2ADC
     return
 
@@ -224,6 +225,7 @@ def _(df_2AFC_delay, figsize, path_panels, pl, plt, two_afc_delay_plots):
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Saline"), ax = rb_2ADC, title='', color = "tab:gray")
     # two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Rest"), ax = rb_2ADC, title='', color = "k")
     plt.savefig(f'{path_panels}/rb_2ADC.svg')
+    plt.savefig(f'{path_panels}/rb_2ADC.png')
     rb_2ADC
     return
 
@@ -265,6 +267,7 @@ def _(df_2AFC_delay, figsize, path_panels, pl, plt, psychometric_repeat):
     )
 
     plt.savefig(f'{path_panels}/p_rep_2ADC.svg')
+    plt.savefig(f'{path_panels}/p_rep_2ADC.png')
     p_rep_2ADC
     return
 
@@ -287,12 +290,13 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC, figsize, pl, plt, two_afc_plots):
+def _(df_2AFC, figsize, path_panels, pl, plt, two_afc_plots):
     plt.figure(figsize=figsize, constrained_layout=True)
     acc_2AFC = plt.gca()
     two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 0), ax=acc_2AFC, color="tab:gray", title="", label='Saline')
     two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 1), ax=acc_2AFC, color="tab:pink", title="", label='Drug')
-    plt.savefig("acc_2AFC.svg")
+    plt.savefig(f'{path_panels}/acc_2AFC.svg')
+    plt.savefig(f'{path_panels}/acc_2AFC.png')
     acc_2AFC
     return
 
@@ -306,7 +310,7 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC, figsize, plot_mean_over_data, plt):
+def _(df_2AFC, figsize, path_panels, plot_mean_over_data, plt):
     df_2AFC_p_right = df_2AFC.to_pandas().copy()
     df_2AFC_p_right["p_right"] = df_2AFC_p_right["Choice"].astype(float)
 
@@ -344,7 +348,8 @@ def _(df_2AFC, figsize, plot_mean_over_data, plt):
         labels=["-20", "-8", "", "", "0", "", "", "8", "20"],
     )
 
-    plt.savefig("p_right_2AFC.svg")
+    plt.savefig(f'{path_panels}/p_right_2AFC.svg')
+    plt.savefig(f'{path_panels}/p_right_2AFC.png')
     p_right_2AFC
     return
 
@@ -358,12 +363,13 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC, figsize, pl, plt, two_afc_plots):
+def _(df_2AFC, figsize, path_panels, pl, plt, two_afc_plots):
     plt.figure(figsize=figsize, constrained_layout=True)
     rb_2AFC = plt.gca()
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 0), ax=rb_2AFC, title="", color="tab:gray")
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 1), ax=rb_2AFC, title="", color="tab:pink")
-    plt.savefig("rb_2AFC.svg")
+    plt.savefig(f'{path_panels}/rb_2AFC.svg')
+    plt.savefig(f'{path_panels}/rb_2AFC.png')
     rb_2AFC
     return
 
@@ -405,7 +411,8 @@ def _(df_2AFC, figsize, path_panels, pl, plt, psychometric_repeat):
     plt.gca().set_xticks([-20, -8, -4, -2, 0, 2, 4, 8, 20],
         labels=["-20", "-8", "", "", "0", "", "", "8", "20"])
 
-    plt.savefig(f'{path_panels}/p_rep_2AFCsvg')
+    plt.savefig(f'{path_panels}/p_rep_2AFC.svg')
+    plt.savefig(f'{path_panels}/p_rep_2AFC.png')
     p_rep_2AFC
     return
 
@@ -452,7 +459,7 @@ def _(df_MCDR, figsize, path_panels, pl, plot_mean_over_data, plt):
         x_col="ttype_c",
         y_col="performance",
         x_order=["VG", "DS", "DM", "DL"],
-        x_tick_labels=["VG", "EZ", "Med.", "Hard"],
+        x_tick_labels=["VG", "Easy", "Med.", "Hard"],
         xlabel="Difficulty",
         ylabel="Accuracy",
         title="",
@@ -463,6 +470,7 @@ def _(df_MCDR, figsize, path_panels, pl, plot_mean_over_data, plt):
     )
 
     plt.savefig(f'{path_panels}/acc_MCDR.svg')
+    plt.savefig(f'{path_panels}/acc_MCDR.png')
     acc_MCDR
     return
 
@@ -498,6 +506,7 @@ def _(MCDR_plots, df_MCDR, figsize, path_panels, pl, plt):
     # MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "rest", pl.col("batch") == "11B"), ax=rb_MCDR, , title='', color="tab:red")
     # MCDR_plots.plot_rb(df_MCDR.filter(pl.col("batch") == "11B"), ax=rb_MCDR, , title="", color='k')
     plt.savefig(f'{path_panels}/rb_MCDR.svg')
+    plt.savefig(f'{path_panels}/rb_MCDR.png')
     rb_MCDR
     return
 
@@ -541,6 +550,7 @@ def _(df_MCDR, figsize, path_panels, pl, plt, psychometric_repeat):
     )
 
     plt.savefig(f'{path_panels}/p_rep_MCDR.svg')
+    plt.savefig(f'{path_panels}/p_rep_MCDR.png')
     p_rep_MCDR
     return
 

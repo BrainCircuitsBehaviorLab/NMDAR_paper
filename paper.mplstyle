@@ -7,3 +7,7 @@ axes.grid: False
 
 # Keep text editable in SVG
 svg.fonttype: none
+
+# DPI
+figure.dpi: 300
+savefig.dpi: 300

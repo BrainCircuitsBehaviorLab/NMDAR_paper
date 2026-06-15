@@ -124,7 +124,7 @@ def _(mo):
 
 @app.cell
 def _():
-    format = "pdf"
+    format = "png"
     mount_figure = False
     return format, mount_figure
 
@@ -168,7 +168,7 @@ def _(mo):
 @app.cell
 def _(Path, plt, sns):
     sns.set_theme(style='ticks', context='notebook')
-    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = 'none'
     plt.rcParams['savefig.bbox'] = 'standard'
     return
@@ -282,7 +282,6 @@ def _(fig_size, mount_figure, plt):
             )
     else:
         fig, axd = None, {}
-
     return axd, fig
 
 
@@ -1138,7 +1137,7 @@ def _(
         adapter=adapters["2AFC_delay"],
         window = 20,
     )
-    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
     single_session_2ADC = plt.gca() if not mount_figure else axd["a"]
     single_session_2ADC.clear()
 
@@ -1201,7 +1200,7 @@ def _(
         adapter=adapters["2AFC"],
         window = 20,
     )
-    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
     single_session_2AFC = plt.gca() if not mount_figure else axd["b"]
     single_session_2AFC.clear()
 
@@ -1221,7 +1220,7 @@ def _(
         label="Stimulus",
         data=session_repetition_data_2AFC
     )
-    single_session_2AFC.set_title("2AFC")
+    single_session_2AFC.set_title("")
     single_session_2AFC.set_xlabel("Trial")
     single_session_2AFC.set_ylabel("Rep. fraction")
     single_session_2AFC.set_ylim(0, 1)

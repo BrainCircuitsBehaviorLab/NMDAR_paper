@@ -812,7 +812,7 @@ def plot_rb(df, ax=None, figsize=(3.0, 3.0), title="MCDR", **kwargs):
         x_col="ttype_c",
         y_col="rb",
         x_order=cfg["plots"]["ttype"]["order"],
-        x_tick_labels=["VG", "Easy", "Mid", "Hard"],
+        x_tick_labels=["VG", "Easy", "Med.", "Hard"],
         xlabel="Difficulty",
         ylabel="Rep. bias",
         title=title,
