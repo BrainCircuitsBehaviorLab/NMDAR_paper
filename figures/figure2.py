@@ -117,13 +117,28 @@ def _(load_app_config, process_mcdr, process_two_adc, process_two_afc):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Settings
+    """)
+    return
+
+
+@app.cell
+def _():
+    format = "pdf"
+    mount_figure = False
+    return format, mount_figure
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## Paths
     """)
     return
 
 
 @app.cell
-def _(Path, configure_paths, get_runtime_paths):
+def _(Path, configure_paths, format, get_runtime_paths):
     ROOT = Path(__file__).resolve().parents[1]
 
     configure_paths(config_path=ROOT / "config.toml")
@@ -135,7 +150,9 @@ def _(Path, configure_paths, get_runtime_paths):
     project_path = Path(__file__).resolve().parents[1]
     print(project_path)
 
-    path_panels = project_path / "figures" / "panels2"
+    path_panels = project_path / "figures" / "panels2" / format
+    import os
+    os.makedirs(path_panels, exist_ok=True)
     print(path_panels)
     return path_panels, paths
 
@@ -244,18 +261,29 @@ def _(mo):
 
 
 @app.cell
-def _(fig_size, plt):
-    fig, axd = plt.subplot_mosaic(
-        [
-            ["a", "a",  "b", "b"],
-            ["c1", "c2", "e", "e"],
-            ["f", "f", "h", "h"],
-            ["i", "i", "k", "k"],
-            ["l", "m", "p", "q"],
-        ],
-        figsize = fig_size(1)
-    )
-    return
+def _(fig_size, mount_figure, plt):
+    if mount_figure:
+        fig, axd = plt.subplot_mosaic(
+            [
+                ["a", "a", "b", "b"],
+                ["c", "c", "e", "e"],
+                ["l", "m", "p", "q"],
+                ["f", "f", "h", "h"],
+                ["i", "i", "k", "k"],
+            ],
+            figsize=fig_size(1, 0.5),
+            constrained_layout=True,
+        )
+        fig.set_constrained_layout_pads(
+                w_pad=0.01,
+                h_pad=0.01,
+                wspace=0.02,
+                hspace=0.04,
+            )
+    else:
+        fig, axd = None, {}
+
+    return axd, fig
 
 
 @app.cell(hide_code=True)
@@ -328,11 +356,23 @@ def _(mo):
 
 
 @app.cell
-def _(autocorrelograms_by_task, fig_size, mo, path_panels, plt):
-    fig_autocorrelograms_2ADC_outcome, ax_autocorrelograms_2ADC_outcome = plt.subplots(
-        figsize=fig_size(2, 2), constrained_layout=True)
-    fig_autocorrelograms_2ADC_repetition, ax_autocorrelograms_2ADC_repetition = plt.subplots(
-        figsize=fig_size(2, 2), constrained_layout=True)
+def _(
+    autocorrelograms_by_task,
+    axd,
+    fig_size,
+    format,
+    mo,
+    mount_figure,
+    path_panels,
+    plt,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd["f"]
+    ax_autocorrelograms_2ADC_outcome.clear()
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure else axd["i"]
+    ax_autocorrelograms_2ADC_repetition.clear()
+
 
     _data_ac = autocorrelograms_by_task["2AFC_delay"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["2AFC_delay"]["glm"]["autocorr"]
@@ -343,7 +383,7 @@ def _(autocorrelograms_by_task, fig_size, mo, path_panels, plt):
     for _signal, _ax in (
         ("Outcome", ax_autocorrelograms_2ADC_outcome),
         ("Repetition", ax_autocorrelograms_2ADC_repetition)):
-        _fig = fig_autocorrelograms_2ADC_outcome if _signal == "Outcome" else fig_autocorrelograms_2ADC_repetition
+        _fig = _ax.figure
         _data_sub = _data_ac[_data_ac["signal"] == _signal].sort_values("lag")
         _ax.errorbar(
             _data_sub["lag"],
@@ -374,9 +414,11 @@ def _(autocorrelograms_by_task, fig_size, mo, path_panels, plt):
         else:
             _ax.set_ylim(top=0.075)
         _ax.legend(frameon=False)
-        _fig.savefig(path_panels / f"2ADC_autocorrelogram_{_signal.lower()}.svg")
+        if not mount_figure:
+            _fig.savefig((path_panels / f"2ADC_autocorrelogram_{_signal.lower()}").with_suffix(f".{format}"))
 
-    mo.hstack([fig_autocorrelograms_2ADC_outcome, fig_autocorrelograms_2ADC_repetition], justify="start", gap=1)
+
+    mo.hstack([ax_autocorrelograms_2ADC_outcome, ax_autocorrelograms_2ADC_repetition], justify="start", gap=1)
     return
 
 
@@ -389,11 +431,22 @@ def _(mo):
 
 
 @app.cell
-def _(autocorrelograms_by_task, fig_size, mo, path_panels, plt):
-    fig_autocorrelograms_2AFC_outcome, ax_autocorrelograms_2AFC_outcome = plt.subplots(
-        figsize=fig_size(2, 2), constrained_layout=True)
-    fig_autocorrelograms_2AFC_repetition, ax_autocorrelograms_2AFC_repetition = plt.subplots(
-        figsize=fig_size(2, 2), constrained_layout=True)
+def _(
+    autocorrelograms_by_task,
+    axd,
+    fig_size,
+    format,
+    mo,
+    mount_figure,
+    path_panels,
+    plt,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd["h"]
+    ax_autocorrelograms_2AFC_outcome.clear()
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure else axd["k"]
+    ax_autocorrelograms_2AFC_repetition.clear()
 
     _data_ac = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["2AFC"]["glm"]["autocorr"]
@@ -404,7 +457,7 @@ def _(autocorrelograms_by_task, fig_size, mo, path_panels, plt):
     for _signal, _ax in (
         ("Outcome", ax_autocorrelograms_2AFC_outcome),
         ("Repetition", ax_autocorrelograms_2AFC_repetition)):
-        _fig = fig_autocorrelograms_2AFC_outcome if _signal == "Outcome" else fig_autocorrelograms_2AFC_repetition
+        _fig = _ax.figure
         _data_sub = _data_ac[_data_ac["signal"] == _signal].sort_values("lag")
         _ax.errorbar(
             _data_sub["lag"],
@@ -435,13 +488,11 @@ def _(autocorrelograms_by_task, fig_size, mo, path_panels, plt):
         else:
             _ax.set_ylim(top=0.1)
         _ax.legend(frameon=False)
-        _fig.savefig(path_panels / f"2AFC_autocorrelogram_{_signal.lower()}.svg")
+        if not mount_figure:
+            _fig.savefig((path_panels / f"2AFC_autocorrelogram_{_signal.lower()}").with_suffix(f".{format}"))
 
-    mo.hstack([fig_autocorrelograms_2AFC_outcome, fig_autocorrelograms_2AFC_repetition], justify="start", gap=1)
-    return (
-        fig_autocorrelograms_2AFC_outcome,
-        fig_autocorrelograms_2AFC_repetition,
-    )
+    mo.hstack([ax_autocorrelograms_2AFC_outcome, ax_autocorrelograms_2AFC_repetition], justify="start", gap=1)
+    return
 
 
 @app.cell(hide_code=True)
@@ -453,15 +504,7 @@ def _(mo):
 
 
 @app.cell
-def _(
-    autocorrelograms_by_task,
-    fig_autocorrelograms_2AFC_outcome,
-    fig_autocorrelograms_2AFC_repetition,
-    fig_size,
-    mo,
-    path_panels,
-    plt,
-):
+def _(autocorrelograms_by_task, fig_size, format, mo, path_panels, plt):
     fig_autocorrelograms_MCDR_outcome, ax_autocorrelograms_MCDR_outcome = plt.subplots(
         figsize=fig_size(4))#, constrained_layout=True))
     fig_autocorrelograms_MCDR_repetition, ax_autocorrelograms_MCDR_repetition = plt.subplots(
@@ -476,7 +519,7 @@ def _(
     for _signal, _ax in (
         ("Outcome", ax_autocorrelograms_MCDR_outcome),
         ("Repetition", ax_autocorrelograms_MCDR_repetition)):
-        _fig = fig_autocorrelograms_2AFC_outcome if _signal == "Outcome" else fig_autocorrelograms_2AFC_repetition
+        _fig = fig_autocorrelograms_MCDR_outcome if _signal == "Outcome" else fig_autocorrelograms_MCDR_repetition
         _data_sub = _data_ac[_data_ac["signal"] == _signal].sort_values("lag")
         _ax.errorbar(
             _data_sub["lag"],
@@ -507,7 +550,7 @@ def _(
         else:
             _ax.set_ylim(top=0.05)
         _ax.legend(frameon=False)
-        _fig.savefig(path_panels / f"MCDR_autocorrelogram_{_signal.lower()}.svg")
+        _fig.savefig((path_panels / f"MCDR_autocorrelogram_{_signal.lower()}").with_suffix(f".{format}"))
 
     mo.hstack([fig_autocorrelograms_MCDR_outcome, fig_autocorrelograms_MCDR_repetition], justify="start", gap=1)
     return
@@ -538,9 +581,21 @@ def _(mo):
 
 
 @app.cell
-def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
-    prev_choices_2ADC = plt.gca()
+def _(
+    axd,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    pl,
+    plt,
+    sns,
+    weight_dfs,
+):
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    prev_choices_2ADC = plt.gca() if not mount_figure else axd["m"]
+    prev_choices_2ADC.clear()
 
     # Filter to just have lagged choices
     _plot_df = weight_dfs["2AFC_delay"].filter(pl.col("feature").str.contains("choice_lag")) 
@@ -559,7 +614,8 @@ def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
     prev_choices_2ADC.set_ylabel("Weight")
     prev_choices_2ADC.set_xlabel("Lag")
     prev_choices_2ADC.set_xticklabels([str(i) if i == 1 or i % 5 == 0 else "" for i in range(1, len(_order) + 1)])
-    plt.savefig(path_panels / "2ADC_prev_choices.svg")
+    if not mount_figure:
+        prev_choices_2ADC.figure.savefig((path_panels / "2ADC_prev_choices").with_suffix(f".{format}"))
     prev_choices_2ADC
     return
 
@@ -573,9 +629,21 @@ def _(mo):
 
 
 @app.cell
-def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
-    stim_2ADC = plt.gca()
+def _(
+    axd,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    pl,
+    plt,
+    sns,
+    weight_dfs,
+):
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    stim_2ADC = plt.gca() if not mount_figure else axd["l"]
+    stim_2ADC.clear()
 
     # Filter to just have lagged choices
     _plot_df = weight_dfs["2AFC_delay"].filter(pl.col("feature").str.contains("stim")) 
@@ -590,12 +658,12 @@ def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
         **boxplot_STYLE,
     )
     stim_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    # stim_2ADC.set_title("2ADC")
     stim_2ADC.set_xlabel("")
     stim_2ADC.set_ylabel("Weight")
     stim_2ADC.set_xlabel("Delay")
     stim_2ADC.set_xticklabels([10 ,3,1, 0.1])
-    plt.savefig(path_panels / "2ADC_stim.svg")
+    if not mount_figure:
+        plt.savefig((path_panels / "2ADC_stim").with_suffix(f".{format}"))
     stim_2ADC
     return
 
@@ -617,9 +685,21 @@ def _(mo):
 
 
 @app.cell
-def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
-    prev_choices_2AFC = plt.gca()
+def _(
+    axd,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    pl,
+    plt,
+    sns,
+    weight_dfs,
+):
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    prev_choices_2AFC = plt.gca() if not mount_figure else axd["q"]
+    prev_choices_2AFC.clear()
 
     # Filter to just have lagged choices
     _plot_df = weight_dfs["2AFC"].filter(pl.col("feature").str.contains("choice_lag")) 
@@ -638,7 +718,8 @@ def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
     prev_choices_2AFC.set_ylabel("Weight")
     prev_choices_2AFC.set_xlabel("Lag")
     prev_choices_2AFC.set_xticklabels([str(i) if i == 1 or i % 5 == 0 else "" for i in range(1, len(_order) + 1)])
-    plt.savefig(path_panels / "2AFC_prev_choices.svg")
+    if not mount_figure:
+        prev_choices_2AFC.figure.savefig((path_panels / "2AFC_prev_choices").with_suffix(f".{format}"))
     prev_choices_2AFC
     return
 
@@ -652,11 +733,23 @@ def _(mo):
 
 
 @app.cell
-def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
-    plt.figure(figsize=fig_size(4,1), constrained_layout=True)
-    stim_2AFC = plt.gca()
+def _(
+    axd,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    pl,
+    plt,
+    sns,
+    weight_dfs,
+):
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    stim_2AFC = plt.gca() if not mount_figure else axd["p"]
+    stim_2AFC.clear()
 
-    # Filter to just have lagged choices
+    # Filter to just have stimulus
     _plot_df = weight_dfs["2AFC"].filter(pl.col("feature").str.contains("stim")) 
     _order = sorted(_plot_df["feature"].unique(), key=lambda x: int(x.split("_")[-1]),)
     sns.boxplot(
@@ -673,7 +766,8 @@ def _(boxplot_STYLE, fig_size, path_panels, pl, plt, sns, weight_dfs):
     stim_2AFC.set_ylabel("Weight")
     stim_2AFC.set_xlabel("ILD")
     stim_2AFC.set_xticklabels([2,4,8, 70])
-    plt.savefig(path_panels / "2AFC_stim.svg")
+    if not mount_figure:
+        stim_2AFC.figure.savefig((path_panels / "2AFC_stim").with_suffix(f".{format}"))
     stim_2AFC
     return
 
@@ -699,6 +793,7 @@ def _(
     boxplot_STYLE,
     fig_size,
     fold_three_choice,
+    format,
     path_panels,
     pl,
     plt,
@@ -725,7 +820,7 @@ def _(
     prev_choices_MCDR.set_ylabel("Weight")
     prev_choices_MCDR.set_xlabel("Lag")
     prev_choices_MCDR.set_xticklabels([str(i) if i == 1 or i % 5 == 0 else "" for i in range(1, len(_order) + 1)])
-    plt.savefig(path_panels / "MCDR_prev_choices.svg")
+    plt.savefig((path_panels / "MCDR_prev_choices").with_suffix(f".{format}"))
     prev_choices_MCDR
     return
 
@@ -743,6 +838,7 @@ def _(
     boxplot_STYLE,
     fig_size,
     fold_three_choice,
+    format,
     path_panels,
     pl,
     plt,
@@ -769,7 +865,7 @@ def _(
     stim_MCDR.set_ylabel("Weight")
     stim_MCDR.set_xlabel("Difficulty")
     stim_MCDR.set_xticklabels([1, 2, 3, 4])
-    plt.savefig(path_panels / "MCDR_stim.svg")
+    plt.savefig((path_panels / "MCDR_stim").with_suffix(f".{format}"))
     stim_MCDR
     return
 
@@ -791,7 +887,7 @@ def _(mo):
 
 
 @app.cell
-def _(fig_size, path_panels, plot_dfs, plots_by_task, views):
+def _(fig_size, format, path_panels, plot_dfs, plots_by_task, views):
     _plots = plots_by_task["2AFC_delay"]
     _perf_kwargs = {"views": views["2AFC_delay"]}
     fig_psychometric_2ADC, _ = _plots.plot_categorical_performance_all(
@@ -801,7 +897,7 @@ def _(fig_size, path_panels, plot_dfs, plots_by_task, views):
         **_perf_kwargs,
         figsize=fig_size(2, 1),
     )
-    fig_psychometric_2ADC.savefig(path_panels / "2ADC_psychometric.svg")
+    fig_psychometric_2ADC.savefig((path_panels / "2ADC_psychometric").with_suffix(f".{format}"))
     fig_psychometric_2ADC
     return
 
@@ -815,7 +911,7 @@ def _(mo):
 
 
 @app.cell
-def _(fig_size, path_panels, plot_dfs, plots_by_task, views):
+def _(fig_size, format, path_panels, plot_dfs, plots_by_task, views):
     _plots = plots_by_task["2AFC"]
     _perf_kwargs = {"views": views["2AFC"]}
     fig_psychometric_2AFC, _ = _plots.plot_categorical_performance_all(
@@ -825,7 +921,7 @@ def _(fig_size, path_panels, plot_dfs, plots_by_task, views):
         **_perf_kwargs,
         figsize=fig_size(2, 1),
     )
-    fig_psychometric_2AFC.savefig(path_panels / "2AFC_psychometric.svg")
+    fig_psychometric_2AFC.savefig((path_panels / "2AFC_psychometric").with_suffix(f".{format}"))
     fig_psychometric_2AFC
     return
 
@@ -839,7 +935,7 @@ def _(mo):
 
 
 @app.cell
-def _(fig_size, path_panels, plot_dfs, plots_by_task):
+def _(fig_size, format, path_panels, plot_dfs, plots_by_task):
     _plots = plots_by_task["MCDR"]
     fig_psychometric_MCDR, _ = _plots.plot_categorical_performance_all(
         plot_dfs["MCDR"],
@@ -852,7 +948,7 @@ def _(fig_size, path_panels, plot_dfs, plots_by_task):
         ("difficulty", "stimulus", "delay"),
         strict=False,
     ):
-        _fig.savefig(path_panels / f"MCDR_psychometric_{_stem}.svg")
+        _fig.savefig((path_panels / f"MCDR_psychometric_{_stem}").with_suffix(f".{format}"))
     fig_psychometric_MCDR
     return
 
@@ -1001,8 +1097,12 @@ def _(mo):
 @app.cell
 def _(
     adapters,
+    autocorrelograms_by_task,
+    axd,
     build_session_repetition_data,
     fig_size,
+    format,
+    mount_figure,
     path_panels,
     pl,
     plot_dfs,
@@ -1018,8 +1118,29 @@ def _(
         adapter=adapters["2AFC_delay"],
         window = 20,
     )
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
-    single_session_2ADC = plt.gca()
+    _subject_sim_df = (
+        pl.from_pandas(autocorrelograms_by_task["2AFC_delay"]["glm"]["simulated_df"])
+        .filter(
+            (pl.col("subject") == f"{_subject}__closed_loop_000")
+            & (pl.col("session").cast(pl.Utf8) == str(_session))
+        )
+        .sort("trial_index")
+        .rename({"trial_index": "trial"})
+        .with_columns(
+            pl.lit(_subject).alias("subject"),
+            pl.Series("stimulus", session_repetition_data_2ADC["stimulus"].to_numpy()),
+        )
+    )
+    session_repetition_data_2ADC_glm = build_session_repetition_data(
+        _subject_sim_df,
+        subject=_subject,
+        session=_session,
+        adapter=adapters["2AFC_delay"],
+        window = 20,
+    )
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
+    single_session_2ADC = plt.gca() if not mount_figure else axd["a"]
+    single_session_2ADC.clear()
 
     single_session_2ADC.plot(
         "trial_x",
@@ -1037,13 +1158,14 @@ def _(
         label="Stimulus",
         data=session_repetition_data_2ADC
     )
+    single_session_2ADC.set_title("2ADC")
     single_session_2ADC.set_xlabel("Trial")
     single_session_2ADC.set_ylabel("Rep. fraction")
     single_session_2ADC.set_ylim(0, 1)
     single_session_2ADC.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
-    single_session_2ADC.legend(frameon=False, loc="lower right")
-
-    plt.savefig(path_panels / "2ADC_rep_fraction.svg")
+    single_session_2ADC.legend(frameon=False, loc="upper right")
+    if not mount_figure:
+        plt.savefig((path_panels / "2ADC_single_session").with_suffix(f".{format}"))
     single_session_2ADC
     return
 
@@ -1059,8 +1181,11 @@ def _(mo):
 @app.cell
 def _(
     adapters,
+    axd,
     build_session_repetition_data,
     fig_size,
+    format,
+    mount_figure,
     path_panels,
     pl,
     plot_dfs,
@@ -1076,8 +1201,9 @@ def _(
         adapter=adapters["2AFC"],
         window = 20,
     )
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
-    single_session_2AFC = plt.gca()
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
+    single_session_2AFC = plt.gca() if not mount_figure else axd["b"]
+    single_session_2AFC.clear()
 
     single_session_2AFC.plot(
         "trial_x",
@@ -1095,13 +1221,14 @@ def _(
         label="Stimulus",
         data=session_repetition_data_2AFC
     )
+    single_session_2AFC.set_title("2AFC")
     single_session_2AFC.set_xlabel("Trial")
     single_session_2AFC.set_ylabel("Rep. fraction")
     single_session_2AFC.set_ylim(0, 1)
     single_session_2AFC.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
-    single_session_2AFC.legend(frameon=False, loc="lower right")
-
-    plt.savefig(path_panels / "2AFC_rep_fraction.svg")
+    single_session_2AFC.legend(frameon=False, loc="upper right")
+    if not mount_figure:
+        plt.savefig((path_panels / "2AFC_single_session").with_suffix(f".{format}"))
     single_session_2AFC
     return
 
@@ -1177,16 +1304,21 @@ def _(mo):
 
 @app.cell
 def _(
+    axd,
     chunk_hist_ylabel,
     fig_size,
+    format,
+    mount_figure,
     path_panels,
     plt,
     sns,
     transition_chunk_plot_data,
     transition_palette,
 ):
-    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    consec_rep_2ADC = plt.gca()
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    consec_rep_2ADC = plt.gca() if not mount_figure else axd["c"]
+    consec_rep_2ADC.clear()
+
     sns.lineplot(
         data=transition_chunk_plot_data[transition_chunk_plot_data["task_label"] == "2ADC"],
         x="chunk_length",
@@ -1211,7 +1343,8 @@ def _(
         [l for l in _labels if l not in ["transition", "source"]],
         frameon=False,
     )
-    plt.savefig(path_panels / "2ADC_choice_transition_chunks.svg")
+    if not mount_figure:
+        plt.savefig((path_panels / "2ADC_choice_transition_chunks").with_suffix(f".{format}"))
     consec_rep_2ADC
     return
 
@@ -1226,16 +1359,21 @@ def _(mo):
 
 @app.cell
 def _(
+    axd,
     chunk_hist_ylabel,
     fig_size,
+    format,
+    mount_figure,
     path_panels,
     plt,
     sns,
     transition_chunk_plot_data,
     transition_palette,
 ):
-    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    consec_rep_2AFC = plt.gca()
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    consec_rep_2AFC = plt.gca() if not mount_figure else axd["e"]
+    consec_rep_2AFC.clear()
+
     sns.lineplot(
         data=transition_chunk_plot_data[transition_chunk_plot_data["task_label"] == "2AFC"],
         x="chunk_length",
@@ -1261,7 +1399,8 @@ def _(
         [l for l in _labels if l not in ["transition", "source"]],
         frameon=False,
     )
-    plt.savefig(path_panels / "2AFC_choice_transition_chunks.svg")
+    if not mount_figure:
+        plt.savefig((path_panels / "2AFC_choice_transition_chunks").with_suffix(f".{format}"))
     consec_rep_2AFC
     return
 
@@ -1278,6 +1417,7 @@ def _(mo):
 def _(
     chunk_hist_ylabel,
     fig_size,
+    format,
     path_panels,
     plt,
     sns,
@@ -1311,7 +1451,7 @@ def _(
         [l for l in _labels if l not in ["transition", "source"]],
         frameon=False,
     )
-    plt.savefig(path_panels / "MCDR_choice_transition_chunks.svg")
+    plt.savefig((path_panels / "MCDR_choice_transition_chunks").with_suffix(f".{format}"))
     consec_rep_MCDR
     return
 
@@ -1358,6 +1498,7 @@ def _(mo):
 @app.cell
 def _(
     fig_size,
+    format,
     path_panels,
     plt,
     sns,
@@ -1398,7 +1539,7 @@ def _(
         )
     consec_rep_2ADC_saline.set_ylabel("Frequency")
     consec_rep_2ADC_Drug.set_ylabel("")
-    plt.savefig(path_panels / "2ADC_drug_choice_transition_chunks.svg")
+    plt.savefig((path_panels / "2ADC_drug_choice_transition_chunks").with_suffix(f".{format}"))
     fig_consec_rep_drug_2ADC
     return
 
@@ -1414,6 +1555,7 @@ def _(mo):
 @app.cell
 def _(
     fig_size,
+    format,
     path_panels,
     plt,
     sns,
@@ -1455,7 +1597,7 @@ def _(
 
     consec_rep_2AFC_saline.set_ylabel("Frequency")
     consec_rep_2AFC_Drug.set_ylabel("")
-    plt.savefig(path_panels / "2AFC_drug_choice_transition_chunks.svg")
+    plt.savefig((path_panels / "2AFC_drug_choice_transition_chunks").with_suffix(f".{format}"))
     fig_consec_rep_drug_2AFC
     return
 
@@ -1471,6 +1613,7 @@ def _(mo):
 @app.cell
 def _(
     fig_size,
+    format,
     path_panels,
     plt,
     sns,
@@ -1511,7 +1654,7 @@ def _(
         )
     consec_rep_MCDR_saline.set_ylabel("Frequency")
     consec_rep_2ADC_drug.set_ylabel("")
-    plt.savefig(path_panels / "MCDR_drug_choice_transition_chunks.svg")
+    plt.savefig((path_panels / "MCDR_drug_choice_transition_chunks").with_suffix(f".{format}"))
     fig_consec_rep_drug_MCDR
     return
 
@@ -1558,6 +1701,7 @@ def _(mo):
 def _(
     boxplot_STYLE,
     fig_size,
+    format,
     path_panels,
     plt,
     repetition_variance_by_drug_task_long,
@@ -1588,7 +1732,7 @@ def _(
     ax_drug_repetition_variance_2ADC.set_xlabel("")
     ax_drug_repetition_variance_2ADC.set_ylabel("Variance of running fraction")
     ax_drug_repetition_variance_2ADC.legend(frameon=False)
-    plt.savefig(path_panels / "2ADC_drug_repetition_variance.svg")
+    plt.savefig((path_panels / "2ADC_drug_repetition_variance").with_suffix(f".{format}"))
     ax_drug_repetition_variance_2ADC
     return
 
@@ -1605,6 +1749,7 @@ def _(mo):
 def _(
     boxplot_STYLE,
     fig_size,
+    format,
     path_panels,
     plt,
     repetition_variance_by_drug_task_long,
@@ -1635,7 +1780,7 @@ def _(
     ax_drug_repetition_variance_2AFC.set_xlabel("")
     ax_drug_repetition_variance_2AFC.set_ylabel("Variance of running fraction")
     ax_drug_repetition_variance_2AFC.legend(frameon=False)
-    plt.savefig(path_panels / "2AFC_drug_repetition_variance.svg")
+    plt.savefig((path_panels / "2AFC_drug_repetition_variance").with_suffix(f".{format}"))
     ax_drug_repetition_variance_2AFC
     return
 
@@ -1652,6 +1797,7 @@ def _(mo):
 def _(
     boxplot_STYLE,
     fig_size,
+    format,
     path_panels,
     plt,
     repetition_variance_by_drug_task_long,
@@ -1682,7 +1828,7 @@ def _(
     ax_drug_repetition_variance_MCDR.set_xlabel("")
     ax_drug_repetition_variance_MCDR.set_ylabel("Variance of running fraction")
     ax_drug_repetition_variance_MCDR.legend(frameon=False)
-    plt.savefig(path_panels / "MCDR_drug_repetition_variance.svg")
+    plt.savefig((path_panels / "MCDR_drug_repetition_variance").with_suffix(f".{format}"))
     ax_drug_repetition_variance_MCDR
     return
 
@@ -1915,6 +2061,27 @@ def _(chi2, np, pd, transition_chunk_lengths_by_task):
     )
 
     transition_chunk_distribution_subject_summary
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Full figure
+    """)
+    return
+
+
+@app.cell
+def _(fig, format, mount_figure, path_panels):
+    if mount_figure:
+        fig.savefig((path_panels / "figure2").with_suffix(f".{format}"))
+    fig
+    return
+
+
+@app.cell
+def _():
     return
 
 
