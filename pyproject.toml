@@ -12,7 +12,7 @@ dependencies = [
     "altair>=6.1.0",
     "bottleneck>=1.6.0",
     "duckdb>=1.5.3",
-    "glmhmmt==0.3.9",
+    "glmhmmt==0.3.11",
     "marimo==0.23.9",
     "marimo-toml-editor>=0.1.1",
     "numexpr>=2.14.1",

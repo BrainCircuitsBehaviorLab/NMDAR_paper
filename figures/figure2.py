@@ -267,8 +267,9 @@ def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
-                ["a", "a", "b", "b"],
+                # ["a", "a", "b", "b"],
                 ["c", "c", "e", "e"],
+                ["a", "a", "b", "b"],
                 ["l", "m", "p", "q"],
                 ["f", "f", "h", "h"],
                 ["i", "i", "k", "k"],

@@ -220,6 +220,10 @@ results/fits/**/*.parquet
 results/fits/**/*.npz
 .agents
 
+# Keep selected model folders for the figures
+!results/fits/**/one hot/**
+!results/fits/**/one hot2/**
+!results/fits/**/param2_dif_pure/**
 
 
 data/raw/*.csv

@@ -9,6 +9,8 @@ import pandas as pd
 import jax.numpy as jnp
 import polars as pl
 
+from dataclasses import replace
+
 from ._choice_tau import compute_choice_ewma, load_subject_choice_half_life
 from .design import (
     choice_outcome_lag_frames,
@@ -115,6 +117,17 @@ _STIM_PARAM_COL = "stim_param"
 _CHOICE_LAG_PARAM_COL = "choice_lag_param"
 _CHOICE_LAG_PARAM_2_COL = "choice_lag_param_2"
 _CHOICE_LAG_PARAM_CORRECT_COL = "choice_lag_param_correct"
+
+ParamWeightSource = tuple[str, str]
+
+PARAM_WEIGHT_SOURCE: ParamWeightSource | str = ("2AFC", "one hot")
+
+PARAM_WEIGHT_SOURCE_BY_SELECTED_PARAM: dict[str, ParamWeightSource | str] = {
+    _CHOICE_LAG_PARAM_CORRECT_COL: ("2AFC", "one hot2"),
+}
+
+PARAM_WEIGHT_SOURCE_BY_PARAM: dict[str, ParamWeightSource | str] = {}
+
 
 
 def _fitted_weight_spec(
@@ -234,6 +247,69 @@ _AT_CHOICE_PARAM_SPEC = _at_choice_param_spec()
 _CHOICE_LAG_PARAM_SPEC = _choice_lag_param_spec()
 _CHOICE_LAG_PARAM_2_SPEC = _choice_lag_param_2_spec()
 _CHOICE_LAG_PARAM_CORRECT_SPEC = _choice_lag_param_correct_spec()
+
+
+def _coerce_param_weight_source(source: ParamWeightSource | str) -> ParamWeightSource:
+    if isinstance(source, str):
+        if source == "2AFC":
+            return (source, "one hot")
+        raise ValueError(
+            "String PARAM_WEIGHT_SOURCE values must be '2AFC'. "
+            "Use a (fit_task, fit_model_id) tuple for a specific GLM model."
+        )
+
+    if len(source) != 2:
+        raise ValueError("Param weight sources must be (fit_task, fit_model_id) tuples.")
+
+    fit_task, fit_model_id = source
+    return (str(fit_task), str(fit_model_id))
+
+
+def _param_weight_source_for_request(requested: set[str]) -> ParamWeightSource:
+    for param_col, source in PARAM_WEIGHT_SOURCE_BY_SELECTED_PARAM.items():
+        if param_col in requested:
+            return _coerce_param_weight_source(source)
+    return _coerce_param_weight_source(PARAM_WEIGHT_SOURCE)
+
+
+def _with_param_weight_source(
+    spec: FittedWeightRegressorSpec,
+    source: ParamWeightSource | str,
+) -> FittedWeightRegressorSpec:
+    fit_task, fit_model_id = _coerce_param_weight_source(source)
+    return replace(spec, fit_task=fit_task, fit_model_id=fit_model_id)
+
+def _source_for_param(
+    target_name: str,
+    selected_source: ParamWeightSource,
+) -> ParamWeightSource:
+    return _coerce_param_weight_source(
+        PARAM_WEIGHT_SOURCE_BY_PARAM.get(target_name, selected_source)
+    )
+
+
+def _standard_param_specs_for_request(
+    adapter: "TwoAFCAdapter",
+    requested: set[str],
+) -> dict[str, FittedWeightRegressorSpec]:
+    selected_source = _param_weight_source_for_request(requested)
+
+    base_specs = {
+        _STIM_PARAM_COL: adapter.stim_param_spec,
+        "bias_param": adapter.bias_param_spec,
+        "at_choice_param": adapter.at_choice_param_spec,
+        _CHOICE_LAG_PARAM_COL: adapter.choice_lag_param_spec,
+        _CHOICE_LAG_PARAM_2_COL: adapter.choice_lag_param_2_spec,
+        _CHOICE_LAG_PARAM_CORRECT_COL: adapter.choice_lag_param_correct_spec,
+    }
+
+    return {
+        target_name: _with_param_weight_source(
+            spec,
+            _source_for_param(target_name, selected_source),
+        )
+        for target_name, spec in base_specs.items()
+    }
 
 EMISSION_REGRESSOR_LABELS: dict[str, str] = {
     "stim_vals": r"$\mathrm{Stimulus}$",
@@ -916,6 +992,7 @@ class TwoAFCAdapter(TaskAdapter):
         df_sub: pl.DataFrame,
         tau: float = 50.0,
         include_stim_strength: bool = False,
+        param_specs: dict[str, FittedWeightRegressorSpec] | None = None,
     ) -> pl.DataFrame:
         """Return the Alexis 2AFC feature dataframe owned by this adapter."""
         from glmhmmt.cli.alexis_functions import get_action_trace, make_frames_dm
@@ -924,6 +1001,8 @@ class TwoAFCAdapter(TaskAdapter):
         df_pd = df_pd.sort_values(["Session", "Trial"]).reset_index(drop=True)
         if df_pd.empty:
             return pl.from_pandas(df_pd)
+
+        param_specs = param_specs or _standard_param_specs_for_request(self, set())
         subject_half_life = self.choice_half_life(
             str(df_pd["subject"].iloc[0]) if "subject" in df_pd.columns and len(df_pd) else None
         )
@@ -1061,10 +1140,11 @@ class TwoAFCAdapter(TaskAdapter):
                 [part, *(frame for _, frame in feature_frames)],
                 axis=1,
             )
-            try:
-                part[_STIM_PARAM_COL] = self._build_stim_param(part, stim_abs_levels)
-            except (FileNotFoundError, ValueError):
-                part[_STIM_PARAM_COL] = np.zeros(len(part), dtype=np.float32)
+            part[_STIM_PARAM_COL] = _build_stim_param_from_spec(
+                part,
+                stim_abs_levels,
+                param_specs[_STIM_PARAM_COL],
+            )
 
             existing_sf_cols = [c for c in part.columns if str(c).startswith("sf_")]
             if include_stim_strength and not existing_sf_cols and "Filename" in part.columns:
@@ -1160,13 +1240,25 @@ class TwoAFCAdapter(TaskAdapter):
             )
             fitted_summary_cols = pd.DataFrame(
                 {
-                    "bias_param": _safe_weighted_sum_regressor(part, self.bias_param_spec),
-                    "at_choice_param": _safe_weighted_sum_regressor(part, self.at_choice_param_spec),
-                    _CHOICE_LAG_PARAM_COL: _safe_weighted_sum_regressor(part, self.choice_lag_param_spec),
-                    _CHOICE_LAG_PARAM_2_COL: _safe_weighted_sum_regressor(part, self.choice_lag_param_2_spec),
+                    "bias_param": _safe_weighted_sum_regressor(
+                        part,
+                        param_specs["bias_param"],
+                    ),
+                    "at_choice_param": _safe_weighted_sum_regressor(
+                        part,
+                        param_specs["at_choice_param"],
+                    ),
+                    _CHOICE_LAG_PARAM_COL: _safe_weighted_sum_regressor(
+                        part,
+                        param_specs[_CHOICE_LAG_PARAM_COL],
+                    ),
+                    _CHOICE_LAG_PARAM_2_COL: _safe_weighted_sum_regressor(
+                        part,
+                        param_specs[_CHOICE_LAG_PARAM_2_COL],
+                    ),
                     _CHOICE_LAG_PARAM_CORRECT_COL: _safe_weighted_sum_regressor(
                         part,
-                        self.choice_lag_param_correct_spec,
+                        param_specs[_CHOICE_LAG_PARAM_CORRECT_COL],
                     ),
                 },
                 index=part.index,
@@ -1176,10 +1268,14 @@ class TwoAFCAdapter(TaskAdapter):
 
         return pl.from_pandas(pd.concat(parts, ignore_index=True))
 
-    def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
-        """Return the complete 2AFC feature dataframe."""
-        return self._build_feature_df(df_sub, tau=tau)
-
+    def build_feature_df(self,df_sub: pl.DataFrame,tau: float = 50.0,emission_cols: List[str] | None = None, transition_cols: List[str] | None = None) -> pl.DataFrame:
+        requested = list(emission_cols) if emission_cols is not None else []
+        return self._build_feature_df(
+            df_sub,
+            tau=tau,
+            param_specs=_standard_param_specs_for_request(self, set(requested)),
+        )
+    
     def _resolved_emission_cols(
         self,
         feature_df: pl.DataFrame,
@@ -1228,7 +1324,9 @@ class TwoAFCAdapter(TaskAdapter):
         transition_cols: List[str] | None = None,
     ) -> Tuple[Any, Any, Any, Dict]:
         """Return ``(y, X, U, names)`` for the 2AFC task."""
-        requested = emission_cols if emission_cols is not None else self.default_emission_cols()
+        requested = list(emission_cols) if emission_cols is not None else self.default_emission_cols()
+        requested_set = set(requested)
+        param_specs = _standard_param_specs_for_request(self, requested_set)
         include_stim_strength = "stim_strength" in requested or any(
             str(col).startswith("sf_") for col in requested
         )
@@ -1236,6 +1334,7 @@ class TwoAFCAdapter(TaskAdapter):
             df_sub,
             tau=tau,
             include_stim_strength=include_stim_strength,
+            param_specs=param_specs,
         )
         return self.build_design_matrices(
             feature_df,

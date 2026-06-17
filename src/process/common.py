@@ -765,6 +765,443 @@ def lapse_logistic_label(
     )
 
 
+def glmhmmt_transition_weights_df(arrays_by_subject: dict, views_by_subject: dict | None = None) -> pd.DataFrame:
+    """Build a long transition-weight dataframe from loaded GLM-HMM-T arrays."""
+
+    records: list[dict] = []
+    for subject, arrays in (arrays_by_subject or {}).items():
+        weights = np.asarray(arrays.get("transition_weights", []), dtype=float)
+        if weights.size == 0:
+            continue
+        if weights.ndim == 1:
+            weights = weights.reshape(1, -1)
+
+        feature_names = list(arrays.get("U_cols") or [])
+        if len(feature_names) != weights.shape[-1]:
+            feature_names = [f"transition_{idx}" for idx in range(weights.shape[-1])]
+
+        view = (views_by_subject or {}).get(subject)
+        for row_idx in range(weights.shape[0]):
+            transition_label = f"transition {row_idx + 1}"
+            if view is not None and hasattr(view, "state_name_by_idx") and weights.shape[0] == 1 and getattr(view, "K", None) == 2:
+                transition_label = "state transition"
+            for feature_idx, feature in enumerate(feature_names):
+                records.append(
+                    {
+                        "subject": str(subject),
+                        "transition_idx": row_idx,
+                        "transition_label": transition_label,
+                        "feature": str(feature),
+                        "weight": float(weights[row_idx, feature_idx]),
+                    }
+                )
+    return pd.DataFrame.from_records(records)
+
+
+def glmhmmt_state_psychometric_df(
+    trial_df,
+    *,
+    x_col: str = "stimulus",
+    x_order: Sequence | None = None,
+    response_col: str = "response",
+    state_col: str = "state_label",
+    subject_col: str = "subject",
+) -> pd.DataFrame:
+    """Summarize P(right) by subject, state, and a categorical x variable."""
+
+    df = to_pandas_df(trial_df)
+    required = {subject_col, state_col, x_col, response_col}
+    if df.empty or not required.issubset(df.columns):
+        return pd.DataFrame(columns=[subject_col, state_col, "x_value", "x_label", "x_numeric", "x_position", "p_right", "n_trials"])
+
+    out = df[[subject_col, state_col, x_col, response_col]].copy()
+    out[response_col] = pd.to_numeric(out[response_col], errors="coerce")
+    out["right"] = (out[response_col] > 0).astype(float)
+    out = out.dropna(subset=[subject_col, state_col, x_col, "right"])
+    if out.empty:
+        return pd.DataFrame(columns=[subject_col, state_col, "x_value", "x_label", "x_numeric", "x_position", "p_right", "n_trials"])
+
+    if x_order is None:
+        unique_values = list(pd.unique(out[x_col]))
+        numeric_values = pd.to_numeric(pd.Series(unique_values), errors="coerce")
+        if numeric_values.notna().all():
+            order = [
+                value
+                for _, value in sorted(
+                    zip(numeric_values.astype(float), unique_values, strict=False),
+                    key=lambda item: item[0],
+                )
+            ]
+        else:
+            order = sorted(unique_values, key=lambda value: str(value))
+    else:
+        order = list(x_order)
+
+    def _format_x_label(value) -> str:
+        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if pd.notna(numeric):
+            return f"{float(numeric):g}"
+        return str(value)
+
+    label_order = [_format_x_label(value) for value in order]
+    label_by_position = dict(enumerate(label_order))
+    out["x_value"] = pd.Categorical(out[x_col], categories=order, ordered=True)
+    out = out.dropna(subset=["x_value"])
+    out["x_position"] = out["x_value"].cat.codes
+    out["x_label"] = pd.Categorical(
+        out["x_position"].map(label_by_position),
+        categories=label_order,
+        ordered=True,
+    )
+
+    summary = (
+        out.groupby([subject_col, state_col, "x_value", "x_position", "x_label"], as_index=False, observed=True)
+        .agg(p_right=("right", "mean"), n_trials=("right", "size"))
+        .sort_values([state_col, "x_position", subject_col])
+    )
+    summary["x_numeric"] = pd.to_numeric(summary["x_label"].astype(str), errors="coerce")
+    return summary
+
+
+def glmhmmt_state_accuracy_df(
+    trial_df,
+    *,
+    state_col: str = "state_label",
+    subject_col: str = "subject",
+    correct_col: str = "correct_bool",
+) -> pd.DataFrame:
+    """Summarize trial accuracy by subject and state."""
+
+    df = to_pandas_df(trial_df)
+    required = {subject_col, state_col, correct_col}
+    if df.empty or not required.issubset(df.columns):
+        return pd.DataFrame(columns=[subject_col, state_col, "accuracy", "n_trials"])
+
+    out = df[[subject_col, state_col, correct_col]].copy()
+    out[correct_col] = pd.to_numeric(out[correct_col], errors="coerce")
+    out = out.dropna(subset=[subject_col, state_col, correct_col])
+    return (
+        out.groupby([subject_col, state_col], as_index=False, observed=True)
+        .agg(accuracy=(correct_col, "mean"), n_trials=(correct_col, "size"))
+        .sort_values([state_col, subject_col])
+    )
+
+
+def glmhmmt_state_occupancy_df(
+    trial_df,
+    *,
+    state_col: str = "state_label",
+    subject_col: str = "subject",
+    session_col: str = "session",
+) -> pd.DataFrame:
+    """Summarize MAP-state occupancy per session."""
+
+    df = to_pandas_df(trial_df)
+    required = {subject_col, session_col, state_col}
+    if df.empty or not required.issubset(df.columns):
+        return pd.DataFrame(columns=[subject_col, session_col, state_col, "occupancy", "n_trials"])
+
+    counts = (
+        df.groupby([subject_col, session_col, state_col], observed=True)
+        .size()
+        .rename("n_trials")
+        .reset_index()
+    )
+    totals = counts.groupby([subject_col, session_col], observed=True)["n_trials"].transform("sum")
+    counts["occupancy"] = counts["n_trials"] / totals.replace(0, np.nan)
+    return counts.sort_values([subject_col, session_col, state_col])
+
+
+def glmhmmt_state_trace_df(
+    trial_df,
+    *,
+    state_col: str = "state_label",
+    subject_col: str = "subject",
+    session_col: str = "session",
+    trial_col: str = "trial_idx",
+    n_bins: int = 50,
+) -> pd.DataFrame:
+    """Build mean posterior traces over normalized session time."""
+
+    df = to_pandas_df(trial_df)
+    required = {subject_col, session_col, trial_col, state_col}
+    if df.empty or not required.issubset(df.columns):
+        return pd.DataFrame(columns=[subject_col, state_col, "trial_bin", "p_state"])
+
+    posterior_cols = [col for col in df.columns if re.fullmatch(r"p_state_\d+", str(col))]
+    if not posterior_cols:
+        return pd.DataFrame(columns=[subject_col, state_col, "trial_bin", "p_state"])
+
+    state_map = (
+        df[[state_col, "state_idx"]].dropna().drop_duplicates()
+        if "state_idx" in df.columns
+        else pd.DataFrame()
+    )
+    label_by_idx = {
+        int(row.state_idx): str(getattr(row, state_col))
+        for row in state_map.itertuples(index=False)
+        if pd.notna(row.state_idx)
+    }
+
+    work = df[[subject_col, session_col, trial_col, *posterior_cols]].copy()
+    work[trial_col] = pd.to_numeric(work[trial_col], errors="coerce")
+    work = work.dropna(subset=[subject_col, session_col, trial_col])
+    if work.empty:
+        return pd.DataFrame(columns=[subject_col, state_col, "trial_bin", "p_state"])
+
+    session_max = work.groupby([subject_col, session_col], observed=True)[trial_col].transform("max")
+    session_min = work.groupby([subject_col, session_col], observed=True)[trial_col].transform("min")
+    denom = (session_max - session_min).replace(0, np.nan)
+    norm_trial = ((work[trial_col] - session_min) / denom).fillna(0.0)
+    work["trial_bin"] = np.floor(norm_trial.clip(0, 0.999999) * int(n_bins)).astype(int)
+
+    long = work.melt(
+        id_vars=[subject_col, session_col, "trial_bin"],
+        value_vars=posterior_cols,
+        var_name="state_idx",
+        value_name="p_state",
+    )
+    long["state_idx"] = long["state_idx"].str.extract(r"(\d+)").astype(int)
+    long[state_col] = long["state_idx"].map(label_by_idx).fillna(long["state_idx"].map(lambda idx: f"State {idx}"))
+    return (
+        long.groupby([subject_col, state_col, "trial_bin"], as_index=False, observed=True)["p_state"]
+        .mean()
+        .sort_values([state_col, "trial_bin", subject_col])
+    )
+
+
+def glmhmmt_state_metric_df(
+    trial_df,
+    *,
+    metrics: Sequence[str],
+    state_col: str = "state_label",
+    subject_col: str = "subject",
+) -> pd.DataFrame:
+    """Summarize arbitrary numeric trial metrics by subject and state."""
+
+    df = to_pandas_df(trial_df)
+    available_metrics = [metric for metric in metrics if metric in df.columns]
+    required = {subject_col, state_col}
+    if df.empty or not required.issubset(df.columns) or not available_metrics:
+        return pd.DataFrame(columns=[subject_col, state_col, "metric", "value", "n_trials"])
+
+    work = df[[subject_col, state_col, *available_metrics]].copy()
+    for metric in available_metrics:
+        work[metric] = pd.to_numeric(work[metric], errors="coerce")
+    long = work.melt(
+        id_vars=[subject_col, state_col],
+        value_vars=available_metrics,
+        var_name="metric",
+        value_name="value",
+    ).dropna(subset=["value"])
+    if long.empty:
+        return pd.DataFrame(columns=[subject_col, state_col, "metric", "value", "n_trials"])
+    return (
+        long.groupby([subject_col, state_col, "metric"], as_index=False, observed=True)
+        .agg(value=("value", "mean"), n_trials=("value", "size"))
+        .sort_values(["metric", state_col, subject_col])
+    )
+
+
+def glmhmmt_state_dwell_df(
+    trial_df,
+    *,
+    state_col: str = "state_label",
+    subject_col: str = "subject",
+    session_col: str = "session",
+    trial_col: str = "trial_idx",
+) -> pd.DataFrame:
+    """Return contiguous MAP-state run lengths per subject and session."""
+
+    df = to_pandas_df(trial_df)
+    required = {subject_col, session_col, trial_col, state_col}
+    if df.empty or not required.issubset(df.columns):
+        return pd.DataFrame(columns=[subject_col, session_col, state_col, "dwell_trials"])
+
+    records: list[dict] = []
+    ordered = df[[subject_col, session_col, trial_col, state_col]].dropna().sort_values(
+        [subject_col, session_col, trial_col]
+    )
+    for (subject, session), group in ordered.groupby([subject_col, session_col], observed=True):
+        current_state = None
+        run_length = 0
+        for state in group[state_col].astype(str):
+            if current_state is None:
+                current_state = state
+                run_length = 1
+            elif state == current_state:
+                run_length += 1
+            else:
+                records.append(
+                    {
+                        subject_col: subject,
+                        session_col: session,
+                        state_col: current_state,
+                        "dwell_trials": run_length,
+                    }
+                )
+                current_state = state
+                run_length = 1
+        if current_state is not None:
+            records.append(
+                {
+                    subject_col: subject,
+                    session_col: session,
+                    state_col: current_state,
+                    "dwell_trials": run_length,
+                }
+            )
+    return pd.DataFrame.from_records(records)
+
+
+def glmhmmt_state_switches_df(
+    trial_df,
+    *,
+    state_col: str = "state_label",
+    subject_col: str = "subject",
+    session_col: str = "session",
+    trial_col: str = "trial_idx",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return session-level switches and subject-averaged switches."""
+
+    df = to_pandas_df(trial_df)
+    required = {subject_col, session_col, trial_col, state_col}
+    columns = [subject_col, session_col, "n_switches", "n_trials", "switch_rate"]
+    if df.empty or not required.issubset(df.columns):
+        empty = pd.DataFrame(columns=columns)
+        return empty, pd.DataFrame(columns=[subject_col, "n_switches", "switch_rate"])
+
+    records: list[dict] = []
+    ordered = df[[subject_col, session_col, trial_col, state_col]].dropna().sort_values(
+        [subject_col, session_col, trial_col]
+    )
+    for (subject, session), group in ordered.groupby([subject_col, session_col], observed=True):
+        states = group[state_col].astype(str).to_numpy()
+        n_trials = int(states.size)
+        n_switches = int(np.sum(states[1:] != states[:-1])) if n_trials > 1 else 0
+        records.append(
+            {
+                subject_col: subject,
+                session_col: session,
+                "n_switches": n_switches,
+                "n_trials": n_trials,
+                "switch_rate": n_switches / max(n_trials - 1, 1),
+            }
+        )
+    session_df = pd.DataFrame.from_records(records, columns=columns)
+    subject_df = (
+        session_df.groupby(subject_col, as_index=False, observed=True)
+        .agg(n_switches=("n_switches", "mean"), switch_rate=("switch_rate", "mean"))
+        .sort_values(subject_col)
+    )
+    return session_df, subject_df
+
+
+def glmhmmt_state_switch_histogram_df(
+    session_df,
+    *,
+    subject_col: str = "subject",
+    switch_col: str = "n_switches",
+    value_col: str = "switch_probability",
+) -> pd.DataFrame:
+    """Return integer-binned histograms of session-averaged switches per animal."""
+
+    df = to_pandas_df(session_df)
+    columns = [subject_col, "mean_n_switches", switch_col, value_col]
+    required = {subject_col, switch_col}
+    if df.empty or not required.issubset(df.columns):
+        return pd.DataFrame(columns=columns)
+
+    df = df[[subject_col, switch_col]].copy()
+    df[switch_col] = pd.to_numeric(df[switch_col], errors="coerce")
+    df = df.dropna(subset=[subject_col, switch_col])
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    subject_means = (
+        df.groupby(subject_col, as_index=False, observed=True)
+        .agg(mean_n_switches=(switch_col, "mean"))
+        .sort_values(subject_col)
+    )
+    subject_means[switch_col] = np.floor(subject_means["mean_n_switches"] + 0.5).astype(int)
+    switch_values = range(0, int(subject_means[switch_col].max()) + 1)
+    records: list[dict] = []
+    for row in subject_means.itertuples(index=False):
+        subject = getattr(row, subject_col)
+        mean_n_switches = float(row.mean_n_switches)
+        switch_bin = int(getattr(row, switch_col))
+        for n_switches in switch_values:
+            records.append(
+                {
+                    subject_col: subject,
+                    "mean_n_switches": mean_n_switches,
+                    switch_col: int(n_switches),
+                    value_col: float(n_switches == switch_bin),
+                }
+            )
+    return pd.DataFrame.from_records(records, columns=columns)
+
+
+def glmhmmt_change_triggered_posterior_df(
+    trial_df,
+    *,
+    state_col: str = "state_label",
+    subject_col: str = "subject",
+    session_col: str = "session",
+    trial_col: str = "trial_idx",
+    window: int = 20,
+) -> pd.DataFrame:
+    """Align posterior probabilities to MAP-state changes."""
+
+    df = to_pandas_df(trial_df)
+    required = {subject_col, session_col, trial_col, state_col}
+    posterior_cols = [col for col in df.columns if re.fullmatch(r"p_state_\d+", str(col))]
+    if df.empty or not required.issubset(df.columns) or not posterior_cols:
+        return pd.DataFrame(columns=[subject_col, state_col, "event_id", "lag", "p_state"])
+
+    state_map = (
+        df[[state_col, "state_idx"]].dropna().drop_duplicates()
+        if "state_idx" in df.columns
+        else pd.DataFrame()
+    )
+    label_by_idx = {
+        int(row.state_idx): str(getattr(row, state_col))
+        for row in state_map.itertuples(index=False)
+        if pd.notna(row.state_idx)
+    }
+
+    records: list[dict] = []
+    event_id = 0
+    keep_cols = [subject_col, session_col, trial_col, state_col, *posterior_cols]
+    ordered = df[keep_cols].dropna(subset=[subject_col, session_col, trial_col, state_col]).sort_values(
+        [subject_col, session_col, trial_col]
+    )
+    for (subject, session), group in ordered.groupby([subject_col, session_col], observed=True):
+        group = group.reset_index(drop=True)
+        states = group[state_col].astype(str).to_numpy()
+        change_positions = np.flatnonzero(states[1:] != states[:-1]) + 1
+        for pos in change_positions:
+            event_id += 1
+            lo = max(0, pos - int(window))
+            hi = min(len(group), pos + int(window) + 1)
+            segment = group.iloc[lo:hi].copy()
+            for local_idx, row in segment.iterrows():
+                lag = int(local_idx - pos)
+                for posterior_col in posterior_cols:
+                    state_idx = int(str(posterior_col).rsplit("_", 1)[-1])
+                    records.append(
+                        {
+                            subject_col: subject,
+                            session_col: session,
+                            "event_id": event_id,
+                            "lag": lag,
+                            state_col: label_by_idx.get(state_idx, f"State {state_idx}"),
+                            "p_state": float(row[posterior_col]),
+                        }
+                    )
+    return pd.DataFrame.from_records(records)
+
+
 def format_lapse_logistic_fits(
     fits: dict[object, LapseLogisticFit],
     *,
@@ -1783,6 +2220,40 @@ def _right_probability(logit, *, right_logit_sign: float) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-right_logit))
 
 
+def _drug_product_feature_specs(
+    names: Sequence[str],
+    swept_source_indices: set[int],
+) -> list[tuple[int, int, int]]:
+    """Return ``(product, drug, source)`` specs for ``drug_x_<source>`` columns."""
+    name_to_idx = {str(name): idx for idx, name in enumerate(names)}
+    drug_idx = next((idx for idx, name in enumerate(names) if name in {"Drug", "drug", "drug_code"}), None)
+    if drug_idx is None:
+        return []
+
+    specs: list[tuple[int, int, int]] = []
+    for product_idx, name in enumerate(names):
+        name = str(name)
+        if not name.startswith("drug_x_"):
+            continue
+        source_idx = name_to_idx.get(name.removeprefix("drug_x_"))
+        if source_idx in swept_source_indices:
+            specs.append((product_idx, drug_idx, source_idx))
+    return specs
+
+
+def _apply_sweep_values(
+    X: np.ndarray,
+    values: dict[int, float],
+    product_specs: Sequence[tuple[int, int, int]],
+) -> np.ndarray:
+    """Overwrite swept columns and recompute simple product features in-place."""
+    for idx, value in values.items():
+        X[:, idx] = value
+    for product_idx, multiplier_idx, source_idx in product_specs:
+        X[:, product_idx] = X[:, multiplier_idx] * X[:, source_idx]
+    return X
+
+
 def _stimulus_grid_components(
     X_cols: Sequence[str],
     *,
@@ -1838,6 +2309,8 @@ def _stimulus_grid_components(
             + ([stim_param_idx] if stim_param_idx is not None else [])
         )
     )
+    product_specs = _drug_product_feature_specs(names, set(feature_indices))
+    feature_indices = sorted(set(feature_indices + [product_idx for product_idx, _, _ in product_specs]))
     return {
         "grid": grid,
         "norm": grid / ild_max,
@@ -1848,6 +2321,7 @@ def _stimulus_grid_components(
         "stim_param_weights": stim_param_weights,
         "stim_side_idx": stim_side_idx,
         "abs_ild_idx": abs_ild_idx,
+        "product_specs": product_specs,
         "feature_indices": feature_indices,
     }
 
@@ -1910,20 +2384,17 @@ def eval_glm_on_ild_grid(
     p_right = np.zeros((K, len(ild_grid)))
     weights_t = _valid_trial_weights(X_data, trial_weights)
     stim_feature_indices = component["feature_indices"]
+    product_specs = component.get("product_specs", [])
 
     if X_data is not None and stim_feature_indices:
         X_base = np.asarray(X_data, dtype=float).copy()
         for k in range(K):
             w = W[k, 0, :]
-            other_logit = X_base @ w
-            base_logit = other_logit - (X_base[:, stim_feature_indices] @ w[stim_feature_indices])
             for grid_idx, (ild_value, stim_value_norm) in enumerate(zip(ild_grid, ild_norm, strict=False)):
-                stim_logit = sum(
-                    value * w[idx]
-                    for idx, value in _stimulus_values_for_grid(component, ild_value, stim_value_norm).items()
-                )
+                stim_values = _stimulus_values_for_grid(component, ild_value, stim_value_norm)
+                X_sweep = _apply_sweep_values(X_base.copy(), stim_values, product_specs)
                 p_trial = gL + (1.0 - gL - gR) * _right_probability(
-                    base_logit + stim_logit,
+                    X_sweep @ w,
                     right_logit_sign=right_logit_sign,
                 )
                 p_right[k, grid_idx] = (
@@ -1936,17 +2407,19 @@ def eval_glm_on_ild_grid(
             col_means = np.asarray(X_data, dtype=float).mean(axis=0)
         else:
             col_means = np.zeros(M)
-            if bias_idx is not None:
-                col_means[bias_idx] = 1.0
+        if bias_idx is not None:
+            col_means[bias_idx] = 1.0
 
         X_grid = np.tile(col_means, (len(ild_grid), 1))
         if stim_feature_indices:
             X_grid[:, stim_feature_indices] = 0.0
         for row_idx, (ild_value, stim_value_norm) in enumerate(zip(ild_grid, ild_norm, strict=False)):
-            for idx, value in _stimulus_values_for_grid(component, ild_value, stim_value_norm).items():
+            stim_values = _stimulus_values_for_grid(component, ild_value, stim_value_norm)
+            for idx, value in stim_values.items():
                 X_grid[row_idx, idx] = value
         if bias_idx is not None:
             X_grid[:, bias_idx] = 1.0
+        _apply_sweep_values(X_grid, {}, product_specs)
 
         for k in range(K):
             p_right[k] = gL + (1.0 - gL - gR) * _right_probability(
@@ -1985,6 +2458,7 @@ def eval_glm_on_feature_grid(
     grid = np.linspace(float(grid_min), float(grid_max), int(n_grid))
     gL, gR = _normalized_lapse_rates(lapse_rates)
     p_right = np.zeros((K, len(grid)))
+    product_specs = _drug_product_feature_specs(X_cols_list, {feat_idx})
 
     X_base = None
     if X_data is not None:
@@ -1996,10 +2470,10 @@ def eval_glm_on_feature_grid(
     if X_base is not None:
         for k in range(K):
             w = W[k, 0, :]
-            base_logit = (X_base @ w) - (X_base[:, feat_idx] * w[feat_idx])
             for grid_idx, grid_value in enumerate(grid):
+                X_sweep = _apply_sweep_values(X_base.copy(), {feat_idx: float(grid_value)}, product_specs)
                 p_trial = gL + (1.0 - gL - gR) * _right_probability(
-                    base_logit + grid_value * w[feat_idx],
+                    X_sweep @ w,
                     right_logit_sign=right_logit_sign,
                 )
                 p_right[k, grid_idx] = (
@@ -2013,6 +2487,7 @@ def eval_glm_on_feature_grid(
             col_means[bias_idx] = 1.0
         X_grid = np.tile(col_means, (len(grid), 1))
         X_grid[:, feat_idx] = grid
+        _apply_sweep_values(X_grid, {}, product_specs)
         if bias_idx is not None:
             X_grid[:, bias_idx] = 1.0
         for k in range(K):
@@ -4187,7 +4662,10 @@ def fitted_lag_weights(adapter, subject: str, target_col: str) -> dict[int, floa
     try:
         weights = subject_feature_weights_from_fit(spec, subject)
     except (FileNotFoundError, ValueError):
-        weights = mean_feature_weights_from_fit(spec)
+        try:
+            weights = mean_feature_weights_from_fit(spec)
+        except (FileNotFoundError, ValueError):
+            return {}
 
     out = {}
     for feature in resolved_source_features(spec):
@@ -4195,6 +4673,58 @@ def fitted_lag_weights(adapter, subject: str, target_col: str) -> dict[int, floa
         if match and feature in weights:
             out[int(match.group(1))] = float(weights[feature])
     return out
+
+
+def infer_autocorrelogram_lag_param_weights(
+    y: np.ndarray,
+    base_X: np.ndarray,
+    sessions: np.ndarray,
+    x_cols: list[str],
+    target_col: str,
+    *,
+    max_lag: int = 20,
+) -> dict[int, float]:
+    """Infer an aggregate choice-history regressor as a weighted lag sum."""
+    if target_col not in x_cols:
+        return {}
+
+    y = np.asarray(y, dtype=float)
+    base_X = np.asarray(base_X, dtype=float)
+    if y.shape[0] != base_X.shape[0] or y.size < 2:
+        return {}
+
+    target_idx = x_cols.index(target_col)
+    target = base_X[:, target_idx]
+    starts = autocorrelogram_session_starts(sessions)
+    choice_history_values = infer_autocorrelogram_choice_history_values(y, base_X, sessions, x_cols)
+    lag_count = min(int(max_lag), max(1, y.size - 1))
+    lags = list(range(1, lag_count + 1))
+
+    design = np.column_stack(
+        [
+            [
+                autocorrelogram_history_value(
+                    y,
+                    trial_idx,
+                    lag,
+                    starts,
+                    choice_history_values=choice_history_values,
+                )
+                for trial_idx in range(y.size)
+            ]
+            for lag in lags
+        ]
+    )
+    valid = np.isfinite(target) & np.isfinite(design).all(axis=1)
+    if int(valid.sum()) <= len(lags):
+        return {}
+
+    coefs, *_ = np.linalg.lstsq(design[valid], target[valid], rcond=None)
+    return {
+        lag: float(weight)
+        for lag, weight in zip(lags, coefs, strict=False)
+        if np.isfinite(weight) and abs(float(weight)) > 1e-10
+    }
 
 
 def autocorrelogram_class_count(arrays: dict) -> int:
@@ -4213,6 +4743,79 @@ def normalize_probability_vector(probs: np.ndarray) -> np.ndarray:
     if not np.isfinite(total) or total <= 0:
         return np.full_like(out, 1.0 / out.size, dtype=float)
     return out / total
+
+
+def _softmax_last_axis(logits: np.ndarray) -> np.ndarray:
+    logits = np.asarray(logits, dtype=float)
+    shifted = logits - np.nanmax(logits, axis=-1, keepdims=True)
+    exp_shifted = np.exp(shifted)
+    return exp_shifted / np.sum(exp_shifted, axis=-1, keepdims=True)
+
+
+def _input_driven_transition_weights_with_baseline(weights: np.ndarray, *, K: int) -> np.ndarray:
+    """Return target-wise transition weights with the implicit baseline target restored."""
+    weights = np.asarray(weights, dtype=float)
+    baseline_target_idx = K - 1
+    if weights.ndim == 3 and weights.shape[1] == K:
+        weights = weights.mean(axis=0)
+    if weights.ndim != 2:
+        raise ValueError(f"transition_weights must be 2D or legacy 3D, got shape {weights.shape}.")
+    if weights.shape[0] == K:
+        return weights
+    if weights.shape[0] != K - 1:
+        raise ValueError(f"transition_weights first dimension must be K or K-1; got {weights.shape} for K={K}.")
+
+    zero = np.zeros((1, weights.shape[1]), dtype=float)
+    return np.concatenate(
+        [
+            weights[:baseline_target_idx],
+            zero,
+            weights[baseline_target_idx:],
+        ],
+        axis=0,
+    )
+
+
+def autocorrelogram_transition_matrices(arrays: dict, *, K: int, T: int) -> np.ndarray:
+    """Build A[t, i, j] = p(z[t+1]=j | z[t]=i) for closed-loop simulations."""
+    if T <= 1:
+        return np.empty((0, K, K), dtype=float)
+
+    transition_bias = arrays.get("transition_bias")
+    transition_weights = arrays.get("transition_weights")
+    U = arrays.get("U")
+    if transition_bias is not None and transition_weights is not None and U is not None:
+        bias = np.asarray(transition_bias, dtype=float)
+        weights = _input_driven_transition_weights_with_baseline(transition_weights, K=K)
+        U = np.asarray(U, dtype=float)
+        if bias.shape != (K, K):
+            raise ValueError(f"transition_bias must have shape {(K, K)}, got {bias.shape}.")
+        if U.ndim != 2 or U.shape[0] != T:
+            raise ValueError(f"U must have shape (T, D) with T={T}, got {U.shape}.")
+        if U.shape[1] != weights.shape[1]:
+            raise ValueError(f"U width ({U.shape[1]}) does not match transition_weights width ({weights.shape[1]}).")
+
+        # GLM-HMM-T transition inputs are destination/current-trial aligned:
+        # U[t + 1] drives the transition from trial t to t + 1.
+        input_logits = U[1:] @ weights.T
+        logits = bias[None, :, :] + input_logits[:, None, :]
+        return _softmax_last_axis(logits)
+
+    transition_matrix = arrays.get("transition_matrix")
+    if transition_matrix is not None:
+        matrix = np.asarray(transition_matrix, dtype=float)
+        if matrix.ndim == 2:
+            matrix = np.broadcast_to(matrix[None, :, :], (max(T - 1, 0), K, K)).copy()
+        elif matrix.ndim != 3:
+            raise ValueError(f"transition_matrix must be 2D or 3D, got {matrix.shape}.")
+        if matrix.shape[-2:] != (K, K):
+            raise ValueError(f"transition_matrix trailing dimensions must be {(K, K)}, got {matrix.shape}.")
+        if matrix.shape[0] != max(T - 1, 0):
+            raise ValueError(f"transition_matrix has {matrix.shape[0]} rows, expected {max(T - 1, 0)}.")
+        row_sums = np.sum(matrix, axis=-1, keepdims=True)
+        return np.where(row_sums > 0, matrix / row_sums, np.full_like(matrix, 1.0 / K))
+
+    return np.broadcast_to(np.eye(K, dtype=float)[None, :, :], (max(T - 1, 0), K, K)).copy()
 
 
 def apply_autocorrelogram_lapse(
@@ -4501,8 +5104,8 @@ def simulate_subject_closed_loop_autocorrelogram(
     baseline_class_idx = int(np.asarray(arrays.get("baseline_class_idx", 0)).reshape(()))
     lapse_mode = str(np.asarray(arrays.get("lapse_mode", "none")).reshape(()))
     lapse_rates = np.asarray(arrays.get("lapse_rates", []), dtype=float)
-    transition_matrix = np.asarray(arrays.get("transition_matrix", np.eye(K)), dtype=float)
     initial_probs = normalize_probability_vector(np.asarray(arrays.get("initial_probs", np.ones(K) / K), dtype=float))
+    transition_matrices = autocorrelogram_transition_matrices(arrays, K=K, T=len(subject_df))
 
     sessions = subject_df[adapter.behavioral_cols["session"]].to_numpy()
     starts = autocorrelogram_session_starts(sessions)
@@ -4520,19 +5123,26 @@ def simulate_subject_closed_loop_autocorrelogram(
         sessions,
         x_cols,
     )
-    lag_param_weights = {
-        col: fitted_lag_weights(adapter, subject, col)
-        for col in ("choice_lag_param", "at_choice_param")
-        if col in x_cols
-    }
+    lag_param_weights = {}
+    for col in ("choice_lag_param", "at_choice_param"):
+        if col not in x_cols:
+            continue
+        weights_for_col = fitted_lag_weights(adapter, subject, col)
+        if not weights_for_col:
+            weights_for_col = infer_autocorrelogram_lag_param_weights(
+                np.asarray(arrays.get("y", []), dtype=float),
+                base_X,
+                sessions,
+                x_cols,
+                col,
+            )
+        if weights_for_col:
+            lag_param_weights[col] = weights_for_col
 
+    predicted_state = initial_probs
     for trial_idx in range(len(subject_df)):
         if trial_idx == starts[trial_idx]:
-            state = int(rng.choice(K, p=initial_probs))
-        else:
-            state_probs = normalize_probability_vector(transition_matrix[states[trial_idx - 1]])
-            state = int(rng.choice(K, p=state_probs))
-        states[trial_idx] = state
+            predicted_state = initial_probs
 
         x_trial = closed_loop_autocorrelogram_x(
             base_X[trial_idx],
@@ -4544,20 +5154,34 @@ def simulate_subject_closed_loop_autocorrelogram(
             choice_history_values=choice_history_values,
             choice_indicator_classes=choice_indicator_classes,
         )
-        probs = glm_probs_from_weights(
-            x_trial[None, :],
-            weights[state],
-            baseline_class_idx=baseline_class_idx,
-            num_classes=num_classes,
-        )[0]
         previous_choice = int(choices[trial_idx - 1]) if trial_idx > starts[trial_idx] else None
-        probs = apply_autocorrelogram_lapse(
-            probs,
-            previous_choice=previous_choice,
-            lapse_mode=lapse_mode,
-            lapse_rates=lapse_rates,
+
+        state_conditional_probs = np.vstack(
+            [
+                apply_autocorrelogram_lapse(
+                    glm_probs_from_weights(
+                        x_trial[None, :],
+                        weights[state_idx],
+                        baseline_class_idx=baseline_class_idx,
+                        num_classes=num_classes,
+                    )[0],
+                    previous_choice=previous_choice,
+                    lapse_mode=lapse_mode,
+                    lapse_rates=lapse_rates,
+                )
+                for state_idx in range(K)
+            ]
         )
+        probs = normalize_probability_vector(predicted_state @ state_conditional_probs)
         choices[trial_idx] = int(rng.choice(num_classes, p=probs))
+
+        likelihood = state_conditional_probs[:, int(choices[trial_idx])]
+        filtered_state = normalize_probability_vector(predicted_state * likelihood)
+        states[trial_idx] = int(np.argmax(filtered_state))
+
+        next_idx = trial_idx + 1
+        if next_idx < len(subject_df) and starts[next_idx] == starts[trial_idx]:
+            predicted_state = normalize_probability_vector(filtered_state @ transition_matrices[trial_idx])
 
     correct_class = infer_autocorrelogram_correct_class(subject_df, adapter, arrays)
     performance = (choices == correct_class).astype(float)
@@ -4585,6 +5209,12 @@ def closed_loop_arrays_store_from_views(views: dict) -> dict:
             arrays["initial_probs"] = np.asarray(view.initial_probs)
         if view.transition_matrix is not None:
             arrays["transition_matrix"] = np.asarray(view.transition_matrix)
+        if getattr(view, "transition_bias", None) is not None:
+            arrays["transition_bias"] = np.asarray(view.transition_bias)
+        if getattr(view, "transition_weights", None) is not None:
+            arrays["transition_weights"] = np.asarray(view.transition_weights)
+        if getattr(view, "U", None) is not None:
+            arrays["U"] = np.asarray(view.U)
         arrays_store[str(subject)] = arrays
     return arrays_store
 

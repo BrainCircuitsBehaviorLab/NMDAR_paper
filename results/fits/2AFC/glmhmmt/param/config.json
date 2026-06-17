@@ -34,7 +34,8 @@
     ],
     "transition_cols": [
         "filtered_reward",
-        "trial_index"
+        "prev_difficulty",
+        "cumulative_reward"
     ],
     "frozen_emissions": {},
     "baseline_class_idx": 0,

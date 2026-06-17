@@ -1361,7 +1361,14 @@ class TwoAFCDelayAdapter(TaskAdapter):
         feature_df = pd.concat([feature_df, derived_cols], axis=1)
         return pl.from_pandas(feature_df)
 
-    def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
+    def build_feature_df(
+        self,
+        df_sub: pl.DataFrame,
+        tau: float = 50.0,
+        emission_cols: List[str] | None = None,
+        transition_cols: List[str] | None = None,
+    ) -> pl.DataFrame:
+        del emission_cols, transition_cols
         return self._build_feature_df(df_sub, tau=tau)
 
     def _resolved_emission_cols(
