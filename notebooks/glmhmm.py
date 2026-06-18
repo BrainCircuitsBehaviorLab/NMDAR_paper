@@ -210,7 +210,7 @@ def _():
 
 @app.cell
 def _(plt, project_root):
-    plt.style.use(project_root / "styles" / "paper.mplstyle")
+    plt.style.use(project_root / "paper.mplstyle")
     return
 
 
@@ -1199,7 +1199,6 @@ def _(mo):
 def _(adapter, adapter_behavioral_column, df_all):
     session_col = adapter_behavioral_column(adapter, df_all, "session", "session", "Session")
     trial_col = adapter_behavioral_column(adapter, df_all, "trial_idx", "trial_idx", "trial", "Trial")
-
     return session_col, trial_col
 
 

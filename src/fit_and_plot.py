@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 from pathlib import Path
 import sys
@@ -21,7 +20,6 @@ for path in (PROJECT_ROOT, SRC_DIR):
         sys.path.insert(0, str(path))
 
 from glmhmmt.runtime import configure_paths, get_runtime_paths  # noqa: E402
-
 from fit_helper import save_model_plots  # noqa: E402
 
 
@@ -60,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--fit", action="store_true", help="Rerun each fit before plotting.")
     parser.add_argument("--format", choices=["png", "pdf", "svg"], default=None)
-    parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument("--dpi", type=int, default=300)  # This is not the place for this, remove
     parser.add_argument("--num-iters", type=int, default=50)
     parser.add_argument("--n-restarts", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
