@@ -230,7 +230,7 @@ def _():
 
 @app.cell
 def _(Path, plt):
-    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     return
 
 

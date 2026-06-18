@@ -1,0 +1,31 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 50,
+    "emission_cols": [
+        "bias",
+        "stim_param",
+        "at_choice_param"
+    ],
+    "requested_emission_cols": [
+        "bias",
+        "stim_param",
+        "at_choice_param"
+    ],
+    "resolved_emission_cols": [
+        "bias",
+        "stim_param",
+        "at_choice_param"
+    ],
+    "num_classes": 2,
+    "lapse_mode": "none",
+    "lapse_max": 0.2,
+    "n_restarts": 1,
+    "restart_noise_scale": 0.05,
+    "seed": 0,
+    "baseline_class_idx": 0,
+    "emission_model": "standard",
+    "model_id": "drug_param",
+    "cv_mode": "none",
+    "cv_repeats": 0,
+    "condition_filter": "drug"
+}
