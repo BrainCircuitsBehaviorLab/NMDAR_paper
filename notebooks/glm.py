@@ -81,7 +81,7 @@ def _():
     sns.set_style("ticks")
     sns.set_context("paper")
 
-    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
 
     paths = get_runtime_paths()
     from src.utils import fig_size
@@ -297,12 +297,6 @@ def _(
 @app.cell
 def _():
     #trial_df.group_by(["batch", "subject", "drug"]).len()
-    return
-
-
-@app.cell
-def _(weights_df):
-    weights_df
     return
 
 

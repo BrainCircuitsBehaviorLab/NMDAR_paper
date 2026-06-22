@@ -104,8 +104,23 @@ def _(MCDR, data_path, pl, two_afc):
     df_2AFC = two_afc.subject_filter(pl.read_parquet(data_path / "df_alexis_drug_combined.parquet"))  # With drug
     df_2AFC_delay = pl.read_parquet(data_path / "tiffany.parquet")
     df_MCDR = MCDR.subject_filter(pl.read_parquet(data_path / "MCDR_all.parquet"))
+
+    # Compute r_right for MCDR p right
+    df_MCDR = df_MCDR.with_columns((pl.col("r_c") == "R").cast(pl.Int8).alias("r_right"))
+    df_MCDR = df_MCDR.with_columns(
+        pl.when(pl.col("x_c") == "R")
+        .then(pl.lit("pos_") + pl.col("ttype_c"))
+        .otherwise(pl.lit("neg_") + pl.col("ttype_c"))
+        .alias("signed_ttype_c")
+    )
     # df_MCDR = df_MCDR.filter(pl.col("batch") == "11B")
     return df_2AFC, df_2AFC_delay, df_MCDR
+
+
+@app.cell
+def _(df_MCDR):
+    df_MCDR
+    return
 
 
 @app.cell
@@ -485,7 +500,70 @@ def _(mo):
 
 @app.cell
 def _():
-    # To be added
+    difficulties = ["VG", "DS", "DM", "DL"]
+
+    signed_order =[
+        "neg_VG", "neg_DS", "neg_DM", "neg_DL",
+        "pos_DL", "pos_DM", "pos_DS", "pos_VG",
+    ]
+
+    signed_labels = [
+
+        "-VG", "-DS", "-DM", "-DL",
+
+        "DL", "DM", "DS", "VG",
+
+    ]
+    return signed_labels, signed_order
+
+
+@app.cell
+def _(
+    df_MCDR,
+    fig_size,
+    path_panels,
+    pl,
+    plot_mean_over_data,
+    plt,
+    signed_labels,
+    signed_order,
+):
+    plt.figure(figsize=fig_size(2), constrained_layout=True)
+    p_right_3CDR = plt.gca()
+
+    plot_mean_over_data(
+        df_MCDR.filter(pl.col("drug") == "rest"),
+        x_col="signed_ttype_c",
+        y_col="r_right",
+        x_order=signed_order,
+        x_tick_labels=signed_labels,
+        xlabel="Difficulty",
+        ylabel=r"$p(\mathrm{right})$",
+        title="",
+        baseline=1/3,
+        baseline_area=True,
+        color="tab:blue",
+        ax=p_right_3CDR,
+    )
+
+    # plot_mean_over_data(
+    #     df_MCDR.filter(pl.col("drug") == "drug"),
+    #     x_col="signed_ttype_c",
+    #     y_col="r_right",
+    #     x_order=signed_order,
+    #     x_tick_labels=signed_labels,
+    #     xlabel="Difficulty",
+    #     ylabel=r"$p(\mathrm{right})$",
+    #     title="",
+    #     baseline=1/3,
+    #     baseline_area=True,
+    #     color="tab:pink",
+    #     ax=p_right_3CDR,
+    # )
+
+    plt.savefig(f'{path_panels}/p_right_3CDR.svg')
+    plt.savefig(f'{path_panels}/p_right_3CDR.png')
+    p_right_3CDR
     return
 
 

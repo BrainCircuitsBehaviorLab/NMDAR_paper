@@ -1403,7 +1403,7 @@ def _(
 
     _fig_pair_metrics, _axd = plt.subplot_mosaic(
         [["ll", "bic"]],
-        figsize=fig_size(2,2),
+        figsize=fig_size(1,2),
         constrained_layout=True,
     )
     _axes = [_axd["ll"], _axd["bic"]]
@@ -1416,11 +1416,11 @@ def _(
                 y=_finite,
                 ax=_ax,
                 color = "tab:red",
-                width=.5,
+                # width=.5,
                 **BOXPLOT_STYLE
             )
         _p_txt = p_label(_finite)
-        _ax.set_ylim(*_ylim)
+        # _ax.set_ylim(*_ylim)
         if _p_txt:
             _ax.text(0.5, 0.88, _p_txt, ha="center", va="bottom", transform=_ax.transAxes)
         _ax.set_xticks([0])
@@ -1428,7 +1428,7 @@ def _(
             f"{pretty_names.get(pairwise_alias_b, pairwise_alias_b)} $-$ {pretty_names.get(pairwise_alias_a, pairwise_alias_a)}"
         ])
         _ax.set_ylabel(_ylabel)
-        _ax.set_xlim(-0.45, 0.45)
+        # _ax.set_xlim(-0.45, 0.45)
         sns.despine(ax=_ax)
 
     mo.vstack([_fig_pair_metrics, save_plot(_fig_pair_metrics, "Metric comparisom", stem=f"metric_comparison_{pairwise_alias_a}_{pairwise_alias_b}"),])
@@ -1996,31 +1996,31 @@ def _(
         )
     _frames = [_df for _df in [_df_a, _df_b] if not _df.empty]
     mo.stop(not _frames, mo.md("No pairwise trial data were available for behavioral ROC curves."))
-    _roc_df = pd.concat(_frames, ignore_index=True)
+    roc_df = pd.concat(_frames, ignore_index=True)
 
-    _state_col = next(
-        (_col for _col in ["state_label", "state_label_pred"] if _col in _roc_df.columns),
+    state_col = next(
+        (_col for _col in ["state_label", "state_label_pred"] if _col in roc_df.columns),
         None,
     )
-    mo.stop(_state_col is None, mo.md("State labels are not available for pairwise behavioral ROC curves."))
+    mo.stop(state_col is None, mo.md("State labels are not available for pairwise behavioral ROC curves."))
 
     _rt_col = next(
-        (_col for _col in RT_METRIC_CANDIDATES if _col in _roc_df.columns),
+        (_col for _col in RT_METRIC_CANDIDATES if _col in roc_df.columns),
         None,
     )
-    _metric_specs = [("nLicks", "Licking", "Higher lick count")]
+    metric_specs = [("nLicks", "Licking", "Higher lick count")]
     if _rt_col is not None:
-        _metric_specs.append((_rt_col, "RT", "Faster RT"))
-    _metric_specs = [_spec for _spec in _metric_specs if _spec[0] in _roc_df.columns]
-    mo.stop(not _metric_specs, mo.md("No `nLicks` or RT column was found for pairwise behavioral ROC curves."))
+        metric_specs.append((_rt_col, "RT", "Faster RT"))
+    metric_specs = [_spec for _spec in metric_specs if _spec[0] in roc_df.columns]
+    mo.stop(not metric_specs, mo.md("No `nLicks` or RT column was found for pairwise behavioral ROC curves."))
 
-    def _binary_engaged_target(_labels):
+    def binary_engaged_target(_labels):
         _label_text = pd.Series(_labels, copy=False).astype(str).str.strip().str.lower()
         _positive = _label_text.eq("engaged") | _label_text.str.startswith("engaged ")
         _negative = _label_text.eq("disengaged") | _label_text.str.startswith("disengaged ")
         return _positive.to_numpy(dtype=bool), (_positive | _negative).to_numpy(dtype=bool)
 
-    def _roc_curve(_target, _score):
+    def roc_curve(_target, _score):
         _target = np.asarray(_target, dtype=bool)
         _score = np.asarray(_score, dtype=float)
         _valid = np.isfinite(_score)
@@ -2044,7 +2044,7 @@ def _(
     # def _shuffled_auc(_target, _score, _rng, n_shuffles=200):
         _aucs = []
         for _ in range(n_shuffles):
-            _result = _roc_curve(_rng.permutation(_target), _score)
+            _result = roc_curve(_rng.permutation(_target), _score)
             if _result is not None:
                 _aucs.append(_result[2])
         return float(np.mean(_aucs)) if _aucs else np.nan
@@ -2056,21 +2056,21 @@ def _(
     _rng = np.random.default_rng(0)
     _fig_roc, _axes = plt.subplots(
         1,
-        len(_metric_specs),
+        len(metric_specs),
         figsize=fig_size(1,2),
         squeeze=False,
         layout="constrained",
     )
     _plotted = False
-    for _ax, (_metric_col, _title, _direction_label) in zip(_axes.ravel(), _metric_specs, strict=False):
-        for _slot, _slot_df in _roc_df.groupby("model_slot", sort=True):
-            _target, _valid_labels = _binary_engaged_target(_slot_df[_state_col])
+    for _ax, (_metric_col, _title, _direction_label) in zip(_axes.ravel(), metric_specs, strict=False):
+        for _slot, _slot_df in roc_df.groupby("model_slot", sort=True):
+            _target, _valid_labels = binary_engaged_target(_slot_df[state_col])
             _score = pd.to_numeric(_slot_df[_metric_col], errors="coerce").to_numpy(dtype=float)
             if _metric_col != "nLicks":
                 _score = -_score
             _target = _target[_valid_labels]
             _score = _score[_valid_labels]
-            _result = _roc_curve(_target, _score)
+            _result = roc_curve(_target, _score)
             if _result is None:
                 continue
             _fpr, _tpr, _auc = _result
@@ -2105,6 +2105,292 @@ def _(
         ],
         align="center",
     )
+    return binary_engaged_target, metric_specs, roc_curve, roc_df, state_col
+
+
+@app.cell
+def _(
+    binary_engaged_target,
+    metric_specs,
+    mo,
+    np,
+    pd,
+    roc_curve,
+    roc_df,
+    state_col,
+):
+    _subject_col = "subject"
+    mo.stop(_subject_col not in roc_df.columns, mo.md("No subject column was found."))
+
+    _fpr_grid = np.linspace(0, 1, 101)
+
+    _curve_rows = []
+    _auc_rows = []
+
+    for (_slot, _subject), _subj_df in roc_df.groupby(["model_slot", _subject_col], sort=True):
+        for _metric_col, _title, _direction_label in metric_specs:
+            _target, _valid_labels = binary_engaged_target(_subj_df[state_col])
+            _score = pd.to_numeric(_subj_df[_metric_col], errors="coerce").to_numpy(dtype=float)
+
+            if _metric_col != "nLicks":
+                _score = -_score
+
+            _target = _target[_valid_labels]
+            _score = _score[_valid_labels]
+
+            _result = roc_curve(_target, _score)
+            if _result is None:
+                continue
+
+            _fpr, _tpr, _auc = _result
+            _interp_tpr = np.interp(_fpr_grid, _fpr, _tpr)
+            _interp_tpr[0] = 0.0
+            _interp_tpr[-1] = 1.0
+
+            _name = str(_subj_df["model_name"].iloc[0])
+
+            _auc_rows.append(
+                {
+                    "model_slot": _slot,
+                    "model_name": _name,
+                    "subject": _subject,
+                    "metric": _metric_col,
+                    "metric_label": _title,
+                    "auc": _auc,
+                }
+            )
+
+            for _fpr_value, _tpr_value in zip(_fpr_grid, _interp_tpr):
+                _curve_rows.append(
+                    {
+                        "model_slot": _slot,
+                        "model_name": _name,
+                        "subject": _subject,
+                        "metric": _metric_col,
+                        "metric_label": _title,
+                        "fpr": _fpr_value,
+                        "tpr": _tpr_value,
+                    }
+                )
+
+    auc_df = pd.DataFrame(_auc_rows)
+    curve_df = pd.DataFrame(_curve_rows)
+
+    mo.stop(
+        auc_df.empty or curve_df.empty,
+        mo.md("Pairwise behavioral ROC curves require Engaged and Disengaged trials per subject."),
+    )
+    return auc_df, curve_df
+
+
+@app.cell
+def _(
+    BOXPLOT_STYLE,
+    auc_df,
+    curve_df,
+    fig_size,
+    metric_specs,
+    mo,
+    plt,
+    save_plot,
+    sns,
+):
+    from statannotations.Annotator import Annotator
+    _fig_roc, _axes_roc = plt.subplots(
+        1,
+        len(metric_specs),
+        figsize=fig_size(1, len(metric_specs)),
+        squeeze=False,
+        layout="constrained",
+    )
+    _palette = {
+        "A": "tab:blue",
+        "B": "tab:orange",
+    }
+    for _ax, (_metric_col, _title, _direction_label) in zip(
+        _axes_roc.ravel(), metric_specs, strict=False
+    ):
+        _metric_curve_df = curve_df[curve_df["metric"].eq(_metric_col)]
+        _metric_auc_df = auc_df[auc_df["metric"].eq(_metric_col)]
+
+        for _slot, _slot_curve_df in _metric_curve_df.groupby("model_slot", sort=True):
+            _summary_df = (
+                _slot_curve_df
+                .groupby("fpr", as_index=False)
+                .agg(
+                    mean_tpr=("tpr", "mean"),
+                    sem_tpr=("tpr", "sem"),
+                )
+            )
+
+            _slot_auc_df = _metric_auc_df[_metric_auc_df["model_slot"].eq(_slot)]
+            _name = str(_slot_auc_df["model_name"].iloc[0])
+            _mean_auc = _slot_auc_df["auc"].mean()
+            _sem_auc = _slot_auc_df["auc"].sem()
+
+            _color = _palette.get(_slot, "tab:gray")
+
+            _ax.plot(
+                _summary_df["fpr"],
+                _summary_df["mean_tpr"],
+                color=_color,
+                lw=2,
+                label=f"{_name} AUC={_mean_auc:.3f} ± {_sem_auc:.3f}",
+            )
+
+            _ax.fill_between(
+                _summary_df["fpr"],
+                _summary_df["mean_tpr"] - _summary_df["sem_tpr"].fillna(0),
+                _summary_df["mean_tpr"] + _summary_df["sem_tpr"].fillna(0),
+                color=_color,
+                alpha=0.2,
+                linewidth=0,
+            )
+
+        _ax.plot([0, 1], [0, 1], color="tab:gray", lw=1, ls="--")
+        _ax.set_title(_title)
+        _ax.set_xlabel("False positive rate")
+        _ax.set_ylabel("True positive rate")
+        _ax.set_xlim(0, 1)
+        _ax.set_ylim(0, 1)
+        _ax.legend(frameon=False, loc="lower right")
+        sns.despine(ax=_ax)
+
+    _fig_auc, _axes_auc = plt.subplots(
+        1,
+        len(metric_specs),
+        figsize=fig_size(1, len(metric_specs)),
+        squeeze=False,
+        layout="constrained",
+    )
+
+    for _ax, (_metric_col, _title, _direction_label) in zip(
+        _axes_auc.ravel(), metric_specs, strict=False
+    ):
+        _metric_auc_df = auc_df[auc_df["metric"].eq(_metric_col)].copy()
+
+        sns.boxplot(
+            data=_metric_auc_df,
+            x="model_name",
+            y="auc",
+            hue="model_slot",
+            order=[
+                auc_df[auc_df["model_slot"].eq("A")]["model_name"].iloc[0],
+                auc_df[auc_df["model_slot"].eq("B")]["model_name"].iloc[0],
+            ],
+            hue_order=["A", "B"],
+            palette=_palette,
+            ax=_ax,
+            zorder = 1,
+            **BOXPLOT_STYLE
+        )
+
+        sns.stripplot(
+            data=_metric_auc_df,
+            x="model_name",
+            y="auc",
+            hue="model_slot",
+            order=[
+                auc_df[auc_df["model_slot"].eq("A")]["model_name"].iloc[0],
+                auc_df[auc_df["model_slot"].eq("B")]["model_name"].iloc[0],
+            ],
+            hue_order=["A", "B"],
+            palette=_palette,
+            ax=_ax,
+            dodge=False,
+            alpha=0.2,
+            size=0,
+            legend=False,
+            zorder = 0
+        )
+
+        _paired_auc_df = (
+            _metric_auc_df
+            .pivot_table(
+                index="subject",
+                columns="model_slot",
+                values="auc",
+                aggfunc="mean",
+            )
+            .dropna(subset=["A", "B"])
+        )
+
+        _model_name_a = _metric_auc_df[_metric_auc_df["model_slot"].eq("A")]["model_name"].iloc[0]
+        _model_name_b = _metric_auc_df[_metric_auc_df["model_slot"].eq("B")]["model_name"].iloc[0]
+
+        for _subject, _row in _paired_auc_df.iterrows():
+            _ax.plot(
+                [_model_name_a, _model_name_b],
+                [_row["A"], _row["B"]],
+                color="0.75",
+                linewidth=0.5,
+                zorder=0,
+            )
+
+        _pairs = [(_model_name_a, _model_name_b)]
+
+        Annotator(
+            _ax,
+            _pairs,
+            data=_metric_auc_df,
+            x="model_name",
+            y="auc",
+            order=[_model_name_a, _model_name_b],
+        ).configure(
+            test="t-test_paired",
+            text_format="star",
+            line_height=0,
+            verbose=False,
+        ).apply_and_annotate()
+
+        _ax.axhline(0.5, color="tab:gray", lw=1, ls="--")
+        _ax.set_title(f"{_title} AUC by subject")
+        _ax.set_xlabel("")
+        _ax.set_ylabel("AUC")
+        _ax.set_ylim(0, 1)
+        sns.despine(ax=_ax)
+
+        _handles, _labels = _ax.get_legend_handles_labels()
+        if _handles:
+            _ax.legend_.remove()
+    mo.vstack(
+        [
+            mo.md("#### Pairwise behavioral ROC by state, per subject"),
+            _fig_roc,
+            mo.md("#### Subject-level AUC distributions"),
+            _fig_auc,
+            mo.ui.table(auc_df, pagination=True),
+            save_plot(
+                _fig_roc,
+                "pairwise behavioral ROC by state per subject",
+                stem="pairwise_state_behavioral_roc_by_subject",
+            ),
+            save_plot(
+                _fig_auc,
+                "pairwise behavioral ROC AUC by subject",
+                stem="pairwise_state_behavioral_roc_auc_by_subject",
+            ),
+        ],
+        align="center",
+    )
+    return
+
+
+app._unparsable_cell(
+    r"""
+    *
+    """,
+    name="_"
+)
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _():
     return
 
 

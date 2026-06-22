@@ -133,8 +133,8 @@ def _():
 @app.cell
 def _():
     MODEL_BY_TASK = {
-        "2AFC_delay": "param2_dif_pure",
-        "2AFC": "param2_dif_pure",
+        "2AFC_delay": "param",
+        "2AFC": "param2",
         # "MCDR": "param",
     }
     task_names = tuple(MODEL_BY_TASK)
@@ -412,7 +412,7 @@ def _(MODEL_BY_TASK, get_adapter, pl):
 def _(MODEL_BY_TASK, adapters, dfs, json, paths):
     model_configs = {}
     for _task_name, _model_id in MODEL_BY_TASK.items():
-        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmmt" / _model_id
+        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmm" / _model_id
         _config_path = _model_dir / "config.json"
         if _config_path.exists():
             _cfg = json.loads(_config_path.read_text())
@@ -467,7 +467,7 @@ def _(
         _adapter = adapters[_task_name]
         _df_all = dfs[_task_name]
         _model_id = _cfg["model_id"]
-        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmmt" / _model_id
+        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmm" / _model_id
         _K = int((_cfg.get("K_list") or [2])[0])
         _subjects = [str(_subject) for _subject in (_cfg.get("subjects") or list(_df_all["subject"].unique()))]
         _emission_cols = _cfg.get("emission_cols") or None
@@ -475,7 +475,7 @@ def _(
 
         _arrays_store, _ = load_fit_arrays(
             out_dir=_model_dir,
-            arrays_suffix="glmhmmt_arrays.npz",
+            arrays_suffix="glmhmm_arrays.npz",
             adapter=_adapter,
             df_all=_df_all,
             subjects=_subjects,
@@ -744,7 +744,6 @@ def _(
         accuracy_plot_dfs,
         emission_hue_orders,
         emission_orders,
-        metric_hue_order,
         occupancy_annotation_dfs,
         occupancy_hue_orders,
         occupancy_plot_dfs,
@@ -808,55 +807,100 @@ def _(
     mount_figure,
     path_panels,
     plt,
-    task_labels,
 ):
     _data_autocorr = autocorrelograms_by_task["2AFC_delay"]["data"]["autocorr"]
     _model_autocorr = autocorrelograms_by_task["2AFC_delay"]["glmhmmt"]["autocorr"]
-    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    if not mount_figure:
-        _axes = plt.gcf().subplots(1, 2)
-    else:
-        _axes = [
-            axd.get("autocorrelograms_2ADC_outcome", plt.gca()),
-            axd.get("autocorrelograms_2ADC_repetition", plt.gca()),
-        ]
-    autocorrelograms_2ADC_outcome, autocorrelograms_2ADC_repetition = _axes
-    for _ax in _axes:
-        _ax.clear()
 
-    for _signal, _ax in zip(("Outcome", "Repetition"), _axes, strict=False):
-        _data_sub = _data_autocorr[_data_autocorr["signal"] == _signal].sort_values("lag")
-        if not _data_sub.empty:
-            _ax.errorbar(
-                _data_sub["lag"],
-                _data_sub["autocorr"],
-                yerr=_data_sub.get("autocorr_sem"),
-                fmt="o",
-                capsize=0,
-                ms=3,
-                color="tab:blue",
-                ecolor="tab:blue",
-                label="Data",
-                zorder=4,
-            )
-        if _model_autocorr is not None and not _model_autocorr.empty:
-            _model_sub = _model_autocorr[_model_autocorr["signal"] == _signal].sort_values("lag")
-            _ax.plot(
-                _model_sub["lag"],
-                _model_sub["autocorr"],
-                color="tab:red",
-                label="GLM-HMM-T",
-                zorder=3,
-            )
-        _ax.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
-        _ax.set_title(_signal)
-        _ax.set_xlabel("Lag")
-        _ax.set_ylabel("Autocorrelation")
-        _ax.legend(frameon=False)
-    autocorrelograms_2ADC_outcome.figure.suptitle(task_labels["2AFC_delay"])
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd.get("autocorrelograms_2ADC_outcome", plt.gca())
+    autocorrelograms_2ADC_outcome.clear()
+
+    _data_sub = _data_autocorr[_data_autocorr["signal"] == "Outcome"].sort_values("lag")
+    autocorrelograms_2ADC_outcome.errorbar(
+        _data_sub["lag"],
+        _data_sub["autocorr"],
+        yerr=_data_sub.get("autocorr_sem"),
+        fmt="o",
+        capsize=0,
+        ms=3,
+        color="tab:blue",
+        ecolor="tab:blue",
+        label="Data",
+        zorder=4,
+    )
+
+    _model_sub = _model_autocorr[_model_autocorr["signal"] == "Outcome"].sort_values("lag")
+    autocorrelograms_2ADC_outcome.plot(
+        _model_sub["lag"],
+        _model_sub["autocorr"],
+        color="tab:red",
+        label="GLM-HMM-T",
+        zorder=3,
+    )
+
+    autocorrelograms_2ADC_outcome.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
+    autocorrelograms_2ADC_outcome.set_title("Outcome")
+    autocorrelograms_2ADC_outcome.set_xlabel("Lag")
+    autocorrelograms_2ADC_outcome.set_ylabel("Autocorrelation")
+    autocorrelograms_2ADC_outcome.legend(frameon=False)
+
     if not mount_figure:
-        autocorrelograms_2ADC_outcome.figure.savefig((path_panels / "2AFC_delay_glmhmmt_autocorrelograms").with_suffix(f".{format}"))
+        autocorrelograms_2ADC_outcome.figure.savefig((path_panels / "2AFC_delay_autocorrelogram_outcome").with_suffix(f".{format}"))
+
     autocorrelograms_2ADC_outcome
+    return
+
+
+@app.cell
+def _(
+    autocorrelograms_by_task,
+    axd,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    plt,
+):
+    _data_autocorr = autocorrelograms_by_task["2AFC_delay"]["data"]["autocorr"]
+    _model_autocorr = autocorrelograms_by_task["2AFC_delay"]["glmhmmt"]["autocorr"]
+
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure else axd.get("autocorrelograms_2ADC_repetition", plt.gca())
+    autocorrelograms_2ADC_repetition.clear()
+
+    _data_sub = _data_autocorr[_data_autocorr["signal"] == "Repetition"].sort_values("lag")
+    autocorrelograms_2ADC_repetition.errorbar(
+        _data_sub["lag"],
+        _data_sub["autocorr"],
+        yerr=_data_sub.get("autocorr_sem"),
+        fmt="o",
+        capsize=0,
+        ms=3,
+        color="tab:blue",
+        ecolor="tab:blue",
+        label="Data",
+        zorder=4,
+    )
+
+    _model_sub = _model_autocorr[_model_autocorr["signal"] == "Repetition"].sort_values("lag")
+    autocorrelograms_2ADC_repetition.plot(
+        _model_sub["lag"],
+        _model_sub["autocorr"],
+        color="tab:red",
+        label="GLM-HMM-T",
+        zorder=3,
+    )
+
+    autocorrelograms_2ADC_repetition.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
+    autocorrelograms_2ADC_repetition.set_title("Repetition")
+    autocorrelograms_2ADC_repetition.set_xlabel("Lag")
+    autocorrelograms_2ADC_repetition.set_ylabel("Autocorrelation")
+    autocorrelograms_2ADC_repetition.legend(frameon=False)
+
+    if not mount_figure:
+        autocorrelograms_2ADC_repetition.figure.savefig((path_panels / "2AFC_delay_autocorrelogram_repetition").with_suffix(f".{format}"))
+
+    autocorrelograms_2ADC_repetition
     return
 
 
@@ -877,55 +921,100 @@ def _(
     mount_figure,
     path_panels,
     plt,
-    task_labels,
 ):
     _data_autocorr = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
     _model_autocorr = autocorrelograms_by_task["2AFC"]["glmhmmt"]["autocorr"]
-    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    if not mount_figure:
-        _axes = plt.gcf().subplots(1, 2)
-    else:
-        _axes = [
-            axd.get("autocorrelograms_2AFC_outcome", plt.gca()),
-            axd.get("autocorrelograms_2AFC_repetition", plt.gca()),
-        ]
-    autocorrelograms_2AFC_outcome, autocorrelograms_2AFC_repetition = _axes
-    for _ax in _axes:
-        _ax.clear()
 
-    for _signal, _ax in zip(("Outcome", "Repetition"), _axes, strict=False):
-        _data_sub = _data_autocorr[_data_autocorr["signal"] == _signal].sort_values("lag")
-        if not _data_sub.empty:
-            _ax.errorbar(
-                _data_sub["lag"],
-                _data_sub["autocorr"],
-                yerr=_data_sub.get("autocorr_sem"),
-                fmt="o",
-                capsize=0,
-                ms=3,
-                color="tab:blue",
-                ecolor="tab:blue",
-                label="Data",
-                zorder=4,
-            )
-        if _model_autocorr is not None and not _model_autocorr.empty:
-            _model_sub = _model_autocorr[_model_autocorr["signal"] == _signal].sort_values("lag")
-            _ax.plot(
-                _model_sub["lag"],
-                _model_sub["autocorr"],
-                color="tab:red",
-                label="GLM-HMM-T",
-                zorder=3,
-            )
-        _ax.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
-        _ax.set_title(_signal)
-        _ax.set_xlabel("Lag")
-        _ax.set_ylabel("Autocorrelation")
-        _ax.legend(frameon=False)
-    autocorrelograms_2AFC_outcome.figure.suptitle(task_labels["2AFC"])
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd.get("autocorrelograms_2AFC_outcome", plt.gca())
+    autocorrelograms_2AFC_outcome.clear()
+
+    _data_sub = _data_autocorr[_data_autocorr["signal"] == "Outcome"].sort_values("lag")
+    autocorrelograms_2AFC_outcome.errorbar(
+        _data_sub["lag"],
+        _data_sub["autocorr"],
+        yerr=_data_sub.get("autocorr_sem"),
+        fmt="o",
+        capsize=0,
+        ms=3,
+        color="tab:blue",
+        ecolor="tab:blue",
+        label="Data",
+        zorder=4,
+    )
+
+    _model_sub = _model_autocorr[_model_autocorr["signal"] == "Outcome"].sort_values("lag")
+    autocorrelograms_2AFC_outcome.plot(
+        _model_sub["lag"],
+        _model_sub["autocorr"],
+        color="tab:red",
+        label="GLM-HMM-T",
+        zorder=3,
+    )
+
+    autocorrelograms_2AFC_outcome.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
+    autocorrelograms_2AFC_outcome.set_title("Outcome")
+    autocorrelograms_2AFC_outcome.set_xlabel("Lag")
+    autocorrelograms_2AFC_outcome.set_ylabel("Autocorrelation")
+    autocorrelograms_2AFC_outcome.legend(frameon=False)
+
     if not mount_figure:
-        autocorrelograms_2AFC_outcome.figure.savefig((path_panels / "2AFC_glmhmmt_autocorrelograms").with_suffix(f".{format}"))
+        autocorrelograms_2AFC_outcome.figure.savefig((path_panels / "2AFC_autocorrelogram_outcome").with_suffix(f".{format}"))
+
     autocorrelograms_2AFC_outcome
+    return
+
+
+@app.cell
+def _(
+    autocorrelograms_by_task,
+    axd,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    plt,
+):
+    _data_autocorr = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
+    _model_autocorr = autocorrelograms_by_task["2AFC"]["glmhmmt"]["autocorr"]
+
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure else axd.get("autocorrelograms_2AFC_repetition", plt.gca())
+    autocorrelograms_2AFC_repetition.clear()
+
+    _data_sub = _data_autocorr[_data_autocorr["signal"] == "Repetition"].sort_values("lag")
+    autocorrelograms_2AFC_repetition.errorbar(
+        _data_sub["lag"],
+        _data_sub["autocorr"],
+        yerr=_data_sub.get("autocorr_sem"),
+        fmt="o",
+        capsize=0,
+        ms=3,
+        color="tab:blue",
+        ecolor="tab:blue",
+        label="Data",
+        zorder=4,
+    )
+
+    _model_sub = _model_autocorr[_model_autocorr["signal"] == "Repetition"].sort_values("lag")
+    autocorrelograms_2AFC_repetition.plot(
+        _model_sub["lag"],
+        _model_sub["autocorr"],
+        color="tab:red",
+        label="GLM-HMM-T",
+        zorder=3,
+    )
+
+    autocorrelograms_2AFC_repetition.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
+    autocorrelograms_2AFC_repetition.set_title("Repetition")
+    autocorrelograms_2AFC_repetition.set_xlabel("Lag")
+    autocorrelograms_2AFC_repetition.set_ylabel("Autocorrelation")
+    autocorrelograms_2AFC_repetition.legend(frameon=False)
+
+    if not mount_figure:
+        autocorrelograms_2AFC_repetition.figure.savefig((path_panels / "2AFC_autocorrelogram_repetition").with_suffix(f".{format}"))
+
+    autocorrelograms_2AFC_repetition
     return
 
 
@@ -1965,84 +2054,113 @@ def _(mo):
 
 @app.cell
 def _(
-    add_paired_state_annotation,
-    add_subject_pair_lines,
+    Annotator,
     axd,
     boxplot_STYLE,
     fig_size,
     format,
     metric_dfs,
-    metric_hue_order,
     mount_figure,
     path_panels,
     plt,
     sns,
+    state_order,
     state_palette,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     rt_by_state_2AFC = plt.gca() if not mount_figure else axd.get("rt_by_state_2AFC", plt.gca())
     rt_by_state_2AFC.clear()
+
     sns.boxplot(
         data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("RT")],
-        x="metric",
+        x="state_label",
         y="value",
-        hue="state_label",
-        order=["RT"],
-        hue_order=metric_hue_order,
+        order=state_order,
         palette=state_palette,
         ax=rt_by_state_2AFC,
-        gap = 0.25,
+        gap=0.25,
         **boxplot_STYLE,
     )
-    add_subject_pair_lines(rt_by_state_2AFC, metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("RT")], x="metric", y="value", order=["RT"])
-    add_paired_state_annotation(rt_by_state_2AFC, metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("RT")], x="metric", y="value", order=["RT"])
+
+    # paired annotation directly between the two x categories
+    _annotator = Annotator(
+        rt_by_state_2AFC,
+        [("Engaged", "Disengaged")],
+        data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("RT")],
+        x="state_label",
+        y="value",
+        order=state_order,
+    )
+    _annotator.configure(
+        test="t-test_paired",
+        text_format="star",
+        line_height=0,
+        verbose=False,
+    ).apply_and_annotate()
+
     rt_by_state_2AFC.set_xlabel("")
     rt_by_state_2AFC.set_ylabel("RT")
-    rt_by_state_2AFC.legend(frameon=False, title="")
+    rt_by_state_2AFC.set_ylim(bottom=0)
+
     if not mount_figure:
         rt_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_rt_by_state").with_suffix(f".{format}"))
+
     rt_by_state_2AFC
     return
 
 
 @app.cell
 def _(
-    add_paired_state_annotation,
-    add_subject_pair_lines,
+    Annotator,
     axd,
     boxplot_STYLE,
     fig_size,
     format,
     metric_dfs,
-    metric_hue_order,
     mount_figure,
     path_panels,
     plt,
     sns,
+    state_order,
     state_palette,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     nlicks_by_state_2AFC = plt.gca() if not mount_figure else axd.get("nlicks_by_state_2AFC", plt.gca())
     nlicks_by_state_2AFC.clear()
+
     sns.boxplot(
         data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("nLicks")],
-        x="metric",
+        x="state_label",
         y="value",
-        hue="state_label",
-        order=["nLicks"],
-        hue_order=metric_hue_order,
+        order=state_order,
         palette=state_palette,
         ax=nlicks_by_state_2AFC,
-        gap = 0.25,
+        gap=0.25,
         **boxplot_STYLE,
     )
-    add_subject_pair_lines(nlicks_by_state_2AFC, metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("nLicks")], x="metric", y="value", order=["nLicks"])
-    add_paired_state_annotation(nlicks_by_state_2AFC, metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("nLicks")], x="metric", y="value", order=["nLicks"])
+
+    _annotator = Annotator(
+        nlicks_by_state_2AFC,
+        [("Engaged", "Disengaged")],
+        data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("nLicks")],
+        x="state_label",
+        y="value",
+        order=state_order,
+    )
+    _annotator.configure(
+        test="t-test_paired",
+        text_format="star",
+        line_height=0,
+        verbose=False,
+    ).apply_and_annotate()
+
     nlicks_by_state_2AFC.set_xlabel("")
     nlicks_by_state_2AFC.set_ylabel("nLicks")
-    nlicks_by_state_2AFC.legend(frameon=False, title="")
+    nlicks_by_state_2AFC.set_ylim(bottom=0)
+
     if not mount_figure:
         nlicks_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_nlicks_by_state").with_suffix(f".{format}"))
+
     nlicks_by_state_2AFC
     return
 
@@ -2793,11 +2911,6 @@ def _(
     sns.despine(ax=lick_roc_2AFC_ax)
     lick_roc_2AFC.savefig((path_panels / "2AFC_nlicks_state_roc").with_suffix(f".{format}"))
     lick_roc_2AFC
-    return
-
-
-@app.cell
-def _():
     return
 
 

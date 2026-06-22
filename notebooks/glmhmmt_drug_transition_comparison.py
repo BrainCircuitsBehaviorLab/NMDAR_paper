@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -73,7 +73,7 @@ def _():
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     paths = get_runtime_paths()
-    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     sns.set_style("ticks")
     sns.set_context("notebook")
 
@@ -96,8 +96,8 @@ def _():
         ParamsStandardHMMInitialState,
         SoftmaxGLMHMM,
         TASK_OPTIONS,
-        add_choice_lag_summary_regressor,
         adapter_behavioral_column,
+        add_choice_lag_summary_regressor,
         attach_signed_delay_columns,
         build_transition_matrix_payload,
         build_transition_weights_df,
@@ -117,8 +117,8 @@ def _():
         np,
         paths,
         pd,
-        pl,
         pick_existing_column,
+        pl,
         plot_mean_over_data,
         plt,
         process_two_adc,
@@ -561,10 +561,10 @@ def _(mo, plot_dfs, plots):
 
 @app.cell
 def _(
-    adapter,
     CONDITION_LABELS,
     CONDITION_PALETTE,
     Line2D,
+    adapter,
     choice_history_regressor,
     conditioned_views,
     plot_dfs,
@@ -688,11 +688,11 @@ def _(
 
 @app.cell
 def _(
-    adapter,
-    adapter_behavioral_column,
     CONDITION_LABELS,
     CONDITION_PALETTE,
     Line2D,
+    adapter,
+    adapter_behavioral_column,
     attach_signed_delay_columns,
     fig_overlay,
     fig_size,

@@ -1,0 +1,51 @@
+{
+    "task": "2AFC",
+    "tau": 50,
+    "subjects": [
+        "325",
+        "327",
+        "329",
+        "330",
+        "332",
+        "333",
+        "335",
+        "337",
+        "419",
+        "420",
+        "422",
+        "561",
+        "616",
+        "617",
+        "619",
+        "623",
+        "807",
+        "820",
+        "821",
+        "873",
+        "875",
+        "907",
+        "909",
+        "911"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_param",
+        "choice_lag_01",
+        "choice_lag_02",
+        "choice_lag_03",
+        "choice_lag_04",
+        "choice_lag_05",
+        "choice_lag_06",
+        "choice_lag_07",
+        "choice_lag_08"
+    ],
+    "frozen_emissions": {},
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "2afc_bias-stim-choice_lags_08",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5,
+    "condition_filter": "all"
+}

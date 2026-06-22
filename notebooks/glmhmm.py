@@ -1352,12 +1352,9 @@ def _(
     fig_size,
     panel,
     pd,
-    pl,
     plot_df_all,
     plt,
     roc_curve,
-    session_col,
-    trial_col,
     trial_df,
 ):
     # Metrics to evaluate:
@@ -1381,13 +1378,7 @@ def _(
     # Attach behavioral variables to trial-level state assignments
     behavior_df = (
         trial_df.join(
-            plot_df_all.select(
-                "subject",
-                pl.col(session_col).alias("session"),
-                pl.col(trial_col).alias("trial_idx"),
-                "nLicks",
-                "RT",
-            ),
+            plot_df_all.select("subject", "session", "trial_idx", "nLicks", "RT",),
             on=["subject", "session", "trial_idx"],
             how="left",
         )
@@ -1437,11 +1428,11 @@ def _(
 def _(mo, plot_df_all):
     def random_session():
         return (
-            plot_df_all[["subject", "session"]]
-            .dropna()
-            .drop_duplicates()
-            .sample(1)
-            .iloc[0]
+            plot_df_all
+            .select(["subject", "session"])
+            .unique()
+            .sample(n=1)
+            .row(0, named=True)
         )
     ui_behavior_random_session = mo.ui.run_button(label="Pick random session")
     return random_session, ui_behavior_random_session
@@ -1458,7 +1449,6 @@ def _(df_all, mo, pl, plot_df_all, random_session, ui_behavior_random_session):
         session_value = (
             plot_df_all.filter(
                 pl.col("subject") == subject_value,
-                "session"
             )
             ["session"][0]
         )

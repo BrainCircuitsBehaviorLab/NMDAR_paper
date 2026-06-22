@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -58,7 +58,7 @@ def _():
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     paths = get_runtime_paths()
-    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    # plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
     sns.set_style("ticks")
     sns.set_context("notebook")
 
@@ -71,14 +71,14 @@ def _():
     }
     TASK_OPTIONS = ["2AFC_DRUG", "2ADC_DRUG", "MCDR"]
     DEFAULT_TASK_NAME = "2ADC_DRUG"
-    plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
+    # plt.style.use(Path(__file__).resolve().parents[1] / "styles" / "paper.mplstyle")
     return (
         CONDITION_PALETTE,
         DEFAULT_TASK_NAME,
         Line2D,
         TASK_OPTIONS,
-        add_choice_lag_summary_regressor,
         adapter_behavioral_column,
+        add_choice_lag_summary_regressor,
         attach_signed_delay_columns,
         build_emission_weights_df,
         build_trial_df,
@@ -278,7 +278,7 @@ def _(
             for path in (_fit_root / alias).glob(f"*_{_suffix}")
         }
     )
-    mo.stop(not _subjects, mo.md("No array files found for the selected aliases."))
+    # mo.stop(not _subjects, mo.md("No array files found for the selected aliases."))
 
     rest_adapter, rest_arrays, rest_names, rest_views = load_fit_bundle(
         task_name=TASK_NAME,
@@ -301,7 +301,8 @@ def _(
         local_root=_fit_root,
     )
     common_subjects = sorted(set(rest_views) & set(drug_views))
-    mo.stop(not common_subjects, mo.md("The selected fits have no subjects in common."))
+    # mo.stop(not common_subjects, mo.md("The selected fits have no subjects in common."))
+    drug_arrays
     return common_subjects, drug_views, model_kind, rest_views
 
 

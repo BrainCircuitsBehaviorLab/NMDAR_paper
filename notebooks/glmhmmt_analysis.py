@@ -179,7 +179,10 @@ def _():
     paths = get_runtime_paths()
     from src.utils import fig_size
 
+    from statannotations.Annotator import Annotator
+
     return (
+        Annotator,
         CoefficientEditorWidget,
         ModelCfg,
         ModelManagerWidget,
@@ -343,6 +346,12 @@ def _(current_hash, mo, save_plot, ui_model_manager):
 
 
 @app.cell
+def _(trial_df):
+    trial_df
+    return
+
+
+@app.cell
 def _(
     baseline_class_idx,
     current_hash,
@@ -502,7 +511,7 @@ def _(adapter, build_trial_and_weights_df, df_all, mo, views):
         min_session_length=2,
     )
     mo.stop(trial_df.height == 0, mo.md("No subjects with matching data lengths."))
-    return (trial_df,)
+    return trial_df, weights_df
 
 
 @app.cell(hide_code=True)
@@ -573,7 +582,8 @@ def _(
         "filtered_reward": r"filtered reward",
         "filtered_stim_side": r"filtered stim side",
         "drug_code" : "NMDAr hypofunction" ,
-        "Drug" : "NMDAr hypofunction" 
+        # "Drug" : "NMDAr hypofunction" 
+        "Drug" : "drug"
 
     }
     feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
@@ -892,6 +902,143 @@ def _(
         ],
         align="center",
     )
+    return
+
+
+@app.cell
+def _(weights_df):
+    # feature_labels = {
+    #     "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
+    #     "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",
+    #     "biasparam": r"$\mathrm{Bias}_{\mathrm{param}}$",
+    #     "at_choice_param": r"$\mathrm{A}_t$",
+    #     "choice_lag_param": r"$\mathrm{A}$",
+    #     "choice_lag_param_2": r"$\mathrm{A}$",
+    #     "prev_choice": r"$choice_{t-1}$",
+    #     "stim_x_delay_param":  r"$\mathrm{Stim}:\mathrm{Delay}_{\mathrm{param}}$"
+    # }
+
+    # feature_labeler = lambda feature: feature_labels.get(str(feature), str(feature))
+
+    features = weights_df["feature"].unique()
+    preferred_feature_order = []
+    for _feature_group in (
+        ["bias_param", "biasparam", "bias"],
+        ["stim_param", "stim", "stim_x_delay_param"],
+        ["at_choice_param", "choice_lag_param", "at_choice", "prev_choice"],
+    ):
+        preferred_feature_order.extend(
+            _feature for _feature in _feature_group if _feature in features and _feature not in preferred_feature_order
+        )
+    plot_feature_order = preferred_feature_order + [_feature for _feature in features if _feature not in preferred_feature_order]
+
+    state_order = ["Engaged", "Disengaged"]
+    state_palette = {"Engaged": "tab:green", "Disengaged": "tab:gray"}
+    return features, plot_feature_order, state_order, state_palette
+
+
+@app.cell
+def _():
+    BOXPLOT_STYLE = dict(
+        fill=False,
+        boxprops={"color": "0.5"},
+        whiskerprops={"color": "0.5"},
+        medianprops={"linewidth": 2},
+        showfliers=False,
+        showcaps=False,
+    )
+    return (BOXPLOT_STYLE,)
+
+
+@app.cell
+def _(mo, save_plot):
+    def panel(title, fig=None, stem=None, description=None):
+        content = [mo.md(f"#### {title}")]
+
+        if fig is not None:
+            content.append(fig)
+            if stem is not None:
+                content.append(save_plot(fig, description or title.lower(), stem=stem))
+
+        return mo.vstack(content, align="center")
+
+    return (panel,)
+
+
+@app.cell
+def _(
+    Annotator,
+    BOXPLOT_STYLE,
+    feature_labeler,
+    features,
+    fig_size,
+    mo,
+    panel,
+    plot_feature_order,
+    plt,
+    selected,
+    sns,
+    state_order,
+    state_palette,
+    weights_df,
+):
+    mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
+    emissions_fig, emissions_ax = plt.subplots(figsize=fig_size(1, 2))
+
+    sns.boxplot(
+        data=weights_df,
+        ax=emissions_ax,
+        x="feature",
+        y="weight",
+        hue="state_label",
+        order=plot_feature_order,
+        hue_order=state_order,
+        palette=state_palette,
+        **BOXPLOT_STYLE,
+    )
+    emissions_ax.axhline(0, linestyle="--", color="0.5", zorder=0)
+
+
+    # We take pairs for the annotation of the significance
+    paired = weights_df.pivot(
+        values="weight",
+        index=["subject", "feature"],
+        columns="state_label",
+        aggregate_function="first",
+    )
+
+    for row in paired.iter_rows(named=True):
+        x = plot_feature_order.index(row["feature"])
+        emissions_ax.plot(
+            [x - 0.2, x + 0.2],
+            [row[state_order[0]], row[state_order[1]]],
+            color="0.75",
+            linewidth = 0.5,
+            zorder=0,
+        )
+
+    _pairs = [((f, state_order[0]), (f, state_order[1])) for f in features]
+    Annotator(
+        emissions_ax,
+        _pairs,
+        data=weights_df.to_pandas(),
+        x="feature",
+        y="weight",
+        hue="state_label",
+        order=plot_feature_order,
+        hue_order=state_order,
+    ).configure(test="t-test_paired", text_format="star", line_height=0, verbose=False).apply_and_annotate()
+
+
+    emissions_ax.legend(frameon=False)
+    emissions_ax.set_xticklabels([feature_labeler(f) for f in plot_feature_order])
+
+    panel(
+        "Emission weights",
+        emissions_ax.figure,
+        "emissions",
+        "emissions boxplot",
+    ),
     return
 
 
@@ -3159,86 +3306,243 @@ def _(mo):
 
 
 @app.cell
-def _(K, df_all, mo, model_cfg, np, paths, pl, plt, save_plot, sns):
-    _sweep_path = paths.RESULTS / "fits" / "tau_sweep" / f"glmhmmt_K{K}" / "tau_sweep_summary.parquet"
-    mo.stop(
-        not _sweep_path.exists(),
-        mo.md(
-            f"**τ sweep results not found.** Run the sweep first:\n```\n"
-            f"uv run glmhmmt-fit-tau-sweep --model glmhmmt --K {K}\n```"
+def _(adapter, df_all):
+    from src.process.common import adapter_behavioral_column
+    session_col = adapter_behavioral_column(adapter, df_all, "session", "session", "Session")
+    trial_col = adapter_behavioral_column(adapter, df_all, "trial_idx", "trial_idx", "trial", "Trial")
+    return session_col, trial_col
+
+
+@app.cell
+def _(df_all, pl, session_col, trial_col, trial_df):
+    licks_df = (
+        trial_df
+        .join(
+            df_all.select(
+                "subject",
+                pl.col(session_col).alias("session"),
+                pl.col(trial_col).alias("trial_idx"),
+                "nLicks",
+            ),
+            on=["subject", "session", "trial_idx"],
+            how="left",
+        )
+        .with_columns(pl.col("nLicks").cast(pl.Float64, strict=False))
+        .drop_nulls(["nLicks", "state_label"])
+        .group_by(["subject", "state_label"])
+        .agg(pl.median("nLicks").alias("nLicks"))
+        .to_pandas()
+    )
+    return (licks_df,)
+
+
+@app.cell
+def _(
+    Annotator,
+    adapter,
+    build_state_accuracy_payload,
+    build_state_posterior_count_payload,
+    fig_size,
+    licks_df,
+    mo,
+    model_plots,
+    panel,
+    plt,
+    selected,
+    sns,
+    trial_df,
+):
+    mo.stop(not selected, mo.md("No fitted subjects available."))
+
+    fig_acc,ax_acc  = plt.subplots(figsize=fig_size(3, 1))
+    model_plots.state_accuracy(
+        build_state_accuracy_payload(
+            trial_df,
+            performance_col="correct_bool",
+            chance_level=1.0 / adapter.num_classes,
         ),
+        ax=ax_acc,
     )
-    _df_sweep = pl.read_parquet(_sweep_path)
-    _subjects = [s for s in model_cfg.subjects if s in _df_sweep["subject"].unique().to_list()]
-    mo.stop(not _subjects, mo.md("No sweep data for selected subjects."))
+    ax_acc.set_title("")
 
-    _fig_sweep, _axes_sw = plt.subplots(1, 2, figsize=(12, 4))
-    _ax_bic, _ax_ll = _axes_sw
-    _palette = sns.color_palette("tab10", n_colors=len(_subjects))
-    _n_trials = df_all.group_by("subject").agg(pl.len().alias("n_trials"))
-    for _i, _subj in enumerate(_subjects):
-        _d = _df_sweep.filter((pl.col("subject") == _subj) & (pl.col("K") == K)).sort("tau")
-        _tau = _d["tau"].to_numpy()
-        _bic = _d["bic"].to_numpy()
-        _ll = _d["ll_per_trial"].to_numpy()
-        _color = _palette[_i]
-        _ax_bic.plot(_tau, _bic, "-o", ms=3, color=_color, label=_subj)
-        _ax_ll.plot(_tau, _ll, "-o", ms=3, color=_color, label=_subj)
-        _best_idx = int(np.argmin(_bic))
-        _ax_bic.axvline(_tau[_best_idx], color=_color, lw=0.8, linestyle="--", alpha=0.6)
-    for _ax, _ylabel, _title in [
-        (_ax_bic, "BIC", "BIC vs τ  (lower is better)"),
-        (_ax_ll, "LL / trial", "Log-likelihood per trial vs τ"),
-    ]:
-        _ax.set_xlabel("τ (action-trace half-life)")
-        _ax.set_ylabel(_ylabel)
-        _ax.set_title(_title)
-        _ax.legend(fontsize=8, frameon=False)
-        sns.despine(ax=_ax)
-    _fig_sweep.tight_layout()
+    fig_post, ax_post = plt.subplots(figsize=fig_size(3, 1))
+    model_plots.state_posterior_count_kde(
+        build_state_posterior_count_payload(trial_df),
+        ax=ax_post,
+        figsize=fig_size(3, 1),
+    )
+    ax_post.spines["right"].set_visible(True)
+    ax_post.set_title("")
 
-    _best = (
-        _df_sweep.filter(pl.col("subject").is_in(_subjects) & (pl.col("K") == K))
-        .sort("bic")
-        .group_by(["subject", "K"])
-        .first()
-        .select(["subject", "K", "tau", "bic", "ll_per_trial", "acc"])
-        .sort(["subject", "K"])
+    fig_nlicks, ax_nlicks = plt.subplots(figsize=fig_size(3, 1))
+    sns.boxplot(
+        data=licks_df,
+        x="state_label",
+        y="nLicks",
+        hue="state_label",
+        order=["Engaged", "Disengaged"],
+        palette={"Engaged": "tab:green", "Disengaged": "tab:gray"},
+        fill=False,
+        showcaps=False,
+        showfliers=False,
+        medianprops={"linewidth": 2},
+        boxprops={"color": "tab:gray"},
+        whiskerprops={"color": "tab:gray"},
+        ax=ax_nlicks,
     )
-    _best_all = (
-        _df_sweep.filter(pl.col("subject").is_in(_subjects) & (pl.col("K") == K))
-        .join(_n_trials, on="subject", how="left")
-        .group_by("tau")
-        .agg(
-            [
-                (pl.col("bic") * pl.col("n_trials")).sum().alias("bic_wsum"),
-                (pl.col("ll_per_trial") * pl.col("n_trials")).sum().alias("llpt_wsum"),
-                (pl.col("acc") * pl.col("n_trials")).sum().alias("acc_wsum"),
-                pl.col("n_trials").sum().alias("n_total"),
-                pl.n_unique("subject").alias("n_subjects"),
-            ]
-        )
-        .with_columns(
-            [
-                (pl.col("bic_wsum") / pl.col("n_total")).alias("bic_mean_w"),
-                (pl.col("llpt_wsum") / pl.col("n_total")).alias("ll_per_trial_mean_w"),
-                (pl.col("acc_wsum") / pl.col("n_total")).alias("acc_mean_w"),
-            ]
-        )
-        .select(["tau", "bic_mean_w", "ll_per_trial_mean_w", "acc_mean_w", "n_subjects", "n_total"])
-        .sort("bic_mean_w")
+
+    annotator = Annotator(
+        ax_nlicks,
+        [("Engaged", "Disengaged")],
+        data=licks_df,
+        x="state_label",
+        y="nLicks",
+        order=["Engaged", "Disengaged"],
     )
-    mo.vstack(
+    annotator.configure(test="t-test_paired", text_format="star", loc="outside", verbose=0, line_height=0)
+    annotator.apply_and_annotate()
+
+    ax_nlicks.set(xlabel="State", ylabel="Number of licks in correct trials")
+    sns.despine(ax=ax_nlicks)
+    fig_nlicks.tight_layout()
+
+    mo.hstack(
         [
-            mo.md(f"### τ sweep results — glmhmmt K={K}"),
-            _fig_sweep,
-            save_plot(_fig_sweep, "tau sweep results", stem=f"tau_sweep_glmhmmt_k{K}"),
-            mo.md("**Best τ per subject (min BIC):**"),
-            mo.plain_text(_best.to_pandas().to_string(index=False)),
-            mo.ui.dataframe(_best_all),
+            panel("Accuracy by state", fig_acc, "state_accuracy", "accuracy by state"),
+            panel("Number of licks by state", fig_nlicks, "state_nlicks", "number of licks by state"),
+            panel("Posterior / trial-count KDE", fig_post, "state_posterior_count_kde", "posterior trial-count kde"),
         ],
         align="center",
     )
+    return
+
+
+@app.cell
+def _(np, pd):
+    # Convert state labels to a binary target:
+    # Engaged = True, everything else = False
+    def engaged_mask(labels):
+        return pd.Series(labels).astype(str).str.lower().str.startswith("engaged").to_numpy()
+
+
+    # Compute ROC curve and AUC from binary targets and continuous scores
+    def roc_curve(target, score):
+        target, score = np.asarray(target, bool), np.asarray(score, float)
+
+        # Remove invalid scores
+        keep = np.isfinite(score)
+        target, score = target[keep], score[keep]
+
+        # Sort by decreasing score
+        order = np.argsort(-score, kind="mergesort")
+        target = target[order]
+
+        # Indices where score thresholds change
+        thresholds = np.r_[np.where(np.diff(score[order]))[0], len(target) - 1]
+
+        # Compute cumulative TP and FP counts
+        tp = np.cumsum(target)[thresholds]
+        fp = (thresholds + 1) - tp
+
+        # Convert to rates
+        tpr = np.r_[0, tp / target.sum()]
+        fpr = np.r_[0, fp / (~target).sum()]
+
+        # Area under the ROC curve
+        auc = np.trapezoid(tpr, fpr)
+
+        return fpr, tpr, auc
+
+    return engaged_mask, roc_curve
+
+
+@app.cell
+def _(
+    engaged_mask,
+    fig_size,
+    panel,
+    pd,
+    pl,
+    plot_df_all,
+    plt,
+    roc_curve,
+    trial_df,
+):
+    # Metrics to evaluate:
+    # (column, panel title, legend title, score direction)
+    metrics = [
+        ("nLicks", "Licking", "Higher lick count", 1),
+        ("RT", "RT", "Faster RT", -1),  # negate RT so faster responses predict engagement
+    ]
+
+
+    # Create one ROC panel per behavioral metric
+    fig_roc, axes_roc = plt.subplots(
+        1,
+        len(metrics),
+        figsize=fig_size(1, len(metrics)),
+        squeeze=False,
+        layout="constrained",
+    )
+
+
+    # Attach behavioral variables to trial-level state assignments
+    behavior_df = (
+        trial_df.join(
+            plot_df_all.select(
+                "subject",
+                pl.col('session').alias("session"),
+                pl.col('trial_idx').alias("trial_idx"),
+                "nLicks",
+                "RT",
+            ),
+            on=["subject", "session", "trial_idx"],
+            how="left",
+        )
+        .select("subject", "session","state_label", "nLicks", "RT")
+        .to_pandas()
+    )
+
+
+    # Compute and plot ROC curve for each behavioral metric
+    for ax_roc, (metric, title, direction, sign) in zip(axes_roc.ravel(), metrics):
+        # Keep only trials with valid values for this metric
+        df_roc = behavior_df[["state_label", metric]].dropna().copy()
+
+        target = engaged_mask(df_roc["state_label"])
+        score = sign * pd.to_numeric(df_roc[metric], errors="coerce").to_numpy(float)
+
+        # Compute ROC and AUC
+        fpr, tpr, auc = roc_curve(target, score)
+
+        ax_roc.plot(fpr, tpr, lw=2, label=f"AUC = {auc:.3f}")
+        ax_roc.plot([0, 1], [0, 1], ls="--", color="0.5")
+        ax_roc.set(
+            title=title,
+            xlabel="False positive rate",
+            ylabel="True positive rate",
+            xlim=(0, 1),
+            ylim=(0, 1),
+        )
+
+        ax_roc.legend(
+            title=direction,
+            frameon=False,
+            loc="lower right",
+        )
+
+
+    panel(
+        "Behavioral ROC by state",
+        fig_roc,
+        "state_behavioral_roc",
+        "behavioral ROC by state",
+    )
+    return
+
+
+@app.cell
+def _():
     return
 
 
