@@ -224,6 +224,8 @@ results/fits/**/*.npz
 !results/fits/**/one hot/**
 !results/fits/**/one hot2/**
 !results/fits/**/param2_dif_pure/**
+!results/fits/**/param/**
+!results/fits/**/param2/**
 
 
 data/raw/*.csv
