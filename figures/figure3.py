@@ -127,7 +127,8 @@ def _(mo):
 def _():
     mount_figure = False
     format = "pdf"
-    return format, mount_figure
+    model_type = "glmhmm"
+    return format, model_type, mount_figure
 
 
 @app.cell
@@ -627,7 +628,11 @@ def _(
             _psychometric_source_df = _psychometric_source_df.clone().with_columns(
                 (
                     pl.col("delays").cast(pl.Float64)
-                    * pl.col("stimulus").cast(pl.Float64)
+                    * pl.when(pl.col("stimulus").cast(pl.Float64) == 0)
+                    .then(pl.lit(-1.0))
+                    .when(pl.col("stimulus").cast(pl.Float64) == 1)
+                    .then(pl.lit(1.0))
+                    .otherwise(pl.col("stimulus").cast(pl.Float64).sign())
                 ).round(1).alias("signed_delay")
             )
             _x_col = "signed_delay"
@@ -678,6 +683,7 @@ def _(
     accuracy_dfs,
     emission_plot_dfs,
     metric_dfs,
+    model_type,
     occupancy_dfs,
     psychometric_dfs,
     state_order,
@@ -689,15 +695,20 @@ def _(
     def ordered_values(df, column):
         return list(dict.fromkeys(df[column]))
 
+
     def ordered_states(df):
         values = set(df["state_label"])
         ordered = [state for state in state_order if state in values]
         ordered += [state for state in dict.fromkeys(df["state_label"]) if state not in ordered]
         return ordered
 
+
     emission_orders = {task: ordered_values(emission_plot_dfs[task], "feature_label") for task in task_names}
     emission_hue_orders = {task: ordered_states(emission_plot_dfs[task]) for task in task_names}
-    transition_orders = {task: ordered_values(transition_plot_dfs[task], "feature_label") for task in task_names}
+
+    if model_type == "glmhmmt":  # Check if it is a model with transitions
+        transition_orders = {task: ordered_values(transition_plot_dfs[task], "feature_label") for task in task_names}
+
     psychometric_orders = {
         task: (
             list(psychometric_dfs[task]["x_label"].cat.categories)
@@ -706,14 +717,8 @@ def _(
         )
         for task in task_names
     }
-    accuracy_plot_dfs = {
-        task: accuracy_dfs[task].assign(task_label=task_labels.get(task, task))
-        for task in task_names
-    }
-    occupancy_plot_dfs = {
-        task: occupancy_dfs[task].assign(task_label=task_labels.get(task, task))
-        for task in task_names
-    }
+    accuracy_plot_dfs = {task: accuracy_dfs[task].assign(task_label=task_labels.get(task, task)) for task in task_names}
+    occupancy_plot_dfs = {task: occupancy_dfs[task].assign(task_label=task_labels.get(task, task)) for task in task_names}
     occupancy_annotation_dfs = {
         task: (
             occupancy_plot_dfs[task]
@@ -1284,6 +1289,8 @@ def _(
     boxplot_STYLE,
     fig_size,
     format,
+    mo,
+    model_type,
     mount_figure,
     path_panels,
     plt,
@@ -1292,6 +1299,7 @@ def _(
     transition_orders,
     transition_plot_dfs,
 ):
+    mo.stop(model_type != "glmhmmt", mo.md("Select a model with transitions to see this plot"))
     plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
     transition_weights_2ADC = plt.gca() if not mount_figure else axd.get("transition_weights_2ADC", plt.gca())
     transition_weights_2ADC.clear()
@@ -1331,6 +1339,8 @@ def _(
     boxplot_STYLE,
     fig_size,
     format,
+    mo,
+    model_type,
     mount_figure,
     path_panels,
     plt,
@@ -1339,6 +1349,7 @@ def _(
     transition_orders,
     transition_plot_dfs,
 ):
+    mo.stop(model_type != "glmhmmt", mo.md("Select a model with transitions to see this plot"))
     plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
     transition_weights_2AFC = plt.gca() if not mount_figure else axd.get("transition_weights_2AFC", plt.gca())
     transition_weights_2AFC.clear()
@@ -1378,6 +1389,8 @@ def _(
     boxplot_STYLE,
     fig_size,
     format,
+    mo,
+    model_type,
     mount_figure,
     path_panels,
     plt,
@@ -1386,6 +1399,7 @@ def _(
     transition_orders,
     transition_plot_dfs,
 ):
+    mo.stop(model_type != "glmhmmt", mo.md("Select a model with transitions to see this plot"))
     plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
     transition_weights_3CDR = plt.gca() if not mount_figure else axd.get("transition_weights_3CDR", plt.gca())
     transition_weights_3CDR.clear()
