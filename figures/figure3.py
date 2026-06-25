@@ -126,7 +126,7 @@ def _(mo):
 @app.cell
 def _():
     mount_figure = False
-    format = "pdf"
+    format = ""
     return format, mount_figure
 
 

@@ -35,5 +35,16 @@ exclude-dependencies = ["tensorflow-probability"]
 
 [dependency-groups]
 dev = [
+    "mcp>=1",
+    "openai>=2.43.0",
+    "pydantic>=2",
+    "pytest>=9.1.1",
+    "python-lsp-ruff>=2.3.1",
+    "python-lsp-server>=1.14.0",
     "ruff>=0.15.12",
+    "websockets>=16.0",
 ]
+
+
+[tool.marimo.runtime]
+watcher_on_save = "autorun"
