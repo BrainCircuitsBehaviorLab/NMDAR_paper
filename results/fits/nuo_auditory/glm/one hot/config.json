@@ -344,5 +344,8 @@
     "restart_noise_scale": 0.05,
     "seed": 0,
     "baseline_class_idx": 0,
-    "model_id": "one hot"
+    "emission_model": "standard",
+    "model_id": "one hot",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5
 }

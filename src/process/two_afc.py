@@ -739,6 +739,17 @@ def _build_stim_param(part: pd.DataFrame, stim_abs_levels: list[int]) -> np.ndar
     return _build_stim_param_from_spec(part, stim_abs_levels, _STIM_PARAM_SPEC)
 
 
+def _safe_build_stim_param_from_spec(
+    part: pd.DataFrame,
+    stim_abs_levels: list[int],
+    spec: FittedWeightRegressorSpec,
+) -> np.ndarray:
+    try:
+        return _build_stim_param_from_spec(part, stim_abs_levels, spec)
+    except (FileNotFoundError, ValueError):
+        return np.zeros(len(part), dtype=np.float32)
+
+
 def _weighted_sum_regressor_zero_fill(
     part: pd.DataFrame,
     spec: FittedWeightRegressorSpec,
@@ -993,6 +1004,7 @@ class TwoAFCAdapter(TaskAdapter):
         tau: float = 50.0,
         include_stim_strength: bool = False,
         param_specs: dict[str, FittedWeightRegressorSpec] | None = None,
+        strict_param_cols: set[str] | None = None,
     ) -> pl.DataFrame:
         """Return the Alexis 2AFC feature dataframe owned by this adapter."""
         from glmhmmt.cli.alexis_functions import get_action_trace, make_frames_dm
@@ -1003,6 +1015,7 @@ class TwoAFCAdapter(TaskAdapter):
             return pl.from_pandas(df_pd)
 
         param_specs = param_specs or _standard_param_specs_for_request(self, set())
+        strict_param_cols = strict_param_cols or set()
         subject_half_life = self.choice_half_life(
             str(df_pd["subject"].iloc[0]) if "subject" in df_pd.columns and len(df_pd) else None
         )
@@ -1140,7 +1153,14 @@ class TwoAFCAdapter(TaskAdapter):
                 [part, *(frame for _, frame in feature_frames)],
                 axis=1,
             )
-            part[_STIM_PARAM_COL] = _build_stim_param_from_spec(
+            # Raw one-hot fits create the weights used by stim_param, so only
+            # require source weights when stim_param itself is requested.
+            stim_param_builder = (
+                _build_stim_param_from_spec
+                if _STIM_PARAM_COL in strict_param_cols
+                else _safe_build_stim_param_from_spec
+            )
+            part[_STIM_PARAM_COL] = stim_param_builder(
                 part,
                 stim_abs_levels,
                 param_specs[_STIM_PARAM_COL],
@@ -1274,6 +1294,7 @@ class TwoAFCAdapter(TaskAdapter):
             df_sub,
             tau=tau,
             param_specs=_standard_param_specs_for_request(self, set(requested)),
+            strict_param_cols=set(requested),
         )
     
     def _resolved_emission_cols(
@@ -1335,6 +1356,7 @@ class TwoAFCAdapter(TaskAdapter):
             tau=tau,
             include_stim_strength=include_stim_strength,
             param_specs=param_specs,
+            strict_param_cols=requested_set,
         )
         return self.build_design_matrices(
             feature_df,

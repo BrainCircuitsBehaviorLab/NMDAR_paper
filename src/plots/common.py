@@ -459,6 +459,13 @@ def build_session_repetition_data(
     data["stimulus_repeat_window_fraction"] = (
         data["stimulus_repeat_window_count"] / data["repeat_window_n"]
     )
+    if "correct" in data.columns:
+        correct = data["correct"].astype(float)
+        data["accuracy_window_n"] = correct.rolling(window, min_periods=1).count()
+        data["accuracy_window_count"] = correct.rolling(window, min_periods=1).sum()
+        data["accuracy_window_fraction"] = (
+            data["accuracy_window_count"] / data["accuracy_window_n"]
+        )
     return data
 
 
@@ -583,8 +590,16 @@ def plot_session_repetition_running_count(
         linewidth=1.5,
         label="Stimulus",
     )
+    if "accuracy_window_fraction" in data.columns:
+        ax.plot(
+            data["trial_x"],
+            data["accuracy_window_fraction"],
+            color="black",
+            linewidth=1.5,
+            label="Accuracy",
+        )
     ax.set_xlabel("Trial number (within session)")
-    ax.set_ylabel("Repetition fraction")
+    ax.set_ylabel("Running fraction")
     ax.set_ylim(0, 1)
     ax.set_xlim(-0.5, len(data) - 0.5)
     ax.legend(frameon=False, loc="upper left")

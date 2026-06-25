@@ -72,7 +72,7 @@ def _():
     # Set boxplot_fixed_panel to False to let matplotlib choose panel bounds.
     boxplot_tick_rotation = 0
     boxplot_fixed_panel = True
-    from src.utils import fig_size
+    from src.plots.common import fig_size
     boxplot_figsize = fig_size(2,1)
     boxplot_panel_bounds = (0.16, 0.22, 0.80, 0.70)
 
@@ -177,7 +177,6 @@ def _():
     sns.set_style("ticks")
     sns.set_context("paper")
     paths = get_runtime_paths()
-    from src.utils import fig_size
 
     from statannotations.Annotator import Annotator
 

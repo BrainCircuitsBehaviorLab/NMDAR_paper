@@ -440,7 +440,7 @@ def _infer_delay_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
 
 @lru_cache(maxsize=1)
 def _all_delay_levels() -> tuple[float, ...]:
-    dataset_path = get_data_dir() / "tiffany.parquet"
+    dataset_path = get_data_dir() / "tiffany_complete.parquet"
     df = pl.read_parquet(dataset_path)
     if "drug" in df.columns:
         df = df.filter(pl.col("drug") == "Rest")
@@ -666,7 +666,7 @@ def _infer_bias_hot_cols_from_df(df: pl.DataFrame | pd.DataFrame) -> list[str]:
 
 @lru_cache(maxsize=1)
 def _max_subject_sessions() -> int:
-    dataset_path = get_data_dir() / "tiffany.parquet"
+    dataset_path = get_data_dir() / "tiffany_complete.parquet"
     df = pl.read_parquet(dataset_path)
     if "drug" in df.columns:
         df = df.filter(pl.col("drug") == "Rest")
@@ -710,6 +710,18 @@ def _all_prev_difficulty_lag_hot_names() -> list[str]:
 
 def _choice_to_binary(series: pd.Series) -> np.ndarray:
     return series.astype(np.int32).to_numpy()
+
+
+def _stimulus_to_signed_side(series: pd.Series) -> pd.Series:
+    vals = pd.to_numeric(series, errors="coerce")
+    unique = set(vals.dropna().unique().tolist())
+    if unique.issubset({0, 1, 0.0, 1.0}):
+        return pd.Series(
+            np.where(vals == 0, -1.0, np.where(vals == 1, 1.0, np.nan)),
+            index=series.index,
+            dtype=np.float32,
+        )
+    return pd.Series(np.sign(vals), index=series.index, dtype=np.float32)
 
 
 def _signed_to_binary(series: pd.Series) -> pd.Series:
@@ -1021,7 +1033,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
     task_label: str = "2ADC"
     num_classes: int = 2
     baseline_class_idx: int = 1
-    data_file: str = "tiffany.parquet"
+    data_file: str = "tiffany_complete.parquet"
     sort_col = ["session", "trial"]
     session_col: str = "session"
     prediction_col: str = PRED_COL
@@ -1062,7 +1074,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
     state_split_rule: str = "+"
 
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
-        return df.filter(pl.col("drug") == "Rest")
+        return df #.filter((pl.col("drug") == "Rest" )| (pl.col("drug").is_null()))
 
     def choice_half_life(self, subject: str | None) -> float | None:
         return load_subject_choice_half_life(
@@ -1117,7 +1129,7 @@ class TwoAFCDelayAdapter(TaskAdapter):
         for _, df_session in df_pd.groupby("session", sort=False):
             part = df_session.copy().reset_index(drop=True)
             part["bias"] = 1.0
-            part["stim_signed"] = pd.to_numeric(part["stim"], errors="coerce").astype(np.float32)
+            part["stim_signed"] = _stimulus_to_signed_side(part["stim"])
             part["stim"] = part["stim_signed"].astype(np.float32)
             part["choice_signed"] = _signed_choice(part["choices"]).astype(np.float32)
             part["choice_bin"] = _signed_to_binary(part["choices"]).astype(np.float32)
@@ -1248,12 +1260,12 @@ class TwoAFCDelayAdapter(TaskAdapter):
             )
             part["filtered_bad_reward"] = _ewma_time_series(current_reward)
 
-            part["after_correct"] = part["after_correct"].fillna(0).astype(np.float32)
+            # part["after_correct"] = part["after_correct"].fillna(0).astype(np.float32)
             part["repeat"] = part["repeat"].fillna(0).astype(np.float32)
-            part["repeat_choice_side"] = part["repeat_choice_side"].fillna(0).astype(np.float32)
-            part["WM"] = part["WM"].fillna(0).astype(np.float32)
-            part["RL"] = part["RL"].fillna(0).astype(np.float32)
-            part["ILD"] = part["stim"].astype(np.float32)
+            # part["repeat_choice_side"] = part["repeat_choice_side"].fillna(0).astype(np.float32)
+            # part["WM"] = part["WM"].fillna(0).astype(np.float32)
+            # part["RL"] = part["RL"].fillna(0).astype(np.float32)
+            # part["ILD"] = part["stim"].astype(np.float32)
             feature_frames = [
                 ("bias_hot", bias_hot),
                 ("delay_hot", pd.DataFrame(delay_hot_cols, index=part.index)),

@@ -84,7 +84,7 @@ def _():
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
 
     paths = get_runtime_paths()
-    from src.utils import fig_size
+    from src.plots.common import fig_size
 
     return (
         CoefficientEditorWidget,
@@ -141,6 +141,7 @@ def _(get_adapter, model_cfg):
     if adapter.condition_filter_options():
         df_all = adapter.filter_condition_df(df_all, model_cfg.condition_filter)
     plots = adapter.get_plots()
+    df_all
     return adapter, df_all, plots, task_name
 
 

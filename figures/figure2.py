@@ -166,7 +166,7 @@ def _(mo):
 
 @app.cell
 def _(Path, plt, sns):
-    sns.set_theme(style='ticks', context='notebook')
+    sns.set_theme(style='ticks', context='paper')
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = 'none'
     plt.rcParams['savefig.bbox'] = 'standard'
@@ -1079,8 +1079,16 @@ def _(fig_size, plt, session_repetition_data):
         label="Stimulus",
         data=session_repetition_data
     )
+    single_session.plot(
+        "trial_x",
+        "accuracy_window_fraction",
+        color="black",
+        linewidth=1.5,
+        label="Accuracy",
+        data=session_repetition_data
+    )
     single_session.set_xlabel("Trial")
-    single_session.set_ylabel("Rep. fraction")
+    single_session.set_ylabel("Running fraction")
     single_session.set_ylim(0, 1)
     single_session.set_xlim(-0.5, len(session_repetition_data) - 0.5)
     single_session.legend(frameon=False, loc="lower right")
@@ -1159,9 +1167,17 @@ def _(
         label="Stimulus",
         data=session_repetition_data_2ADC
     )
+    single_session_2ADC.plot(
+        "trial_x",
+        "accuracy_window_fraction",
+        color="black",
+        linewidth=1.5,
+        label="Accuracy",
+        data=session_repetition_data_2ADC
+    )
     # single_session_2ADC.set_title("2ADC")
     single_session_2ADC.set_xlabel("Trial")
-    single_session_2ADC.set_ylabel("Rep. fraction")
+    single_session_2ADC.set_ylabel("Running fraction")
     single_session_2ADC.set_ylim(0, 1)
     single_session_2ADC.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
     single_session_2ADC.legend(frameon=False, loc="upper right")
@@ -1223,8 +1239,16 @@ def _(
         data=session_repetition_data_2AFC
     )
     single_session_2AFC.set_title("")
+    single_session_2AFC.plot(
+        "trial_x",
+        "accuracy_window_fraction",
+        color="black",
+        linewidth=1.5,
+        label="Accuracy",
+        data=session_repetition_data_2AFC
+    )
     single_session_2AFC.set_xlabel("Trial")
-    single_session_2AFC.set_ylabel("Rep. fraction")
+    single_session_2AFC.set_ylabel("Running fraction")
     single_session_2AFC.set_ylim(0, 1)
     single_session_2AFC.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
     single_session_2AFC.legend(frameon=False, loc="upper right")

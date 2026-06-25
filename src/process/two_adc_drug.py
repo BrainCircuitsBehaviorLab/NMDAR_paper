@@ -36,7 +36,11 @@ DRUG_INTERACTION_COLS: list[str] = [
 DRUG_EMISSION_INTERACTION_COLS: list[str] = [
     f"drug_x_{source_col}" for source_col in _DRUG_EMISSION_INTERACTION_SOURCES
 ]
-EMISSION_COLS: list[str] = [*TwoAFCDelayAdapter.emission_cols, *DRUG_EMISSION_INTERACTION_COLS]
+EMISSION_COLS: list[str] = [
+    *TwoAFCDelayAdapter.emission_cols,
+    "drug_code",
+    *DRUG_EMISSION_INTERACTION_COLS,
+]
 TRANSITION_COLS: list[str] = [*TwoAFCDelayAdapter.transition_cols, "drug_code", *DRUG_INTERACTION_COLS]
 
 _BIAS_PARAM_SPEC = replace(
