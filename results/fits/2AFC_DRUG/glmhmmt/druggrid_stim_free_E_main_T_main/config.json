@@ -1,0 +1,35 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 50,
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_param",
+        "choice_lag_param",
+        "Drug"
+    ],
+    "transition_cols": [
+        "trial_index",
+        "filtered_reward",
+        "Drug"
+    ],
+    "frozen_emissions": {},
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "druggrid_stim_free_E_main_T_main",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5
+}

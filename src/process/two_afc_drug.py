@@ -42,7 +42,7 @@ ParamWeightSource = tuple[str, str]
 #   ("2AFC_DRUG", "one hot")  -> use drug-cohort GLM one-hot weights.
 #   ("2AFC", "one hot")       -> use pooled base-2AFC GLM one-hot weights.
 #   ("2AFC", "one hot2")      -> use pooled base-2AFC GLM one-hot2 weights.
-PARAM_WEIGHT_SOURCE: ParamWeightSource | str = ("2AFC_DRUG", "one hot")
+PARAM_WEIGHT_SOURCE: ParamWeightSource | str = ("2AFC", "one hot")
 
 # Optional per-param override. Keys are target param columns, values are
 # (fit_task, fit_model_id). Leave empty when all selected params should use the

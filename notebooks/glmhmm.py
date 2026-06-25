@@ -170,7 +170,7 @@ def _():
     sns.set_context("paper")
     paths = get_runtime_paths()
     from src.process.common import adapter_behavioral_column
-    from src.utils import fig_size
+    from src.plots.common import fig_size
 
     return (
         Annotator,
@@ -301,6 +301,14 @@ def _(
         model_id=f"glmhmm/{selected_model_id}",
     )
     return save_plot, selected_model_id
+
+
+@app.cell
+def _(df_all, pl):
+    df_all.group_by("subject").agg(
+        pl.col("session").n_unique().alias("n_sessions")
+    )
+    return
 
 
 @app.cell

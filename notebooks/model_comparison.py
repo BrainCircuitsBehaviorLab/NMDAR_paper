@@ -26,6 +26,7 @@ def _():
     from glmhmmt.plots_common import custom_boxplot
     from plot_saver import make_plot_saver
     from src.process.common import adapter_behavioral_column
+    from src.plots.common import fig_size
     sns.set_style("white")
     sns.set_context("paper")
     return (
@@ -35,6 +36,7 @@ def _():
         build_trial_df,
         build_views,
         custom_boxplot,
+        fig_size,
         get_adapter,
         get_task_options,
         load_fit_bundle_raw,
@@ -1140,7 +1142,7 @@ def _(
     ui_pairwise_scoring_key_a,
     ui_pairwise_scoring_key_b,
 ):
-    notes = [
+    _notes = [
         f"- Comparing A `{pairwise_kind_a}` / `{pairwise_alias_a}` / `K={pairwise_K_a}` vs B `{pairwise_kind_b}` / `{pairwise_alias_b}` / `K={pairwise_K_b}`.",
         f"- Common metric subjects: **{len(pairwise_common_subjects)} / {len(requested_subjects)}**.",
         f"- Common cached fit subjects for state-level plots: **{len(pairwise_cached_common_subjects)} / {len(requested_subjects)}**.",
@@ -1350,6 +1352,7 @@ def _(
 @app.cell
 def _(
     BOXPLOT_STYLE,
+    fig_size,
     mo,
     np,
     pairwise_alias_a,
@@ -1371,7 +1374,9 @@ def _(
         "one hot": "GLM",
         "param2": "GLM-HMM",
         "mohammadi at 2states dif" : "GLM-HMMt",
-        "mohammadi at 2states dif frozen" : "GLM-HMMt pure"
+        "mohammadi at 2states dif frozen" : "GLM-HMMt pure",
+        "2afc_bias-stimD0-choice-lag-paramE0": "Both fixed",
+        "2afc_bias-stimD0-choice-lag-param_free": "Stim fixed",
     }
 
     _pd = pairwise_metric_deltas.to_pandas()
@@ -1398,8 +1403,6 @@ def _(
         if _pval < 0.05:
             return "*"
         return "ns"
-
-    from src.utils import fig_size
 
     _fig_pair_metrics, _axd = plt.subplot_mosaic(
         [["ll", "bic"]],
@@ -1432,7 +1435,7 @@ def _(
         sns.despine(ax=_ax)
 
     mo.vstack([_fig_pair_metrics, save_plot(_fig_pair_metrics, "Metric comparisom", stem=f"metric_comparison_{pairwise_alias_a}_{pairwise_alias_b}"),])
-    return fig_size, pretty_names
+    return (pretty_names,)
 
 
 @app.cell
@@ -2349,7 +2352,6 @@ def _(
         _ax.set_ylabel("AUC")
         _ax.set_ylim(0, 1)
         sns.despine(ax=_ax)
-
         _handles, _labels = _ax.get_legend_handles_labels()
         if _handles:
             _ax.legend_.remove()
@@ -2373,15 +2375,8 @@ def _(
         ],
         align="center",
     )
+    _fig_auc
     return
-
-
-app._unparsable_cell(
-    r"""
-    *
-    """,
-    name="_"
-)
 
 
 @app.cell

@@ -1654,7 +1654,16 @@ def attach_signed_delay_columns(df_pd: pd.DataFrame) -> pd.DataFrame:
         df["_signed_delay_cat"] = pd.Series(pd.NA, index=df.index, dtype="object")
         return df
 
-    stim_sign = np.sign(pd.to_numeric(df[stim_col], errors="coerce"))
+    stim_values = pd.to_numeric(df[stim_col], errors="coerce")
+    unique_stim = set(stim_values.dropna().unique().tolist())
+    if unique_stim and unique_stim.issubset({0, 1, 0.0, 1.0}):
+        stim_sign = pd.Series(
+            np.where(stim_values == 0, -1.0, np.where(stim_values == 1, 1.0, np.nan)),
+            index=df.index,
+            dtype=float,
+        )
+    else:
+        stim_sign = np.sign(stim_values)
     delay_values = pd.to_numeric(df[delay_col], errors="coerce")
 
     signed_delay = delay_values * stim_sign
