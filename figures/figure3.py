@@ -597,6 +597,7 @@ def _(
     glmhmmt_state_switches_df,
     glmhmmt_state_trace_df,
     glmhmmt_transition_weights_df,
+    pd,
     pl,
     plot_dfs,
     views,
@@ -617,6 +618,91 @@ def _(
     change_posterior_dfs = {}
     psychometric_x_cols = {}
     psychometric_x_labels = {}
+    action_trace_psychometric_dfs = {}
+
+    def action_trace_psychometric_df(
+        trial_df,
+        *,
+        x_col,
+        x_order=None,
+        action_cols=("choice_lag_param", "choice_lag_one_hot_sum", "choice_lag_param_correct", "filtered_choice"),
+        n_bins=4,
+    ):
+        df = trial_df.to_pandas().copy() if hasattr(trial_df, "to_pandas") else pd.DataFrame(trial_df).copy()
+        empty = pd.DataFrame(
+            columns=[
+                "subject",
+                "action_bin",
+                "x_value",
+                "x_label",
+                "x_numeric",
+                "x_position",
+                "p_right",
+                "n_trials",
+            ]
+        )
+        action_col = next((col for col in action_cols if col in df.columns), None)
+        if action_col is None or not {"subject", x_col, "response"}.issubset(df.columns):
+            return empty
+
+        out = df[["subject", x_col, "response", action_col]].copy()
+        out["_action_trace"] = pd.to_numeric(out[action_col], errors="coerce")
+        out["_response_right"] = (pd.to_numeric(out["response"], errors="coerce") > 0).astype(float)
+        out = out.dropna(subset=["subject", x_col, "_response_right", "_action_trace"])
+        if out.empty or out["_action_trace"].nunique() < 2:
+            return empty
+
+        q_count = min(int(n_bins), int(out["_action_trace"].nunique()))
+        action_cut = pd.qcut(out["_action_trace"], q=q_count, duplicates="drop")
+        action_labels = [f"Q{idx + 1}" for idx in range(len(action_cut.cat.categories))]
+        out["action_bin"] = pd.Categorical(
+            action_cut.cat.rename_categories(action_labels).astype(str),
+            categories=action_labels,
+            ordered=True,
+        )
+
+        if x_order is None:
+            unique_values = list(pd.unique(out[x_col]))
+            numeric_values = pd.to_numeric(pd.Series(unique_values), errors="coerce")
+            if numeric_values.notna().all():
+                order = [
+                    value
+                    for _, value in sorted(
+                        zip(numeric_values.astype(float), unique_values, strict=False),
+                        key=lambda item: item[0],
+                    )
+                ]
+            else:
+                order = sorted(unique_values, key=lambda value: str(value))
+        else:
+            order = list(x_order)
+
+        def format_x_label(value):
+            numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+            if pd.notna(numeric):
+                return f"{float(numeric):g}"
+            return str(value)
+
+        label_order = [format_x_label(value) for value in order]
+        label_by_position = dict(enumerate(label_order))
+        out["x_value"] = pd.Categorical(out[x_col], categories=order, ordered=True)
+        out = out.dropna(subset=["x_value", "action_bin"])
+        if out.empty:
+            return empty
+
+        out["x_position"] = out["x_value"].cat.codes
+        out["x_label"] = pd.Categorical(
+            out["x_position"].map(label_by_position),
+            categories=label_order,
+            ordered=True,
+        )
+        summary = (
+            out.groupby(["subject", "action_bin", "x_value", "x_position", "x_label"], as_index=False, observed=True)
+            .agg(p_right=("_response_right", "mean"), n_trials=("_response_right", "size"))
+            .sort_values(["action_bin", "x_position", "subject"])
+        )
+        summary["x_numeric"] = pd.to_numeric(summary["x_label"].astype(str), errors="coerce")
+        return summary
 
     for _task_name in active_task_names:
         emission_plot_dfs[_task_name] = with_feature_labels(weight_dfs[_task_name].to_pandas())
@@ -652,6 +738,11 @@ def _(
             x_col=_x_col,
             x_order=delay_order if _task_name == "2AFC_delay" else None,
         )
+        action_trace_psychometric_dfs[_task_name] = action_trace_psychometric_df(
+            _psychometric_source_df,
+            x_col=_x_col,
+            x_order=delay_order if _task_name == "2AFC_delay" else None,
+        )
         accuracy_dfs[_task_name] = glmhmmt_state_accuracy_df(plot_dfs[_task_name])
         occupancy_dfs[_task_name] = glmhmmt_state_occupancy_df(plot_dfs[_task_name])
         trace_dfs[_task_name] = glmhmmt_state_trace_df(plot_dfs[_task_name])
@@ -665,6 +756,7 @@ def _(
         change_posterior_dfs[_task_name] = glmhmmt_change_triggered_posterior_df(plot_dfs[_task_name])
     return (
         accuracy_dfs,
+        action_trace_psychometric_dfs,
         change_posterior_dfs,
         dwell_dfs,
         emission_plot_dfs,
@@ -696,6 +788,22 @@ def _(
         return list(dict.fromkeys(df[column]))
 
 
+    def ordered_feature_values(df, column):
+        values = ordered_values(df, column)
+
+        def feature_priority(value):
+            label = str(value).lower()
+            if label == "bias":
+                return 0
+            if "stim" in label:
+                return 1
+            if label == "a":
+                return 2
+            return 3
+
+        return sorted(values, key=feature_priority)
+
+
     def ordered_states(df):
         values = set(df["state_label"])
         ordered = [state for state in state_order if state in values]
@@ -703,11 +811,11 @@ def _(
         return ordered
 
 
-    emission_orders = {task: ordered_values(emission_plot_dfs[task], "feature_label") for task in task_names}
+    emission_orders = {task: ordered_feature_values(emission_plot_dfs[task], "feature_label") for task in task_names}
     emission_hue_orders = {task: ordered_states(emission_plot_dfs[task]) for task in task_names}
 
     if model_type == "glmhmmt":  # Check if it is a model with transitions
-        transition_orders = {task: ordered_values(transition_plot_dfs[task], "feature_label") for task in task_names}
+        transition_orders = {task: ordered_feature_values(transition_plot_dfs[task], "feature_label") for task in task_names}
 
     psychometric_orders = {
         task: (
@@ -1540,7 +1648,7 @@ def _(
     if not mount_figure:
         psychometric_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2AFC
-    return
+    return (xticks,)
 
 
 @app.cell(hide_code=True)
@@ -1588,6 +1696,171 @@ def _(
     if not mount_figure:
         psychometric_by_state_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_3CDR
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Psychometrics By Action Trace
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2ADC
+    """)
+    return
+
+
+@app.cell
+def _(
+    action_trace_psychometric_dfs,
+    axd,
+    delay_order,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    plt,
+    psychometric_x_labels,
+    sns,
+    task_labels,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    psychometric_by_action_trace_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2ADC", plt.gca())
+    psychometric_by_action_trace_2ADC.clear()
+    sns.lineplot(
+        data=action_trace_psychometric_dfs["2AFC_delay"],
+        x="x_position",
+        y="p_right",
+        hue="action_bin",
+        estimator="mean",
+        errorbar="se",
+        marker="o",
+        markeredgewidth=0,
+        err_kws={
+            "edgecolor": "none",
+            "linewidth": 0,
+        },
+        palette="viridis",
+        ax=psychometric_by_action_trace_2ADC,
+    )
+    psychometric_by_action_trace_2ADC.set_xticks(range(len(delay_order)))
+    psychometric_by_action_trace_2ADC.set_xticklabels([f"{value:g}" for value in delay_order])
+    psychometric_by_action_trace_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
+    psychometric_by_action_trace_2ADC.set_title(task_labels["2AFC_delay"])
+    psychometric_by_action_trace_2ADC.set_xlabel(psychometric_x_labels["2AFC_delay"])
+    psychometric_by_action_trace_2ADC.set_ylabel(r"$p(\mathrm{right})$")
+    psychometric_by_action_trace_2ADC.legend(frameon=False, title="A")
+    if not mount_figure:
+        psychometric_by_action_trace_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_psychometric_by_action_trace").with_suffix(f".{format}"))
+    psychometric_by_action_trace_2ADC
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2AFC
+    """)
+    return
+
+
+@app.cell
+def _(
+    action_trace_psychometric_dfs,
+    axd,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    plt,
+    psychometric_x_labels,
+    sns,
+    task_labels,
+    xticks,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    psychometric_by_action_trace_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2AFC", plt.gca())
+    psychometric_by_action_trace_2AFC.clear()
+    sns.lineplot(
+        data=action_trace_psychometric_dfs["2AFC"],
+        x="x_numeric",
+        y="p_right",
+        hue="action_bin",
+        estimator="mean",
+        errorbar="se",
+        marker="o",
+        markeredgewidth=0,
+        err_kws={
+            "edgecolor": "none",
+            "linewidth": 0,
+        },
+        palette="viridis",
+        ax=psychometric_by_action_trace_2AFC,
+    )
+    _xticks = sorted(action_trace_psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
+    _xticks = [float(tick) for tick in _xticks]
+    psychometric_by_action_trace_2AFC.set_xticks(_xticks)
+    psychometric_by_action_trace_2AFC.set_xticklabels([f"{tick:g}" if abs(float(tick)) not in {2.0, 4.0} else "" for tick in xticks])
+    psychometric_by_action_trace_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
+    psychometric_by_action_trace_2AFC.set_title(task_labels["2AFC"])
+    psychometric_by_action_trace_2AFC.set_xlabel(psychometric_x_labels["2AFC"])
+    psychometric_by_action_trace_2AFC.set_ylabel(r"$p(\mathrm{right})$")
+    psychometric_by_action_trace_2AFC.legend(frameon=False, title="A")
+    if not mount_figure:
+        psychometric_by_action_trace_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_psychometric_by_action_trace").with_suffix(f".{format}"))
+    psychometric_by_action_trace_2AFC
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 3CDR
+    """)
+    return
+
+
+@app.cell
+def _(
+    action_trace_psychometric_dfs,
+    axd,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    plt,
+    psychometric_orders,
+    psychometric_x_labels,
+    sns,
+    task_labels,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    psychometric_by_action_trace_3CDR = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_3CDR", plt.gca())
+    psychometric_by_action_trace_3CDR.clear()
+    sns.pointplot(
+        data=action_trace_psychometric_dfs["MCDR"],
+        x="x_label",
+        y="p_right",
+        hue="action_bin",
+        order=psychometric_orders["MCDR"],
+        errorbar="se",
+        dodge=0.2,
+        palette="viridis",
+        ax=psychometric_by_action_trace_3CDR,
+    )
+    psychometric_by_action_trace_3CDR.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
+    psychometric_by_action_trace_3CDR.set_title(task_labels["MCDR"])
+    psychometric_by_action_trace_3CDR.set_xlabel(psychometric_x_labels["MCDR"])
+    psychometric_by_action_trace_3CDR.set_ylabel(r"$p(\mathrm{right})$")
+    psychometric_by_action_trace_3CDR.legend(frameon=False, title="A")
+    if not mount_figure:
+        psychometric_by_action_trace_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_psychometric_by_action_trace").with_suffix(f".{format}"))
+    psychometric_by_action_trace_3CDR
     return
 
 
@@ -1767,7 +2040,6 @@ def _(mo):
 
 @app.cell
 def _(
-    add_paired_state_annotation,
     add_subject_pair_lines,
     axd,
     boxplot_STYLE,
@@ -1798,7 +2070,6 @@ def _(
         **boxplot_STYLE,
     )
     add_subject_pair_lines(occupancy_by_state_2ADC, occupancy_annotation_dfs["2AFC_delay"], x="task_label", y="occupancy", order=task_label_orders["2AFC_delay"])
-    add_paired_state_annotation(occupancy_by_state_2ADC, occupancy_annotation_dfs["2AFC_delay"], x="task_label", y="occupancy", order=task_label_orders["2AFC_delay"])
     occupancy_by_state_2ADC.set_xlabel("")
     occupancy_by_state_2ADC.set_ylabel("Occupancy")
     occupancy_by_state_2ADC.legend(frameon=False, title="")
@@ -1818,7 +2089,6 @@ def _(mo):
 
 @app.cell
 def _(
-    add_paired_state_annotation,
     add_subject_pair_lines,
     axd,
     boxplot_STYLE,
@@ -1849,7 +2119,6 @@ def _(
         **boxplot_STYLE,
     )
     add_subject_pair_lines(occupancy_by_state_2AFC, occupancy_annotation_dfs["2AFC"], x="task_label", y="occupancy", order=task_label_orders["2AFC"])
-    add_paired_state_annotation(occupancy_by_state_2AFC, occupancy_annotation_dfs["2AFC"], x="task_label", y="occupancy", order=task_label_orders["2AFC"])
     occupancy_by_state_2AFC.set_xlabel("")
     occupancy_by_state_2AFC.set_ylabel("Occupancy")
     occupancy_by_state_2AFC.legend(frameon=False, title="")
@@ -1869,7 +2138,6 @@ def _(mo):
 
 @app.cell
 def _(
-    add_paired_state_annotation,
     add_subject_pair_lines,
     axd,
     boxplot_STYLE,
@@ -1900,7 +2168,6 @@ def _(
         **boxplot_STYLE,
     )
     add_subject_pair_lines(occupancy_by_state_3CDR, occupancy_annotation_dfs["MCDR"], x="task_label", y="occupancy", order=task_label_orders["MCDR"])
-    add_paired_state_annotation(occupancy_by_state_3CDR, occupancy_annotation_dfs["MCDR"], x="task_label", y="occupancy", order=task_label_orders["MCDR"])
     occupancy_by_state_3CDR.set_xlabel("")
     occupancy_by_state_3CDR.set_ylabel("Occupancy")
     occupancy_by_state_3CDR.legend(frameon=False, title="")
@@ -1955,6 +2222,7 @@ def _(
     mean_state_traces_2ADC.set_title(task_labels["2AFC_delay"])
     mean_state_traces_2ADC.set_xlabel("Normalized session time")
     mean_state_traces_2ADC.set_ylabel("State posterior")
+    mean_state_traces_2ADC.set_ylim(0,1)
     mean_state_traces_2ADC.legend(frameon=False, title="")
     if not mount_figure:
         mean_state_traces_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_mean_state_traces").with_suffix(f".{format}"))
@@ -1999,6 +2267,7 @@ def _(
     mean_state_traces_2AFC.set_title(task_labels["2AFC"])
     mean_state_traces_2AFC.set_xlabel("Normalized session time")
     mean_state_traces_2AFC.set_ylabel("State posterior")
+    mean_state_traces_2AFC.set_ylim(0,1)
     mean_state_traces_2AFC.legend(frameon=False, title="")
     if not mount_figure:
         mean_state_traces_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_mean_state_traces").with_suffix(f".{format}"))
@@ -2526,6 +2795,7 @@ def _(
         ax=posteriors_around_change_2ADC,
     )
     posteriors_around_change_2ADC.axvline(0, color="0.5", linestyle="--", linewidth=0.8)
+    posteriors_around_change_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
     posteriors_around_change_2ADC.set_title(task_labels["2AFC_delay"])
     posteriors_around_change_2ADC.set_xlabel("Trials from state change")
     posteriors_around_change_2ADC.set_ylabel("State posterior")
@@ -2571,6 +2841,7 @@ def _(
         ax=posteriors_around_change_2AFC,
     )
     posteriors_around_change_2AFC.axvline(0, color="0.5", linestyle="--", linewidth=0.8)
+    posteriors_around_change_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
     posteriors_around_change_2AFC.set_title(task_labels["2AFC"])
     posteriors_around_change_2AFC.set_xlabel("Trials from state change")
     posteriors_around_change_2AFC.set_ylabel("State posterior")
@@ -2677,11 +2948,11 @@ def _(MODEL_BY_TASK, load_metrics_dir_raw, paths, pl):
 
     ll_bic_delta_2ADC = model_delta_df(
         load_model_metrics("2AFC_delay", "glm", "one hot2", "GLM"),
-        load_model_metrics("2AFC_delay", "glmhmmt", MODEL_BY_TASK["2AFC_delay"], "GLM-HMM-T"),
+        load_model_metrics("2AFC_delay", "glmhmm", MODEL_BY_TASK["2AFC_delay"], "GLM-HMM-T"),
     )
     ll_bic_delta_2AFC = model_delta_df(
         load_model_metrics("2AFC", "glm", "one hot2", "GLM"),
-        load_model_metrics("2AFC", "glmhmmt", MODEL_BY_TASK["2AFC"], "GLM-HMM-T"),
+        load_model_metrics("2AFC", "glmhmm", MODEL_BY_TASK["2AFC"], "GLM-HMM-T"),
     )
     return ll_bic_delta_2ADC, ll_bic_delta_2AFC
 
@@ -2715,33 +2986,52 @@ def _(np, pd, plot_dfs):
         negative = label_text.eq("disengaged") | label_text.str.startswith("disengaged ")
         return positive.to_numpy(dtype=bool), (positive | negative).to_numpy(dtype=bool)
 
+
     plot_df_2AFC = plot_dfs["2AFC"].to_pandas()
     fpr_grid_2AFC = np.linspace(0, 1, 101)
-    lick_curve_rows_2AFC = []
-    lick_auc_rows_2AFC = []
-    for subject, subject_df in plot_df_2AFC.groupby("subject", sort=True):
-        target, valid_labels = engaged_target(subject_df["state_label"])
-        nlicks_score = pd.to_numeric(subject_df["nLicks"], errors="coerce").to_numpy(dtype=float)
-        result = roc_auc(target[valid_labels], nlicks_score[valid_labels])
-        if not isinstance(result, tuple):
-            continue
-        fpr, tpr, auc = result
-        interp_tpr = np.interp(fpr_grid_2AFC, fpr, tpr)
-        interp_tpr[0] = 0.0
-        interp_tpr[-1] = 1.0
-        lick_auc_rows_2AFC.append({"subject": str(subject), "auc": auc})
-        for fpr_value, tpr_value in zip(fpr_grid_2AFC, interp_tpr, strict=False):
-            lick_curve_rows_2AFC.append(
-                {
-                    "subject": str(subject),
-                    "fpr": fpr_value,
-                    "tpr": tpr_value,
-                }
-            )
 
-    lick_roc_curve_df_2AFC = pd.DataFrame(lick_curve_rows_2AFC)
-    lick_auc_df_2AFC = pd.DataFrame(lick_auc_rows_2AFC)
-    return lick_auc_df_2AFC, lick_roc_curve_df_2AFC
+    roc_metrics_2AFC = {
+        "ILI": ("ILI", -1),
+        "RT": ("RT", -1),
+        "nLicks": ("nLicks", 1),
+    }
+
+    roc_curve_rows_2AFC = []
+    roc_auc_rows_2AFC = []
+
+    for metric_label, (metric_col, sign) in roc_metrics_2AFC.items():
+        if metric_col not in plot_df_2AFC.columns:
+            continue
+
+        for subject, subject_df in plot_df_2AFC.groupby("subject", sort=True):
+            target, valid_labels = engaged_target(subject_df["state_label"])
+            score = sign * pd.to_numeric(subject_df[metric_col], errors="coerce").to_numpy(dtype=float)
+            result = roc_auc(target[valid_labels], score[valid_labels])
+
+            if not isinstance(result, tuple):
+                continue
+
+            fpr, tpr, auc = result
+            interp_tpr = np.interp(fpr_grid_2AFC, fpr, tpr)
+            interp_tpr[0] = 0.0
+            interp_tpr[-1] = 1.0
+
+            roc_auc_rows_2AFC.append(
+                {"subject": str(subject), "metric": metric_label, "auc": auc}
+            )
+            for fpr_value, tpr_value in zip(fpr_grid_2AFC, interp_tpr, strict=False):
+                roc_curve_rows_2AFC.append(
+                    {
+                        "subject": str(subject),
+                        "metric": metric_label,
+                        "fpr": fpr_value,
+                        "tpr": tpr_value,
+                    }
+                )
+
+    roc_curve_df_2AFC = pd.DataFrame(roc_curve_rows_2AFC)
+    roc_auc_df_2AFC = pd.DataFrame(roc_auc_rows_2AFC)
+    return roc_auc_df_2AFC, roc_curve_df_2AFC
 
 
 @app.cell(hide_code=True)
@@ -2878,32 +3168,42 @@ def _(
 
 
 @app.cell
+def _(plt):
+    # Alternative palette
+    from matplotlib import colormaps
+    cmap = plt.get_cmap("Set2")
+    return (cmap,)
+
+
+@app.cell
 def _(
+    cmap,
     fig_size,
     format,
-    lick_auc_df_2AFC,
-    lick_roc_curve_df_2AFC,
     path_panels,
     plt,
+    roc_auc_df_2AFC,
+    roc_curve_df_2AFC,
     sns,
 ):
-    lick_roc_2AFC = plt.figure(figsize=fig_size(2,1), constrained_layout=True)
+    lick_roc_2AFC = plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     lick_roc_2AFC.clear()
     lick_roc_2AFC_ax = lick_roc_2AFC.gca()
     lick_roc_summary_2AFC = (
-        lick_roc_curve_df_2AFC
+        roc_curve_df_2AFC[roc_curve_df_2AFC["metric"].eq("nLicks")]
         .groupby("fpr", as_index=False)
         .agg(
             mean_tpr=("tpr", "mean"),
             sem_tpr=("tpr", "sem"),
         )
     )
-    lick_auc_mean_2AFC = lick_auc_df_2AFC["auc"].mean()
-    lick_auc_sem_2AFC = lick_auc_df_2AFC["auc"].sem()
+
+    lick_auc_mean_2AFC = roc_auc_df_2AFC[roc_auc_df_2AFC["metric"].eq("nLicks")]["auc"].mean()
+    lick_auc_sem_2AFC = roc_auc_df_2AFC[roc_auc_df_2AFC["metric"].eq("nLicks")]["auc"].sem()
     lick_roc_2AFC_ax.plot(
         lick_roc_summary_2AFC["fpr"],
         lick_roc_summary_2AFC["mean_tpr"],
-        color="tab:blue",
+        color=cmap.colors[0],
         lw=2,
         label=f"AUC={lick_auc_mean_2AFC:.3f} +/- {lick_auc_sem_2AFC:.3f}",
     )
@@ -2911,7 +3211,7 @@ def _(
         lick_roc_summary_2AFC["fpr"],
         lick_roc_summary_2AFC["mean_tpr"] - lick_roc_summary_2AFC["sem_tpr"].fillna(0),
         lick_roc_summary_2AFC["mean_tpr"] + lick_roc_summary_2AFC["sem_tpr"].fillna(0),
-        color="tab:blue",
+        color=cmap.colors[0],
         alpha=0.2,
         linewidth=0,
     )
@@ -2925,6 +3225,117 @@ def _(
     sns.despine(ax=lick_roc_2AFC_ax)
     lick_roc_2AFC.savefig((path_panels / "2AFC_nlicks_state_roc").with_suffix(f".{format}"))
     lick_roc_2AFC
+    return
+
+
+@app.cell
+def _(
+    cmap,
+    fig_size,
+    format,
+    path_panels,
+    plt,
+    roc_auc_df_2AFC,
+    roc_curve_df_2AFC,
+    sns,
+):
+    ili_roc_2AFC = plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    ili_roc_2AFC.clear()
+    ili_roc_2AFC_ax = ili_roc_2AFC.gca()
+    ili_roc_summary_2AFC = (
+        roc_curve_df_2AFC[roc_curve_df_2AFC["metric"].eq("ILI")]
+        .groupby("fpr", as_index=False)
+        .agg(
+            mean_tpr=("tpr", "mean"),
+            sem_tpr=("tpr", "sem"),
+        )
+    )
+
+    ili_auc_mean_2AFC = roc_auc_df_2AFC[roc_auc_df_2AFC["metric"].eq("ILI")]["auc"].mean()
+    ili_auc_sem_2AFC = roc_auc_df_2AFC[roc_auc_df_2AFC["metric"].eq("ILI")]["auc"].sem()
+    ili_roc_2AFC_ax.plot(
+        ili_roc_summary_2AFC["fpr"],
+        ili_roc_summary_2AFC["mean_tpr"],
+        color=cmap.colors[1],
+        lw=2,
+        label=f"AUC={ili_auc_mean_2AFC:.3f} +/- {ili_auc_sem_2AFC:.3f}",
+    )
+    ili_roc_2AFC_ax.fill_between(
+        ili_roc_summary_2AFC["fpr"],
+        ili_roc_summary_2AFC["mean_tpr"] - ili_roc_summary_2AFC["sem_tpr"].fillna(0),
+        ili_roc_summary_2AFC["mean_tpr"] + ili_roc_summary_2AFC["sem_tpr"].fillna(0),
+        color=cmap.colors[1],
+        alpha=0.2,
+        linewidth=0,
+    )
+    ili_roc_2AFC_ax.plot([0, 1], [0, 1], color="0.5", lw=1, ls="--")
+    ili_roc_2AFC_ax.set_title(f"2AFC $-ILI$")
+    ili_roc_2AFC_ax.set_xlabel("False positive rate")
+    ili_roc_2AFC_ax.set_ylabel("True positive rate")
+    ili_roc_2AFC_ax.set_xlim(0, 1)
+    ili_roc_2AFC_ax.set_ylim(0, 1)
+    ili_roc_2AFC_ax.legend(frameon=False, loc="lower right")
+    sns.despine(ax=ili_roc_2AFC_ax)
+    ili_roc_2AFC.savefig((path_panels / "2AFC_ili_state_roc").with_suffix(f".{format}"))
+    ili_roc_2AFC
+    return
+
+
+@app.cell
+def _(
+    cmap,
+    fig_size,
+    format,
+    path_panels,
+    plt,
+    roc_auc_df_2AFC,
+    roc_curve_df_2AFC,
+    sns,
+):
+    rt_roc_2AFC = plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    rt_roc_2AFC.clear()
+    rt_roc_2AFC_ax = rt_roc_2AFC.gca()
+    rt_roc_summary_2AFC = (
+        roc_curve_df_2AFC[roc_curve_df_2AFC["metric"].eq("RT")]
+        .groupby("fpr", as_index=False)
+        .agg(
+            mean_tpr=("tpr", "mean"),
+            sem_tpr=("tpr", "sem"),
+        )
+    )
+
+    rt_auc_mean_2AFC = roc_auc_df_2AFC[roc_auc_df_2AFC["metric"].eq("RT")]["auc"].mean()
+    rt_auc_sem_2AFC = roc_auc_df_2AFC[roc_auc_df_2AFC["metric"].eq("RT")]["auc"].sem()
+    rt_roc_2AFC_ax.plot(
+        rt_roc_summary_2AFC["fpr"],
+        rt_roc_summary_2AFC["mean_tpr"],
+        color=cmap.colors[2],
+        lw=2,
+        label=f"AUC={rt_auc_mean_2AFC:.3f} +/- {rt_auc_sem_2AFC:.3f}",
+    )
+    rt_roc_2AFC_ax.fill_between(
+        rt_roc_summary_2AFC["fpr"],
+        rt_roc_summary_2AFC["mean_tpr"] - rt_roc_summary_2AFC["sem_tpr"].fillna(0),
+        rt_roc_summary_2AFC["mean_tpr"] + rt_roc_summary_2AFC["sem_tpr"].fillna(0),
+        color=cmap.colors[2],
+        alpha=0.2,
+        linewidth=0,
+    )
+    rt_roc_2AFC_ax.plot([0, 1], [0, 1], color="0.5", lw=1, ls="--")
+    rt_roc_2AFC_ax.set_title(f"2AFC $-RT$")
+    rt_roc_2AFC_ax.set_xlabel("False positive rate")
+    rt_roc_2AFC_ax.set_ylabel("True positive rate")
+    rt_roc_2AFC_ax.set_xlim(0, 1)
+    rt_roc_2AFC_ax.set_ylim(0, 1)
+    rt_roc_2AFC_ax.legend(frameon=False, loc="lower right")
+    sns.despine(ax=rt_roc_2AFC_ax)
+    rt_roc_2AFC.savefig((path_panels / "2AFC_rt_state_roc").with_suffix(f".{format}"))
+    rt_roc_2AFC
+    return
+
+
+@app.cell
+def _():
     return
 
 
