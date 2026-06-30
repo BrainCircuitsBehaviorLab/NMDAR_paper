@@ -7,9 +7,11 @@ app = marimo.App(width="full")
 @app.cell
 def _():
     from pathlib import Path
+    import concurrent.futures
     import itertools
     import json
     import math
+    import multiprocessing
     import sys
 
     import marimo as mo
@@ -36,6 +38,10 @@ def _():
     from glmhmmt.runtime import configure_paths, get_runtime_paths
     from glmhmmt.tasks import get_adapter
 
+    from src.glmhmmt_transition_regressor_grid import (
+        fit_transition_model_job,
+        resolve_threads_per_worker,
+    )
     from src.plots.common import fig_size
 
     project_root = _PROJECT_ROOT
@@ -45,19 +51,23 @@ def _():
     sns.set_theme(style="ticks", context="paper")
     return (
         chi2,
+        concurrent,
         fig_size,
         fit_main,
+        fit_transition_model_job,
         get_adapter,
         itertools,
         json,
         math,
         mo,
+        multiprocessing,
         np,
         paths,
         pd,
         pl,
         plt,
         project_root,
+        resolve_threads_per_worker,
         sns,
         ttest_1samp,
     )
@@ -337,10 +347,12 @@ def _(EMISSION_CONSTRAINT_OPTIONS, TASK_OPTIONS, mo):
     )
     ui_num_iters = mo.ui.number(start=1, stop=500, step=1, value=50, label="EM iterations")
     ui_n_restarts = mo.ui.number(start=1, stop=20, step=1, value=1, label="Restarts")
+    ui_model_workers = mo.ui.number(start=1, stop=64, step=1, value=1, label="Model workers")
     ui_run_grid = mo.ui.run_button(label="Fit selected transition grid")
     return (
         ui_cv_mode,
         ui_emission_constraint,
+        ui_model_workers,
         ui_n_restarts,
         ui_num_iters,
         ui_run_grid,
@@ -478,6 +490,7 @@ def _(
     ui_candidate_terms,
     ui_cv_mode,
     ui_emission_constraint,
+    ui_model_workers,
     ui_n_restarts,
     ui_num_iters,
     ui_run_grid,
@@ -486,7 +499,16 @@ def _(
 ):
     mo.vstack(
         [
-            mo.hstack([ui_task, ui_emission_constraint, ui_cv_mode, ui_num_iters, ui_n_restarts]),
+            mo.hstack(
+                [
+                    ui_task,
+                    ui_emission_constraint,
+                    ui_cv_mode,
+                    ui_num_iters,
+                    ui_n_restarts,
+                    ui_model_workers,
+                ]
+            ),
             ui_candidate_terms,
             ui_subjects,
             ui_run_grid,
@@ -505,12 +527,17 @@ def _(
     K,
     TAU,
     baseline_class_idx,
+    concurrent,
     fit_main,
+    fit_transition_model_job,
     json,
     mo,
+    multiprocessing,
     np,
     paths,
     pl,
+    project_root,
+    resolve_threads_per_worker,
     task_name,
 ):
     def free_parameter_count(spec: dict, *, k: int = K, num_classes: int = 2) -> int:
@@ -596,9 +623,67 @@ def _(
         cv_mode: str,
         num_iters: int,
         n_restarts: int,
+        model_workers: int = 1,
     ) -> None:
         cv_repeats = 5 if cv_mode != "none" else 0
         steps_per_subject = cv_repeats if cv_mode != "none" else n_restarts
+        model_workers = max(1, min(int(model_workers), max(1, len(model_specs))))
+        if model_workers > 1:
+            threads_per_worker = resolve_threads_per_worker(model_workers)
+            total = max(1, len(model_specs))
+            with mo.status.progress_bar(
+                total=total,
+                title="Fitting GLM-HMM-T transition grid",
+                subtitle=(
+                    f"{len(model_specs)} model jobs x {len(subjects)} subjects; "
+                    f"{model_workers} workers x {threads_per_worker} CPU threads"
+                ),
+                completion_title="Transition grid complete",
+            ) as bar:
+                start_method = (
+                    "forkserver"
+                    if "forkserver" in multiprocessing.get_all_start_methods()
+                    else "spawn"
+                )
+                context = multiprocessing.get_context(start_method)
+                jobs = [
+                    {
+                        "project_root": str(project_root),
+                        "spec": spec,
+                        "task_name": task_name,
+                        "subjects": subjects,
+                        "cv_mode": cv_mode,
+                        "num_iters": num_iters,
+                        "n_restarts": n_restarts,
+                        "K": K,
+                        "tau": TAU,
+                        "baseline_class_idx": baseline_class_idx,
+                        "base_seed": 0,
+                        "threads_per_worker": threads_per_worker,
+                    }
+                    for spec in model_specs
+                ]
+                with concurrent.futures.ProcessPoolExecutor(
+                    max_workers=model_workers,
+                    mp_context=context,
+                ) as executor:
+                    future_by_model = {
+                        executor.submit(fit_transition_model_job, job): job["spec"]["model_id"]
+                        for job in jobs
+                    }
+                    for future in concurrent.futures.as_completed(future_by_model):
+                        model_id = future_by_model[future]
+                        result = future.result()
+                        bar.update(
+                            increment=1,
+                            title=f"Fitted {model_id}",
+                            subtitle=(
+                                f"{result['n_subjects']} subjects; "
+                                f"saved to {result['out_dir']}"
+                            ),
+                        )
+            return
+
         total = max(1, len(model_specs) * len(subjects) * steps_per_subject)
         with mo.status.progress_bar(
             total=total,
@@ -658,6 +743,7 @@ def _(
     mo,
     model_specs,
     ui_cv_mode,
+    ui_model_workers,
     ui_n_restarts,
     ui_num_iters,
     ui_run_grid,
@@ -670,6 +756,7 @@ def _(
             cv_mode=ui_cv_mode.value,
             num_iters=int(ui_num_iters.value),
             n_restarts=int(ui_n_restarts.value),
+            model_workers=int(ui_model_workers.value),
         )
         fit_output = mo.md("Selected transition grid fitted.")
     else:
