@@ -1,0 +1,37 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 50,
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+    ],
+    "emission_cols": [
+        "stim_param",
+        "choice_lag_param",
+        "bias"
+    ],
+    "transition_cols": [
+        "Drug",
+        "cumulative_reward"
+    ],
+    "frozen_emissions": {
+        "1": {
+            "stim_param": 0.0
+        }
+    },
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "drug_transitions_cumulative",
+    "cv_mode": "none",
+    "cv_repeats": 0
+}

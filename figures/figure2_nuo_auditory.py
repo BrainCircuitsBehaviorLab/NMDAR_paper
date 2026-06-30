@@ -155,7 +155,7 @@ def _(mo):
 
 @app.cell
 def _(Path, plt, sns):
-    sns.set_theme(style="ticks", context="notebook")
+    sns.set_theme(style="ticks", context="paper")
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = "none"
     plt.rcParams["savefig.bbox"] = "standard"
@@ -195,6 +195,24 @@ def _(get_adapter):
         task_names,
         task_order,
     )
+
+
+@app.cell
+def _(dfs):
+    (dfs["nuo_auditory"].group_by("subject").len().rename({"len": "n_rows"}).sort("subject").mean())
+    return
+
+
+@app.cell
+def _(mo, subjects_by_task):
+    subjects_nuo = mo.ui.dropdown(options = subjects_by_task["nuo_auditory"])
+    return (subjects_nuo,)
+
+
+@app.cell
+def _(subjects_nuo):
+    subjects_nuo
+    return
 
 
 @app.cell
@@ -244,6 +262,8 @@ def _(
             plot_dfs[_task],
             choice_lag_cols=_choice_lag_cols,
         )
+
+    # plot_dfs["nuo_auditory"] = plot_dfs["nuo_auditory"].filter(pl.col("subject") == subjects_nuo.value)
     return plot_dfs, views, weight_dfs
 
 
@@ -280,7 +300,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(disabled=True, hide_code=True)
 def _(
     adapters,
     dfs,
@@ -395,6 +415,12 @@ def _(
             )
 
     mo.hstack([ax_autocorrelograms_outcome, ax_autocorrelograms_repetition], justify="start", gap=1)
+    return
+
+
+@app.cell
+def _(dfs):
+    dfs["nuo_auditory"]["subject"].unique()
     return
 
 
@@ -652,7 +678,7 @@ def _(plot_session_response_raster, session_repetition_data):
 
 @app.cell
 def _(fig_size, plt, session_repetition_data):
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     single_session = plt.gca()
 
     single_session.plot(
@@ -680,68 +706,55 @@ def _(fig_size, plt, session_repetition_data):
 
 
 @app.cell
-def _(
-    TASK_NAME,
-    adapters,
-    axd,
-    build_session_repetition_data,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    pl,
-    plot_dfs,
-    plt,
-    subjects_by_task,
-):
-    _subject = subjects_by_task[TASK_NAME][0]
-    _session = list(
-        plot_dfs[TASK_NAME]
-        .filter(pl.col("subject") == _subject)["session"]
-        .unique()
-        .sort()
-    )[0]
-    _subject_df = plot_dfs[TASK_NAME].filter(
-        pl.col("subject") == _subject,
-        pl.col("session") == _session,
-    )
-    session_repetition_data_nuo = build_session_repetition_data(
-        _subject_df,
-        subject=_subject,
-        session=_session,
-        adapter=adapters[TASK_NAME],
-        window=20,
-    )
-    plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
-    single_session_nuo = plt.gca() if not mount_figure else axd["single_session"]
-    single_session_nuo.clear()
+def _():
+    # _subject = subjects_by_task[TASK_NAME][0]
+    # _session = list(
+    #     plot_dfs[TASK_NAME]
+    #     .filter(pl.col("subject") == _subject)["session"]
+    #     .unique()
+    #     .sort()
+    # )[0]
+    # _subject_df = plot_dfs[TASK_NAME].filter(
+    #     pl.col("subject") == _subject,
+    #     pl.col("session") == _session,
+    # )
+    # session_repetition_data_nuo = build_session_repetition_data(
+    #     _subject_df,
+    #     subject=_subject,
+    #     session=_session,
+    #     adapter=adapters[TASK_NAME],
+    #     window=20,
+    # )
+    # plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
+    # single_session_nuo = plt.gca() if not mount_figure else axd["single_session"]
+    # single_session_nuo.clear()
 
-    single_session_nuo.plot(
-        "trial_x",
-        "response_repeat_window_fraction",
-        color="tab:brown",
-        linewidth=1.5,
-        label="Choice",
-        data=session_repetition_data_nuo,
-    )
-    single_session_nuo.plot(
-        "trial_x",
-        "stimulus_repeat_window_fraction",
-        color="tab:blue",
-        linewidth=1.5,
-        label="Stimulus",
-        data=session_repetition_data_nuo,
-    )
-    single_session_nuo.set_xlabel("Trial")
-    single_session_nuo.set_ylabel("Rep. fraction")
-    single_session_nuo.set_ylim(0, 1)
-    single_session_nuo.set_xlim(-0.5, len(session_repetition_data_nuo) - 0.5)
-    single_session_nuo.legend(frameon=False, loc="upper right")
-    if not mount_figure:
-        single_session_nuo.figure.savefig(
-            (path_panels / f"{TASK_NAME}_single_session").with_suffix(f".{format}")
-        )
-    single_session_nuo
+    # single_session_nuo.plot(
+    #     "trial_x",
+    #     "response_repeat_window_fraction",
+    #     color="tab:brown",
+    #     linewidth=1.5,
+    #     label="Choice",
+    #     data=session_repetition_data_nuo,
+    # )
+    # single_session_nuo.plot(
+    #     "trial_x",
+    #     "stimulus_repeat_window_fraction",
+    #     color="tab:blue",
+    #     linewidth=1.5,
+    #     label="Stimulus",
+    #     data=session_repetition_data_nuo,
+    # )
+    # single_session_nuo.set_xlabel("Trial")
+    # single_session_nuo.set_ylabel("Rep. fraction")
+    # single_session_nuo.set_ylim(0, 1)
+    # single_session_nuo.set_xlim(-0.5, len(session_repetition_data_nuo) - 0.5)
+    # single_session_nuo.legend(frameon=False, loc="upper right")
+    # if not mount_figure:
+    #     single_session_nuo.figure.savefig(
+    #         (path_panels / f"{TASK_NAME}_single_session").with_suffix(f".{format}")
+    #     )
+    # single_session_nuo
     return
 
 
@@ -778,6 +791,11 @@ def _(mo):
 
 
 @app.cell
+def _():
+    return
+
+
+@app.cell
 def _(
     build_transition_chunk_plot_data,
     chunk_hist_stat,
@@ -802,6 +820,26 @@ def _(
         transition_chunk_plot_data,
         transition_repeat_probabilities,
     )
+
+
+@app.cell
+def _(TASK_LABEL, transition_chunk_plot_data):
+    transition_chunk_plot_data[
+            transition_chunk_plot_data["task_label"] == TASK_LABEL
+        ]
+    return
+
+
+@app.cell
+def _(subjects_nuo):
+    subjects_nuo
+    return
+
+
+@app.cell
+def _(plot_dfs):
+    plot_dfs["nuo_auditory"]["current_training_stage"].unique()
+    return
 
 
 @app.cell
@@ -839,6 +877,7 @@ def _(
     )
     consec_rep_nuo.set_xlim(0, 30)
     consec_rep_nuo.set_ylim(1, 1e3)
+    # consec_rep_nuo.set_ylim(1e-6,1)
     consec_rep_nuo.set_yscale("log")
     consec_rep_nuo.set_xlabel("Consecutive choices")
     consec_rep_nuo.set_ylabel(chunk_hist_ylabel)

@@ -1,0 +1,38 @@
+{
+    "task": "2AFC_DRUG",
+    "tau": 50,
+    "subjects": [
+        "14",
+        "16",
+        "17",
+        "25",
+        "24",
+        "23",
+        "20",
+        "22",
+        "19",
+        "18"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_param",
+        "choice_lag_param",
+        "drug_x_choice_lag_param"
+    ],
+    "transition_cols": [
+        "trial_index",
+        "filtered_reward"
+    ],
+    "frozen_emissions": {
+        "0": {
+            "stim_param": 0.0
+        }
+    },
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "drugfinal_stim_fixed_E_choice",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5
+}

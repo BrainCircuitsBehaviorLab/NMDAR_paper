@@ -21,7 +21,11 @@
         "filtered_reward",
         "Drug"
     ],
-    "frozen_emissions": {},
+    "frozen_emissions": {
+        "1": {
+            "stim_param": 0.0
+        }
+    },
     "baseline_class_idx": 0,
     "K_list": [
         2

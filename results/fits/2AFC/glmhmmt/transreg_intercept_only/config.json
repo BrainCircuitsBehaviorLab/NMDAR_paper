@@ -1,0 +1,58 @@
+{
+    "task": "2AFC",
+    "tau": 50,
+    "subjects": [
+        "325",
+        "327",
+        "329",
+        "330",
+        "332",
+        "333",
+        "335",
+        "337",
+        "419",
+        "420",
+        "422",
+        "561",
+        "616",
+        "617",
+        "619",
+        "623",
+        "807",
+        "820",
+        "821",
+        "873",
+        "875",
+        "907",
+        "909",
+        "911"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_param",
+        "choice_lag_param"
+    ],
+    "transition_cols": [
+        "trial_index",
+        "filtered_choice",
+        "filtered_stim_side",
+        "filtered_reward",
+        "filtered_difficulty",
+        "filtered_bad_stim",
+        "filtered_bad_choice",
+        "filtered_bad_reward",
+        "cumulative_reward",
+        "prev_day_total_reward",
+        "prev_day_total_reward_x_cumulative_reward",
+        "reward_lag_param",
+        "difficulty_hot_param"
+    ],
+    "frozen_emissions": {},
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "transreg_intercept_only",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5
+}

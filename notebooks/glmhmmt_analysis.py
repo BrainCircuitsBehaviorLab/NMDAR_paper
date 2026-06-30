@@ -538,8 +538,6 @@ def _(
     make_boxplot_axis,
     mo,
     model_plots,
-    np,
-    pd,
     pl,
     put_legend_inside_panel,
     save_plot,
@@ -608,7 +606,7 @@ def _(
     _summary_fig, _summary_ax = make_boxplot_axis()
     _summary_ax = model_plots.emission_weights_summary_boxplot(
         _summary_weights_df,
-        connect_subjects=True,
+        connect_subjects=False,
         show_ttests=True,
         feature_order=_preferred_feature_order,
         feature_labeler=feature_labeler,
@@ -627,47 +625,47 @@ def _(
         feature_order=_preferred_feature_order,
         feature_labeler=feature_labeler,
     )
-    _, _subject_lines = _emission_boxplot_payload(
-        _df,
-        features=_features,
-        states=_state_order,
-    )
-    _subjects = sorted(pd.unique(_df["subject"]).tolist())
-    _n_states = len(_state_order)
-    _hue_width = 0.8 / max(1, _n_states)
-    emission_summary_selection_points = []
-    for _feat_idx, _feature in enumerate(_features):
-        _positions = [
-            _feat_idx + (_state_idx - (_n_states - 1) / 2.0) * _hue_width
-            for _state_idx in range(_n_states)
-        ]
-        for _subject, _ys in zip(_subjects, _subject_lines[_feat_idx], strict=False):
-            _ys = np.asarray(_ys, dtype=float)
-            _valid_idx = np.flatnonzero(np.isfinite(_ys))
-            if _valid_idx.size < 2:
-                continue
-            _split_points = np.where(np.diff(_valid_idx) > 1)[0] + 1
-            for _segment in np.split(_valid_idx, _split_points):
-                if _segment.size < 2:
-                    continue
-                _x_segment = [float(_positions[_idx]) for _idx in _segment]
-                _y_segment = [float(_ys[_idx]) for _idx in _segment]
-                for _left in range(len(_x_segment) - 1):
-                    for _x, _y in zip(
-                        np.linspace(_x_segment[_left], _x_segment[_left + 1], 24),
-                        np.linspace(_y_segment[_left], _y_segment[_left + 1], 24),
-                        strict=False,
-                    ):
-                        emission_summary_selection_points.append(
-                            {
-                                "subject": str(_subject),
-                                "feature": str(_feature),
-                                "feature_label": str(feature_labeler(_feature)),
-                                "x": float(_x),
-                                "y": float(_y),
-                            }
-                        )
-    ui_emission_summary = mo.ui.matplotlib(_summary_ax, debounce=True)
+    # _, _subject_lines = _emission_boxplot_payload(
+    #     _df,
+    #     features=_features,
+    #     states=_state_order,
+    # )
+    # _subjects = sorted(pd.unique(_df["subject"]).tolist())
+    # _n_states = len(_state_order)
+    # _hue_width = 0.8 / max(1, _n_states)
+    # emission_summary_selection_points = []
+    # for _feat_idx, _feature in enumerate(_features):
+    #     _positions = [
+    #         _feat_idx + (_state_idx - (_n_states - 1) / 2.0) * _hue_width
+    #         for _state_idx in range(_n_states)
+    #     ]
+    #     for _subject, _ys in zip(_subjects, _subject_lines[_feat_idx], strict=False):
+    #         _ys = np.asarray(_ys, dtype=float)
+    #         _valid_idx = np.flatnonzero(np.isfinite(_ys))
+    #         if _valid_idx.size < 2:
+    #             continue
+    #         _split_points = np.where(np.diff(_valid_idx) > 1)[0] + 1
+    #         for _segment in np.split(_valid_idx, _split_points):
+    #             if _segment.size < 2:
+    #                 continue
+    #             _x_segment = [float(_positions[_idx]) for _idx in _segment]
+    #             _y_segment = [float(_ys[_idx]) for _idx in _segment]
+    #             for _left in range(len(_x_segment) - 1):
+    #                 for _x, _y in zip(
+    #                     np.linspace(_x_segment[_left], _x_segment[_left + 1], 24),
+    #                     np.linspace(_y_segment[_left], _y_segment[_left + 1], 24),
+    #                     strict=False,
+    #                 ):
+    #                     emission_summary_selection_points.append(
+    #                         {
+    #                             "subject": str(_subject),
+    #                             "feature": str(_feature),
+    #                             "feature_label": str(feature_labeler(_feature)),
+    #                             "x": float(_x),
+    #                             "y": float(_y),
+    #                         }
+    #                     )
+    # ui_emission_summary = mo.ui.matplotlib(_summary_ax, debounce=True)
 
     # _summary_ax = model_plots.emission_weights_summary_lineplot(
     #     _weights_df.filter(pl.col("feature").str.contains("bias_(/d)").not_()),
@@ -690,12 +688,7 @@ def _(
         ],
         align="center",
     )
-    return (
-        emission_summary_selection_points,
-        emmissions_summary,
-        feature_labeler,
-        ui_emission_summary,
-    )
+    return emmissions_summary, feature_labeler
 
 
 @app.cell
@@ -731,7 +724,6 @@ def _(
     make_boxplot_axis,
     mo,
     model_plots,
-    put_legend_inside_panel,
     save_plot,
     selected,
     views,
@@ -758,7 +750,7 @@ def _(
         ax=_summary_ax,
         tick_rotation=boxplot_tick_rotation,
     )
-    put_legend_inside_panel(_summary_ax)
+    # put_legend_inside_panel(_summary_ax)
     format_boxplot_panel(_summary_ax)
     _summary_fig = _summary_ax.figure
 
@@ -3472,6 +3464,7 @@ def _(
     metrics = [
         ("nLicks", "Licking", "Higher lick count", 1),
         ("RT", "RT", "Faster RT", -1),  # negate RT so faster responses predict engagement
+        ("ILI", "ILI", "Faster ILI", -1),
     ]
 
 
@@ -3493,12 +3486,13 @@ def _(
                 pl.col('session').alias("session"),
                 pl.col('trial_idx').alias("trial_idx"),
                 "nLicks",
+                "ILI",
                 "RT",
             ),
             on=["subject", "session", "trial_idx"],
             how="left",
         )
-        .select("subject", "session","state_label", "nLicks", "RT")
+        .select("subject", "session","state_label", "nLicks", "RT", "ILI")
         .to_pandas()
     )
 

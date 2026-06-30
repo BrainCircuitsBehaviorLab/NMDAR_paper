@@ -7,6 +7,7 @@ import pandas as pd
 import polars as pl
 
 from glmhmmt.tasks import _register
+from glmhmmt.runtime import get_data_dir
 
 from .two_adc import (
     TwoAFCDelayAdapter,
@@ -90,6 +91,7 @@ class TwoADCDrugAdapter(TwoAFCDelayAdapter):
 
     task_key: str = "2ADC_DRUG"
     task_label: str = "2ADC Drug"
+    data_file: str = "tiffany.parquet"
     emission_cols: list[str] = EMISSION_COLS
     transition_cols: list[str] = TRANSITION_COLS
     bias_param_spec = _BIAS_PARAM_SPEC
@@ -100,7 +102,8 @@ class TwoADCDrugAdapter(TwoAFCDelayAdapter):
     choice_lag_param_2_spec = _CHOICE_LAG_PARAM_2_SPEC
 
     def read_dataset(self) -> pl.DataFrame:
-        df = super().read_dataset()
+        data_dir = get_data_dir()
+        df = pl.read_parquet(data_dir / self.data_file)
         if "drug" not in df.columns:
             return df.with_columns(
                 [
@@ -130,7 +133,7 @@ class TwoADCDrugAdapter(TwoAFCDelayAdapter):
         )
 
     def subject_filter(self, df: pl.DataFrame) -> pl.DataFrame:
-        return df
+        return df.filter(pl.col("drug").is_in(["Saline", "NR2B"]))
 
     def condition_filter_options(self) -> list[str]:
         return ["all", "nan", "rest", "drug", "saline"]
@@ -193,7 +196,7 @@ class TwoADCDrugAdapter(TwoAFCDelayAdapter):
         del subject
         return None
 
-    def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0) -> pl.DataFrame:
+    def build_feature_df(self, df_sub: pl.DataFrame, tau: float = 50.0, emission_cols=None, transition_cols=None) -> pl.DataFrame:
         return _add_drug_interactions(super().build_feature_df(df_sub, tau=tau))
 
     def build_design_matrices(

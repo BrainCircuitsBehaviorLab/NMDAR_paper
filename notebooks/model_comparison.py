@@ -1377,6 +1377,7 @@ def _(
         "mohammadi at 2states dif frozen" : "GLM-HMMt pure",
         "2afc_bias-stimD0-choice-lag-paramE0": "Both fixed",
         "2afc_bias-stimD0-choice-lag-param_free": "Stim fixed",
+        "param": "Carles"
     }
 
     _pd = pairwise_metric_deltas.to_pandas()
@@ -2014,6 +2015,7 @@ def _(
     metric_specs = [("nLicks", "Licking", "Higher lick count")]
     if _rt_col is not None:
         metric_specs.append((_rt_col, "RT", "Faster RT"))
+    metric_specs.append(("ILI", "ILI", "Faster ILI"))
     metric_specs = [_spec for _spec in metric_specs if _spec[0] in roc_df.columns]
     mo.stop(not metric_specs, mo.md("No `nLicks` or RT column was found for pairwise behavioral ROC curves."))
 
@@ -2061,8 +2063,7 @@ def _(
         1,
         len(metric_specs),
         figsize=fig_size(1,2),
-        squeeze=False,
-        layout="constrained",
+
     )
     _plotted = False
     for _ax, (_metric_col, _title, _direction_label) in zip(_axes.ravel(), metric_specs, strict=False):
@@ -2194,6 +2195,8 @@ def _(
     fig_size,
     metric_specs,
     mo,
+    pairwise_alias_a,
+    pairwise_alias_b,
     plt,
     save_plot,
     sns,
@@ -2375,7 +2378,8 @@ def _(
         ],
         align="center",
     )
-    _fig_auc
+
+    mo.vstack([_fig_auc, save_plot(_fig_auc, "AUC comparisom", stem=f"auc_comparison_{pairwise_alias_a}_{pairwise_alias_b}"),])
     return
 
 

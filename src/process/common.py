@@ -4990,6 +4990,46 @@ def infer_autocorrelogram_choice_history_values(
     for class_value, values in values_by_class.items():
         if values:
             out[int(class_value)] = float(np.nanmedian(values))
+    if out:
+        return out
+
+    aggregate_history_cols = {
+        "choice_lag_param",
+        "choice_lag_param_2",
+        "at_choice_param",
+        "prev_choice",
+    }
+    for col_idx, col in enumerate(x_cols):
+        if str(col) not in aggregate_history_cols:
+            continue
+        if len(y) < 2:
+            continue
+        same_session = sessions[1:] == sessions[:-1]
+        source_y = y[:-1][same_session]
+        lag_values = base_X[1:, col_idx][same_session]
+        finite = np.isfinite(source_y) & np.isfinite(lag_values)
+        if not finite.any():
+            continue
+
+        medians_by_class = {
+            int(class_value): float(np.nanmedian(lag_values[finite & (source_y == class_value)]))
+            for class_value in np.unique(source_y[finite]).astype(int)
+            if np.any(finite & (source_y == class_value))
+        }
+        if len(medians_by_class) < 2:
+            continue
+        medians = np.asarray(list(medians_by_class.values()), dtype=float)
+        if not np.isfinite(medians).all() or float(np.nanmax(medians) - np.nanmin(medians)) <= 1e-8:
+            continue
+
+        center = float(np.nanmean(medians))
+        scale = float(np.nanmax(np.abs(medians - center)))
+        if scale <= 0:
+            continue
+        return {
+            class_value: float((median - center) / scale)
+            for class_value, median in medians_by_class.items()
+        }
     return out
 
 
@@ -5337,6 +5377,326 @@ def animal_chunk_histogram_weights(
     return counts
 
 
+def transition_chunk_lengths_for_sequence(
+    plot_df: pl.DataFrame,
+    *,
+    task_name: str,
+    task_label: str,
+    sequence_col: str,
+    sequence_label: str,
+) -> tuple[pd.DataFrame, dict]:
+    """Return transition run lengths and subject-balanced repeat probability."""
+    trials = (
+        plot_df
+        .select(["subject", "session", "trial_idx", sequence_col])
+        .to_pandas()
+        .dropna(subset=[sequence_col])
+        .sort_values(["subject", "session", "trial_idx"])
+    )
+    trials["previous_value"] = (
+        trials.groupby(["subject", "session"], observed=True)[sequence_col].shift(1)
+    )
+    trials = trials.dropna(subset=["previous_value"])
+    trials["transition"] = (
+        trials[sequence_col]
+        .eq(trials["previous_value"])
+        .map({True: "repeating", False: "alternating"})
+    )
+    trials["transition_chunk"] = (
+        trials
+        .groupby(["subject", "session"], observed=True)["transition"]
+        .transform(lambda transition: transition.ne(transition.shift()).cumsum())
+    )
+
+    chunks = (
+        trials
+        .groupby(["subject", "session", "transition", "transition_chunk"], observed=True)
+        .size()
+        .rename("chunk_length")
+        .reset_index()
+    )
+    chunks["task"] = task_name
+    chunks["task_label"] = task_label
+    chunks["sequence"] = sequence_label
+
+    subject_repeat_probability = (
+        trials.assign(is_repeat=trials["transition"] == "repeating")
+        .groupby("subject", observed=True)["is_repeat"]
+        .mean()
+    )
+    repeat_probability = {
+        "task": task_name,
+        "task_label": task_label,
+        "sequence": sequence_label,
+        "p_repeat": float(subject_repeat_probability.mean()),
+        "n_subjects": int(subject_repeat_probability.shape[0]),
+        "aggregation": "mean_subject_after_pooling_sessions",
+    }
+    return chunks, repeat_probability
+
+
+def geometric_transition_chunk_probability(
+    chunk_lengths,
+    repeat_probability: float,
+    transition: str,
+):
+    """Geometric chunk-length probability for iid repeat/alternate transitions."""
+    continue_probability = (
+        repeat_probability
+        if transition == "repeating"
+        else 1.0 - repeat_probability
+    )
+    return (1.0 - continue_probability) * (continue_probability ** (chunk_lengths - 1))
+
+
+def fixed_accuracy_repeat_probabilities(
+    accuracy: float,
+    *,
+    n_classes: int = 2,
+) -> tuple[float, float]:
+    """Return P(choice repeats) for repeated and changed stimuli at fixed accuracy."""
+
+    p = float(np.clip(accuracy, 0.0, 1.0))
+    n_classes = max(2, int(n_classes))
+    n_alternatives = n_classes - 1
+    same_stimulus = (p**2) + (((1.0 - p) ** 2) / n_alternatives)
+    changed_stimulus = (
+        (2.0 * p * (1.0 - p) / n_alternatives)
+        + (max(0, n_classes - 2) * (((1.0 - p) / n_alternatives) ** 2))
+    )
+    return float(same_stimulus), float(changed_stimulus)
+
+
+def _response_class_count(df: pd.DataFrame, response_col: str = "response") -> int:
+    if response_col not in df.columns:
+        return 2
+    values = pd.Series(df[response_col]).dropna().unique()
+    if len(values) < 2 or len(values) > 10:
+        return 2
+    return int(len(values))
+
+
+def add_fixed_accuracy_repetition_band(
+    session_data: pd.DataFrame,
+    *,
+    accuracy: float | None = None,
+    n_classes: int | None = None,
+    z: float = 1.96,
+    prefix: str = "fixed_accuracy",
+) -> pd.DataFrame:
+    """Add the fixed-accuracy stimulus-following repeat band."""
+
+    out = session_data.copy()
+    if out.empty:
+        return out
+
+    if accuracy is None:
+        accuracy = float(pd.to_numeric(out.get("correct"), errors="coerce").mean())
+    if not np.isfinite(accuracy):
+        return out
+
+    same_prob, changed_prob = fixed_accuracy_repeat_probabilities(
+        accuracy,
+        n_classes=n_classes or _response_class_count(out),
+    )
+    n = pd.to_numeric(out["repeat_window_n"], errors="coerce").to_numpy(dtype=float)
+    stimulus_count = pd.to_numeric(
+        out["stimulus_repeat_window_count"], errors="coerce"
+    ).to_numpy(dtype=float)
+    stimulus_count = np.clip(stimulus_count, 0.0, n)
+
+    expected = np.divide(
+        stimulus_count,
+        n,
+        out=np.full_like(n, np.nan),
+        where=n > 0,
+    )
+    preserve_probability = same_prob
+    sem = np.divide(
+        np.sqrt(preserve_probability * (1.0 - preserve_probability) * n),
+        n,
+        out=np.full_like(n, np.nan),
+        where=n > 0,
+    )
+    lower = np.clip(expected - (float(z) * sem), 0.0, 1.0)
+    upper = np.clip(expected + (float(z) * sem), 0.0, 1.0)
+
+    observed = pd.to_numeric(
+        out["response_repeat_window_fraction"], errors="coerce"
+    ).to_numpy(dtype=float)
+    out[f"{prefix}_repeat_fraction"] = expected
+    out[f"{prefix}_repeat_low"] = lower
+    out[f"{prefix}_repeat_high"] = upper
+    out[f"{prefix}_choice_above"] = observed > upper
+    out.attrs.update(
+        {
+            f"{prefix}_accuracy": float(accuracy),
+            f"{prefix}_same_stimulus_repeat_probability": same_prob,
+            f"{prefix}_changed_stimulus_repeat_probability": changed_prob,
+        }
+    )
+    return out
+
+
+def repeat_probability_for_transition_chunks(
+    repeat_probabilities: pd.DataFrame,
+    *,
+    task_label: str,
+    sequence: str,
+) -> float | None:
+    matches = repeat_probabilities.loc[
+        (repeat_probabilities["task_label"] == task_label)
+        & (repeat_probabilities["sequence"] == sequence),
+        "p_repeat",
+    ]
+    if matches.empty:
+        return None
+    return float(matches.iloc[0])
+
+
+def _transition_chunks_from_simulation(
+    simulated_df,
+    *,
+    task_name: str,
+    task_label: str,
+) -> pd.DataFrame:
+    df = to_pandas_df(simulated_df)
+    if df.empty:
+        return pd.DataFrame()
+    if "trial_idx" not in df.columns and "trial_index" in df.columns:
+        df = df.rename(columns={"trial_index": "trial_idx"})
+    if not {"subject", "session", "trial_idx", "response"}.issubset(df.columns):
+        return pd.DataFrame()
+    chunks, _ = transition_chunk_lengths_for_sequence(
+        pl.from_pandas(df[["subject", "session", "trial_idx", "response"]]),
+        task_name=task_name,
+        task_label=task_label,
+        sequence_col="response",
+        sequence_label="Choices",
+    )
+    return chunks
+
+
+def _weighted_chunk_histogram_y(
+    chunks: pd.DataFrame,
+    *,
+    stat: str,
+    plot_x: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    if chunks.empty:
+        return np.zeros_like(plot_x, dtype=float), 0.0
+    hist_data = animal_chunk_histogram_weights(
+        chunks,
+        group_cols=["transition"],
+        stat=stat,
+    )
+    hist_data = hist_data[hist_data["transition"] == "repeating"]
+    y = (
+        hist_data
+        .groupby("chunk_length", observed=True)["hist_weight"]
+        .sum()
+        .reindex(plot_x, fill_value=0)
+        .sort_index()
+        .to_numpy(dtype=float)
+    )
+    return y, float(hist_data["hist_weight"].sum())
+
+
+def build_repetition_chunk_plot_data(
+    plot_dfs: dict,
+    task_names: Sequence[str],
+    *,
+    glm_simulated_dfs: dict | None = None,
+    stat: str = "count",
+    task_labels: dict[str, str] | None = None,
+    task_order: Sequence[str] = ("2ADC", "2AFC", "MCDR"),
+    max_chunk_length: int = 100,
+) -> pd.DataFrame:
+    """Build repeated-choice streak plot data with independent and GLM predictions."""
+
+    task_labels = {
+        "2AFC": "2AFC",
+        "2AFC_delay": "2ADC",
+        "2ADC": "2ADC",
+        "MCDR": "MCDR",
+        **(task_labels or {}),
+    }
+    glm_simulated_dfs = glm_simulated_dfs or {}
+    plot_x = np.arange(1, int(max_chunk_length) + 1)
+
+    rows = []
+    for task_name in task_names:
+        task_label = task_labels.get(task_name, task_name)
+        if task_label not in task_order:
+            continue
+        chunks, repeat_probability = transition_chunk_lengths_for_sequence(
+            plot_dfs[task_name],
+            task_name=task_name,
+            task_label=task_label,
+            sequence_col="response",
+            sequence_label="Choices",
+        )
+        chunks = chunks[chunks["transition"] == "repeating"]
+        data_y, data_total = _weighted_chunk_histogram_y(
+            chunks,
+            stat=stat,
+            plot_x=plot_x,
+        )
+        rows.extend(
+            {
+                "task_label": task_label,
+                "chunk_length": chunk_length,
+                "transition": "repeating",
+                "source": "Data",
+                "weight": weight,
+            }
+            for chunk_length, weight in zip(plot_x, data_y, strict=False)
+        )
+
+        independent_y = geometric_transition_chunk_probability(
+            plot_x,
+            float(repeat_probability["p_repeat"]),
+            "repeating",
+        )
+        if stat == "count":
+            independent_y = independent_y * data_total
+        rows.extend(
+            {
+                "task_label": task_label,
+                "chunk_length": chunk_length,
+                "transition": "repeating",
+                "source": "Independent choices",
+                "weight": weight,
+            }
+            for chunk_length, weight in zip(plot_x, independent_y, strict=False)
+        )
+
+        glm_chunks = _transition_chunks_from_simulation(
+            glm_simulated_dfs.get(task_name, pd.DataFrame()),
+            task_name=task_name,
+            task_label=task_label,
+        )
+        if "transition" in glm_chunks.columns:
+            glm_chunks = glm_chunks[glm_chunks["transition"] == "repeating"]
+        glm_y, _ = _weighted_chunk_histogram_y(
+            glm_chunks,
+            stat=stat,
+            plot_x=plot_x,
+        )
+        rows.extend(
+            {
+                "task_label": task_label,
+                "chunk_length": chunk_length,
+                "transition": "repeating",
+                "source": "GLM",
+                "weight": weight,
+            }
+            for chunk_length, weight in zip(plot_x, glm_y, strict=False)
+        )
+
+    return pd.DataFrame(rows)
+
+
 def build_transition_chunk_plot_data(
     plot_dfs: dict,
     task_names: Sequence[str],
@@ -5360,55 +5720,18 @@ def build_transition_chunk_plot_data(
         "alternating": "tab:purple",
     }
 
-    def transition_chunks_for_task(task_name: str, sequence_col: str, sequence_label: str):
-        trials = (
-            plot_dfs[task_name]
-            .select(["subject", "session", "trial_idx", sequence_col])
-            .to_pandas()
-            .dropna(subset=[sequence_col])
-            .sort_values(["subject", "session", "trial_idx"])
-        )
-        trials["previous_value"] = (
-            trials.groupby(["subject", "session"], observed=True)[sequence_col].shift(1)
-        )
-        trials = trials.dropna(subset=["previous_value"])
-        trials["transition"] = (
-            trials[sequence_col]
-            .eq(trials["previous_value"])
-            .map({True: "repeating", False: "alternating"})
-        )
-        trials["transition_chunk"] = (
-            trials
-            .groupby(["subject", "session"], observed=True)["transition"]
-            .transform(lambda transition: transition.ne(transition.shift()).cumsum())
-        )
-        chunks = (
-            trials
-            .groupby(["subject", "session", "transition", "transition_chunk"], observed=True)
-            .size()
-            .rename("chunk_length")
-            .reset_index()
-        )
-        chunks["task"] = task_name
-        chunks["task_label"] = task_labels.get(task_name, task_name)
-        chunks["sequence"] = sequence_label
-        repeat_probability = {
-            "task": task_name,
-            "task_label": task_labels.get(task_name, task_name),
-            "sequence": sequence_label,
-            "p_repeat": (trials["transition"] == "repeating").mean(),
-        }
-        return chunks, repeat_probability
-
     chunk_frames = []
     repeat_probability_rows = []
     for task_name in task_names:
+        task_label = task_labels.get(task_name, task_name)
         for sequence_col, sequence_label in [("response", "Choices"), ("stimulus", "Stimulus")]:
             if {"subject", "session", "trial_idx", sequence_col}.issubset(plot_dfs[task_name].columns):
-                chunks, repeat_probability = transition_chunks_for_task(
-                    task_name,
-                    sequence_col,
-                    sequence_label,
+                chunks, repeat_probability = transition_chunk_lengths_for_sequence(
+                    plot_dfs[task_name],
+                    task_name=task_name,
+                    task_label=task_label,
+                    sequence_col=sequence_col,
+                    sequence_label=sequence_label,
                 )
                 chunk_frames.append(chunks)
                 repeat_probability_rows.append(repeat_probability)
@@ -5420,24 +5743,6 @@ def build_transition_chunk_plot_data(
     )
     transition_repeat_probabilities = pd.DataFrame(repeat_probability_rows)
     plot_x = np.arange(1, int(max_chunk_length) + 1)
-
-    def geometric_chunk_probability(chunk_lengths, repeat_probability, transition):
-        continue_probability = (
-            repeat_probability
-            if transition == "repeating"
-            else 1.0 - repeat_probability
-        )
-        return (1.0 - continue_probability) * (continue_probability ** (chunk_lengths - 1))
-
-    def repeat_probability_for(task_label, sequence):
-        matches = transition_repeat_probabilities.loc[
-            (transition_repeat_probabilities["task_label"] == task_label)
-            & (transition_repeat_probabilities["sequence"] == sequence),
-            "p_repeat",
-        ]
-        if matches.empty:
-            return None
-        return float(matches.iloc[0])
 
     plot_rows = []
     for task_label in task_order:
@@ -5453,7 +5758,11 @@ def build_transition_chunk_plot_data(
             group_cols=["transition"],
             stat=stat,
         )
-        choice_probability = repeat_probability_for(task_label, "Choices")
+        choice_probability = repeat_probability_for_transition_chunks(
+            transition_repeat_probabilities,
+            task_label=task_label,
+            sequence="Choices",
+        )
         for transition in transition_palette:
             transition_data = hist_data[hist_data["transition"] == transition]
             transition_total = transition_data["hist_weight"].sum()
@@ -5476,7 +5785,7 @@ def build_transition_chunk_plot_data(
                 for chunk_length, weight in zip(plot_x, animal_y, strict=False)
             )
             if choice_probability is not None:
-                generated_y = geometric_chunk_probability(
+                generated_y = geometric_transition_chunk_probability(
                     plot_x,
                     choice_probability,
                     transition,

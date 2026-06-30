@@ -48,6 +48,8 @@ def _():
     from src.process import two_adc as process_two_adc
     from src.process.common import (
         add_choice_lag_summary_regressor,
+        add_fixed_accuracy_repetition_band,
+        build_repetition_chunk_plot_data,
         build_transition_chunk_drug_plot_data,
         build_transition_chunk_plot_data,
         prepare_closed_loop_model_autocorrelograms,
@@ -69,8 +71,10 @@ def _():
     return (
         Path,
         add_choice_lag_summary_regressor,
+        add_fixed_accuracy_repetition_band,
         animal_chunk_histogram,
         boxplot_STYLE,
+        build_repetition_chunk_plot_data,
         build_repetition_variance_by_drug_task,
         build_session_repetition_data,
         build_session_trial_outcomes_data,
@@ -113,6 +117,11 @@ def _(load_app_config, process_mcdr, process_two_adc, process_two_afc):
     return (prepare_predictions_df,)
 
 
+@app.cell
+def _():
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -123,8 +132,8 @@ def _(mo):
 
 @app.cell
 def _():
-    mount_figure = False
-    format = "png"
+    mount_figure = True
+    format = "pdf"
     return format, mount_figure
 
 
@@ -153,7 +162,7 @@ def _(Path, configure_paths, format, get_runtime_paths, os):
 
     os.makedirs(path_panels, exist_ok=True)
     print(path_panels)
-    return path_panels, paths
+    return path_panels, paths, project_path
 
 
 @app.cell(hide_code=True)
@@ -243,6 +252,7 @@ def _(
         views[_task] = build_views(_arrays_store, _adapter, 1, subjects_by_task[_task])
         trial_dfs[_task], weight_dfs[_task] = build_trial_and_weights_df(_df_all, views=views[_task], adapter=_adapter, min_session_length=1)
         plot_dfs[_task] = prepare_predictions_df(_task, trial_dfs[_task])
+        # plot_dfs[_task] = plot_dfs[_task].sort(["subject", "session", "trial_idx"]).filter(pl.len().over(["subject", "session"]) > 50, pl.cum_count("trial_idx").over(["subject", "session"]) <= pl.len().over(["subject", "session"]) - 50)
         _choice_lag_cols = []
         for _view in views[_task].values():
             for _feature in list(getattr(_view, "feat_names", []) or []):
@@ -251,7 +261,7 @@ def _(
                     _choice_lag_cols.append(_feature)
         # plot_dfs[_task] = add_choice_lag_summary_regressor(plot_dfs[_task], choice_lag_cols=_adapter.choice_lag_cols(trial_dfs[_task]))
         plot_dfs[_task] = add_choice_lag_summary_regressor(plot_dfs[_task], choice_lag_cols=_choice_lag_cols)
-    return plot_dfs, views, weight_dfs
+    return plot_dfs, trial_dfs, views, weight_dfs
 
 
 @app.cell(hide_code=True)
@@ -267,21 +277,25 @@ def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
-                # ["a", "a", "b", "b"],
-                ["c", "c", "e", "e"],
                 ["a", "a", "b", "b"],
-                ["l", "m", "p", "q"],
-                ["f", "f", "h", "h"],
-                ["i", "i", "k", "k"],
+                # ["_running_legend", "_running_legend", "_running_legend", "_running_legend"],
+                ["c", "c", "d", "d"],
+                ["c", "c", "d", "d"],
+                # ["a", "a", "b", "b"],
+                ["e", "f", "g", "h"],
+                ["i", "k", "j", "l"]
+                # ["i", "i", "j", "j"],
+                # ["k", "k", "l", "l"],
             ],
-            figsize=fig_size(1, 0.5),
+            figsize=fig_size(1,0.8),
             constrained_layout=True,
+            gridspec_kw={"height_ratios": [1, 1, 1, 1, 1]},
         )
         fig.set_constrained_layout_pads(
                 w_pad=0.01,
                 h_pad=0.01,
-                wspace=0.02,
-                hspace=0.04,
+                wspace=0.01,
+                hspace=0.07,
             )
     else:
         fig, axd = None, {}
@@ -361,6 +375,7 @@ def _(mo):
 def _(
     autocorrelograms_by_task,
     axd,
+    fig,
     fig_size,
     format,
     mo,
@@ -369,10 +384,10 @@ def _(
     plt,
 ):
     plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
-    ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd["f"]
+    ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd["i"]
     ax_autocorrelograms_2ADC_outcome.clear()
     plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
-    ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure else axd["i"]
+    ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure else axd["k"]
     ax_autocorrelograms_2ADC_repetition.clear()
 
 
@@ -393,12 +408,13 @@ def _(
             yerr=_data_sub.get("autocorr_sem"),
             fmt="o",
             capsize=0,
-            ms=3,
+            ms = 3,
             color=_colors["data"],
             ecolor=_colors["data"],
             label="Data",
             zorder=4,
         )
+
         for _label, _model_ac, _color in (
             ("GLM", _glm_ac, _colors["glm"]),
         ):
@@ -411,15 +427,31 @@ def _(
         _ax.set_title("Outcomes" if _signal == "Outcome" else "Repetitions")
         _ax.set_xlabel("Lag")
         _ax.set_ylabel("Autocorrelation")
+        _ax.set_xlim(0,20)
+
+        _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
+
+        _minor_pos = [i for i in range(20) if i not in _major_pos]
+        _ax.set_xticks(_major_pos)
+        _ax.set_xticklabels([str(i + 1) for i in _major_pos])
+        _ax.set_xticks(_minor_pos, minor=True)
+        _ax.tick_params(axis='x', which='major', length=6)
+        _ax.tick_params(axis='x', which='minor', length=3)
+    
         if _signal == "Repetition":
             _ax.set_ylim(top=0.15)
         else:
-            _ax.set_ylim(top=0.075)
+            _ax.set_ylim(top=0.05)
         _ax.legend(frameon=False)
         if not mount_figure:
             _fig.savefig((path_panels / f"2ADC_autocorrelogram_{_signal.lower()}").with_suffix(f".{format}"))
 
-    mo.hstack([ax_autocorrelograms_2ADC_outcome, ax_autocorrelograms_2ADC_repetition], justify="start", gap=1)
+
+    if not mount_figure:
+        _display = mo.hstack([ax_autocorrelograms_2ADC_outcome, ax_autocorrelograms_2ADC_repetition], justify="start", gap=1)
+    else: 
+        _display = fig
+    _display
     return
 
 
@@ -435,6 +467,7 @@ def _(mo):
 def _(
     autocorrelograms_by_task,
     axd,
+    fig,
     fig_size,
     format,
     mo,
@@ -443,10 +476,10 @@ def _(
     plt,
 ):
     plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
-    ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd["h"]
+    ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd["j"]
     ax_autocorrelograms_2AFC_outcome.clear()
     plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
-    ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure else axd["k"]
+    ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure else axd["l"]
     ax_autocorrelograms_2AFC_repetition.clear()
 
     _data_ac = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
@@ -484,15 +517,30 @@ def _(
         _ax.set_title("Outcomes" if _signal == "Outcome" else "Repetitions")
         _ax.set_xlabel("Lag")
         _ax.set_ylabel("Autocorrelation")
+        _ax.set_xlim(0,20)
+
+        _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
+
+        _minor_pos = [i for i in range(20) if i not in _major_pos]
+        _ax.set_xticks(_major_pos)
+        _ax.set_xticklabels([str(i + 1) for i in _major_pos])
+        _ax.set_xticks(_minor_pos, minor=True)
+        _ax.tick_params(axis='x', which='major', length=6)
+        _ax.tick_params(axis='x', which='minor', length=3)
+    
         if _signal == "Repetition":
             _ax.set_ylim(top=0.15)
         else:
-            _ax.set_ylim(top=0.1)
+            _ax.set_ylim(top=0.05)
         _ax.legend(frameon=False)
         if not mount_figure:
             _fig.savefig((path_panels / f"2AFC_autocorrelogram_{_signal.lower()}").with_suffix(f".{format}"))
 
-    mo.hstack([ax_autocorrelograms_2AFC_outcome, ax_autocorrelograms_2AFC_repetition], justify="start", gap=1)
+    if not mount_figure:
+        _display = mo.hstack([ax_autocorrelograms_2AFC_outcome, ax_autocorrelograms_2AFC_repetition], justify="start", gap=1)
+    else: 
+        _display = fig
+    _display
     return
 
 
@@ -528,8 +576,7 @@ def _(autocorrelograms_by_task, fig_size, format, mo, path_panels, plt):
             yerr=_data_sub.get("autocorr_sem"),
             fmt="o",
             capsize=0,
-            ms=3,
-            color=_colors["data"],
+            ms=3,        color=_colors["data"],
             ecolor=_colors["data"],
             label="Data",
             zorder=4,
@@ -582,6 +629,13 @@ def _(mo):
 
 
 @app.cell
+def _():
+    import matplotlib.ticker as mticker
+
+    return
+
+
+@app.cell
 def _(
     axd,
     boxplot_STYLE,
@@ -595,7 +649,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(3), constrained_layout=True)
-    prev_choices_2ADC = plt.gca() if not mount_figure else axd["m"]
+    prev_choices_2ADC = plt.gca() if not mount_figure else axd["f"]
     prev_choices_2ADC.clear()
 
     # Filter to just have lagged choices
@@ -614,7 +668,19 @@ def _(
     # prev_choices_2ADC.set_title("2ADC")
     prev_choices_2ADC.set_ylabel("Weight")
     prev_choices_2ADC.set_xlabel("Lag")
-    prev_choices_2ADC.set_xticklabels([str(i) if i == 1 or i % 5 == 0 else "" for i in range(1, len(_order) + 1)])
+
+    _major_pos = [i for i in range(len(_order)) if (i + 1) % 5 == 0 or (i + 1) == 1]
+
+    _minor_pos = [i for i in range(len(_order)) if i not in _major_pos]
+    prev_choices_2ADC.set_xticks(_major_pos)
+    prev_choices_2ADC.set_xticklabels([str(i + 1) for i in _major_pos])
+    prev_choices_2ADC.set_xticks(_minor_pos, minor=True)
+    prev_choices_2ADC.tick_params(axis='x', which='major', length=6)
+    prev_choices_2ADC.tick_params(axis='x', which='minor', length=3)
+
+
+    prev_choices_2ADC.set_ylim(-0.1,0.85)
+
     if not mount_figure:
         prev_choices_2ADC.figure.savefig((path_panels / "2ADC_prev_choices").with_suffix(f".{format}"))
     prev_choices_2ADC
@@ -643,12 +709,18 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(3), constrained_layout=True)
-    stim_2ADC = plt.gca() if not mount_figure else axd["l"]
+    stim_2ADC = plt.gca() if not mount_figure else axd["e"]
     stim_2ADC.clear()
 
     # Filter to just have lagged choices
     _plot_df = weight_dfs["2AFC_delay"].filter(pl.col("feature").str.contains("stim")) 
-    _order = sorted(_plot_df["feature"].unique(), key=lambda x: float(x.split("stim_x_delay_hot_")[-1].replace("p", ".")), reverse=True)
+    _order = sorted(
+        _plot_df["feature"].unique(),
+        key=lambda x: float(
+            x.split("stim_x_delay_hot_")[-1].replace("m", "-").replace("p", ".").replace("h", ".")
+        ),
+        reverse=True,
+    )
     sns.boxplot(
         data=_plot_df,
         x="feature",
@@ -663,6 +735,8 @@ def _(
     stim_2ADC.set_ylabel("Weight")
     stim_2ADC.set_xlabel("Delay")
     stim_2ADC.set_xticklabels([10 ,3,1, 0.1])
+    stim_2ADC.set_ylim(-0.1,3.5)
+
     if not mount_figure:
         plt.savefig((path_panels / "2ADC_stim").with_suffix(f".{format}"))
     stim_2ADC
@@ -699,7 +773,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(3), constrained_layout=True)
-    prev_choices_2AFC = plt.gca() if not mount_figure else axd["q"]
+    prev_choices_2AFC = plt.gca() if not mount_figure else axd["h"]
     prev_choices_2AFC.clear()
 
     # Filter to just have lagged choices
@@ -718,7 +792,16 @@ def _(
     # prev_choices_2AFC.set_title("2AFC")
     prev_choices_2AFC.set_ylabel("Weight")
     prev_choices_2AFC.set_xlabel("Lag")
-    prev_choices_2AFC.set_xticklabels([str(i) if i == 1 or i % 5 == 0 else "" for i in range(1, len(_order) + 1)])
+
+    _major_pos = [i for i in range(len(_order)) if (i + 1) % 5 == 0 or (i + 1) == 1]
+
+    _minor_pos = [i for i in range(len(_order)) if i not in _major_pos]
+    prev_choices_2AFC.set_xticks(_major_pos)
+    prev_choices_2AFC.set_xticklabels([str(i + 1) for i in _major_pos])
+    prev_choices_2AFC.set_xticks(_minor_pos, minor=True)
+    prev_choices_2AFC.tick_params(axis='x', which='major', length=6)
+    prev_choices_2AFC.tick_params(axis='x', which='minor', length=3)
+    prev_choices_2AFC.set_ylim(-0.1,0.85)
     if not mount_figure:
         prev_choices_2AFC.figure.savefig((path_panels / "2AFC_prev_choices").with_suffix(f".{format}"))
     prev_choices_2AFC
@@ -747,7 +830,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(3), constrained_layout=True)
-    stim_2AFC = plt.gca() if not mount_figure else axd["p"]
+    stim_2AFC = plt.gca() if not mount_figure else axd["g"]
     stim_2AFC.clear()
 
     # Filter to just have stimulus
@@ -767,6 +850,7 @@ def _(
     stim_2AFC.set_ylabel("Weight")
     stim_2AFC.set_xlabel("ILD")
     stim_2AFC.set_xticklabels([2,4,8, 70])
+    stim_2AFC.set_ylim(-0.1,3.5)
     if not mount_figure:
         stim_2AFC.figure.savefig((path_panels / "2AFC_stim").with_suffix(f".{format}"))
     stim_2AFC
@@ -1106,6 +1190,7 @@ def _(mo):
 @app.cell
 def _(
     adapters,
+    add_fixed_accuracy_repetition_band,
     autocorrelograms_by_task,
     axd,
     build_session_repetition_data,
@@ -1117,8 +1202,8 @@ def _(
     plot_dfs,
     plt,
 ):
-    _subject = "C37"
-    _session = 35
+    _subject = "E11"
+    _session = "E11_StageTraining_Ephys_V1_20210409-115620"
     _subject_df  = plot_dfs["2AFC_delay"].filter(pl.col("subject") == _subject, pl.col("session") == _session)
     session_repetition_data_2ADC = build_session_repetition_data(
         _subject_df,
@@ -1127,6 +1212,7 @@ def _(
         adapter=adapters["2AFC_delay"],
         window = 20,
     )
+    session_repetition_data_2ADC = add_fixed_accuracy_repetition_band(session_repetition_data_2ADC)
     _subject_sim_df = (
         pl.from_pandas(autocorrelograms_by_task["2AFC_delay"]["glm"]["simulated_df"])
         .filter(
@@ -1151,6 +1237,23 @@ def _(
     single_session_2ADC = plt.gca() if not mount_figure else axd["a"]
     single_session_2ADC.clear()
 
+    single_session_2ADC.fill_between(
+        session_repetition_data_2ADC["trial_x"].to_numpy(),
+        session_repetition_data_2ADC["fixed_accuracy_repeat_low"].to_numpy(),
+        session_repetition_data_2ADC["fixed_accuracy_repeat_high"].to_numpy(),
+        color="tab:blue",
+        alpha=0.1,
+        linewidth=0,
+    )
+    # single_session_2ADC.fill_between(
+    #     session_repetition_data_2ADC["trial_x"].to_numpy(),
+    #     session_repetition_data_2ADC["fixed_accuracy_repeat_high"].to_numpy(),
+    #     session_repetition_data_2ADC["response_repeat_window_fraction"].to_numpy(),
+    #     where=session_repetition_data_2ADC["fixed_accuracy_choice_above"].to_numpy(),
+    #     color="tab:brown",
+    #     alpha=0.18,
+    #     linewidth=0,
+    # )
     single_session_2ADC.plot(
         "trial_x",
         "response_repeat_window_fraction",
@@ -1198,6 +1301,7 @@ def _(mo):
 @app.cell
 def _(
     adapters,
+    add_fixed_accuracy_repetition_band,
     axd,
     build_session_repetition_data,
     fig_size,
@@ -1208,8 +1312,8 @@ def _(
     plot_dfs,
     plt,
 ):
-    _subject = "335"
-    _session = "335_stage_training_v2_20220329-111341" 
+    _subject = "875"
+    _session = "875_stage_training_v4_20230717-112113" 
     _subject_df  = plot_dfs["2AFC"].filter(pl.col("subject") == _subject, pl.col("session") == _session)
     session_repetition_data_2AFC = build_session_repetition_data(
         _subject_df,
@@ -1218,16 +1322,34 @@ def _(
         adapter=adapters["2AFC"],
         window = 20,
     )
-    plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
+    session_repetition_data_2AFC = add_fixed_accuracy_repetition_band(session_repetition_data_2AFC)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     single_session_2AFC = plt.gca() if not mount_figure else axd["b"]
     single_session_2AFC.clear()
 
+    single_session_2AFC.fill_between(
+        session_repetition_data_2AFC["trial_x"].to_numpy(),
+        session_repetition_data_2AFC["fixed_accuracy_repeat_low"].to_numpy(),
+        session_repetition_data_2AFC["fixed_accuracy_repeat_high"].to_numpy(),
+        color="tab:blue",
+        alpha=0.1,
+        linewidth=0,
+    )
+    # single_session_2AFC.fill_between(
+    #     session_repetition_data_2AFC["trial_x"].to_numpy(),
+    #     session_repetition_data_2AFC["fixed_accuracy_repeat_high"].to_numpy(),
+    #     session_repetition_data_2AFC["response_repeat_window_fraction"].to_numpy(),
+    #     where=session_repetition_data_2AFC["fixed_accuracy_choice_above"].to_numpy(),
+    #     color="tab:brown",
+    #     alpha=0.18,
+    #     linewidth=0,
+    # )
     single_session_2AFC.plot(
         "trial_x",
         "response_repeat_window_fraction",
         color="tab:brown",
         linewidth=1.5,
-        label="Choice",
+        label="Choice Rep.",
         data=session_repetition_data_2AFC
     )
     single_session_2AFC.plot(
@@ -1235,7 +1357,7 @@ def _(
         "stimulus_repeat_window_fraction",
         color="tab:blue",
         linewidth=1.5,
-        label="Stimulus",
+        label="Stim. Rep.",
         data=session_repetition_data_2AFC
     )
     single_session_2AFC.set_title("")
@@ -1251,7 +1373,7 @@ def _(
     single_session_2AFC.set_ylabel("Running fraction")
     single_session_2AFC.set_ylim(0, 1)
     single_session_2AFC.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
-    single_session_2AFC.legend(frameon=False, loc="upper right")
+    single_session_2AFC.legend(frameon=False, loc="best")
     if not mount_figure:
         plt.savefig((path_panels / "2AFC_single_session").with_suffix(f".{format}"))
     single_session_2AFC
@@ -1280,9 +1402,21 @@ def _():
     chunk_hist_ylabel = {"count": "Count", "probability": "Frequency"}[chunk_hist_stat]
     transition_palette = {"repeating": "tab:brown", "alternating": "tab:purple"}
     transition_drug_palette = transition_palette
+    source_palette = {
+        "Data": "tab:blue",
+        "GLM": "tab:gray",
+        "Independent choices": "tab:blue",
+    }
+    source_style = {
+        "Data": "",
+        "Independent choices": (2, 2),
+        "GLM": "",
+    }
     return (
         chunk_hist_stat,
         chunk_hist_ylabel,
+        source_palette,
+        source_style,
         transition_drug_palette,
         transition_palette,
     )
@@ -1297,7 +1431,24 @@ def _(mo):
 
 
 @app.cell
+def _(pl, plot_dfs, trial_dfs):
+    for _task in ("2AFC_delay", "2AFC"):
+        before = trial_dfs[_task].group_by(["subject", "session"]).agg(pl.len().alias("n_before"))
+        after = plot_dfs[_task].group_by(["subject", "session"]).agg(pl.len().alias("n_after"))
+
+        print(
+            _task,
+            before.join(after, on=["subject", "session"], how="left")
+            .with_columns((pl.col("n_before") - pl.col("n_after").fill_null(0)).alias("n_cut"))
+            .filter(pl.col("n_cut") != 50)
+        )
+    return
+
+
+@app.cell
 def _(
+    autocorrelograms_by_task,
+    build_repetition_chunk_plot_data,
     build_transition_chunk_plot_data,
     chunk_hist_stat,
     plot_dfs,
@@ -1312,9 +1463,19 @@ def _(
             transition_palette=transition_palette,
         )
     )
+    _glm_simulated_dfs = {
+        _task: autocorrelograms_by_task[_task]["glm"]["simulated_df"]
+        for _task in task_names
+    }
+    repetition_chunk_plot_data = build_repetition_chunk_plot_data(
+        plot_dfs,
+        task_names,
+        glm_simulated_dfs=_glm_simulated_dfs,
+        stat=chunk_hist_stat,
+    )
     return (
+        repetition_chunk_plot_data,
         transition_chunk_lengths_by_task,
-        transition_chunk_plot_data,
         transition_repeat_probabilities,
     )
 
@@ -1336,22 +1497,23 @@ def _(
     mount_figure,
     path_panels,
     plt,
+    repetition_chunk_plot_data,
     sns,
-    transition_chunk_plot_data,
-    transition_palette,
+    source_palette,
+    source_style,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     consec_rep_2ADC = plt.gca() if not mount_figure else axd["c"]
     consec_rep_2ADC.clear()
 
     sns.lineplot(
-        data=transition_chunk_plot_data[transition_chunk_plot_data["task_label"] == "2ADC"],
+        data=repetition_chunk_plot_data[repetition_chunk_plot_data["task_label"] == "2ADC"],
         x="chunk_length",
         y="weight",
-        hue="transition",
+        hue="source",
         style="source",
-        palette=transition_palette,
-        dashes={"Data": "", "Independent choices": (2, 2)},
+        palette=source_palette,
+        dashes=source_style,
         markers=False,
         errorbar=None,
         ax=consec_rep_2ADC,
@@ -1360,12 +1522,12 @@ def _(
     consec_rep_2ADC.set_ylim(1, 1e4)
     consec_rep_2ADC.set_yscale("log")
     # consec_rep_2ADC.set_title("2ADC")
-    consec_rep_2ADC.set_xlabel("Consecutive choices")
+    consec_rep_2ADC.set_xlabel("Consecutive repeated choices")
     consec_rep_2ADC.set_ylabel(chunk_hist_ylabel)
     _handles, _labels = consec_rep_2ADC.get_legend_handles_labels()
     consec_rep_2ADC.legend(
-        [h for h, l in zip(_handles, _labels) if l not in ["transition", "source"]],
-        [l for l in _labels if l not in ["transition", "source"]],
+        [h for h, l in zip(_handles, _labels) if l not in ["transition", "source", "repeating"]],
+        [l for l in _labels if l not in ["transition", "source", "repeating"]],
         frameon=False,
     )
     if not mount_figure:
@@ -1391,22 +1553,23 @@ def _(
     mount_figure,
     path_panels,
     plt,
+    repetition_chunk_plot_data,
     sns,
-    transition_chunk_plot_data,
-    transition_palette,
+    source_palette,
+    source_style,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    consec_rep_2AFC = plt.gca() if not mount_figure else axd["e"]
+    consec_rep_2AFC = plt.gca() if not mount_figure else axd["d"]
     consec_rep_2AFC.clear()
 
     sns.lineplot(
-        data=transition_chunk_plot_data[transition_chunk_plot_data["task_label"] == "2AFC"],
+        data=repetition_chunk_plot_data[repetition_chunk_plot_data["task_label"] == "2AFC"],
         x="chunk_length",
         y="weight",
-        hue="transition",
+         hue="source",
         style="source",
-        palette=transition_palette,
-        dashes={"Data": "", "Independent choices": (2, 2)},
+        palette=source_palette,
+        dashes=source_style,
         markers=False,
         errorbar=None,
         ax=consec_rep_2AFC,
@@ -1415,13 +1578,13 @@ def _(
     consec_rep_2AFC.set_ylim(1, 1e4)
     consec_rep_2AFC.set_yscale("log")
     # consec_rep_2AFC.set_title("2AFC")
-    consec_rep_2AFC.set_xlabel("Consecutive choices")
+    consec_rep_2AFC.set_xlabel("Consecutive repeated choices")
     consec_rep_2AFC.set_ylabel(chunk_hist_ylabel)
     _handles, _labels = consec_rep_2AFC.get_legend_handles_labels()
 
     consec_rep_2AFC.legend(
-        [h for h, l in zip(_handles, _labels) if l not in ["transition", "source"]],
-        [l for l in _labels if l not in ["transition", "source"]],
+        [h for h, l in zip(_handles, _labels) if l not in ["transition", "source", "repeating"]],
+        [l for l in _labels if l not in ["transition", "source", "repeating"]],
         frameon=False,
     )
     if not mount_figure:
@@ -1445,20 +1608,20 @@ def _(
     format,
     path_panels,
     plt,
+    repetition_chunk_plot_data,
     sns,
-    transition_chunk_plot_data,
     transition_palette,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     consec_rep_MCDR = plt.gca()
     sns.lineplot(
-        data=transition_chunk_plot_data[transition_chunk_plot_data["task_label"] == "MCDR"],
+        data=repetition_chunk_plot_data[repetition_chunk_plot_data["task_label"] == "MCDR"],
         x="chunk_length",
         y="weight",
         hue="transition",
         style="source",
         palette=transition_palette,
-        dashes={"Data": "", "Independent choices": (2, 2)},
+        dashes={"Data": "", "Independent choices": (2, 2), "GLM": (4, 1)},
         markers=False,
         errorbar=None,
         ax=consec_rep_MCDR,
@@ -1467,13 +1630,13 @@ def _(
     consec_rep_MCDR.set_ylim(1, 1e4)
     consec_rep_MCDR.set_yscale("log")
     consec_rep_MCDR.set_title("MCDR")
-    consec_rep_MCDR.set_xlabel("Consecutive choices")
+    consec_rep_MCDR.set_xlabel("Consecutive repeated choices")
     consec_rep_MCDR.set_ylabel(chunk_hist_ylabel)
     consec_rep_MCDR.legend(frameon=False)
     _handles, _labels = consec_rep_MCDR.get_legend_handles_labels()
     consec_rep_MCDR.legend(
-        [h for h, l in zip(_handles, _labels) if l not in ["transition", "source"]],
-        [l for l in _labels if l not in ["transition", "source"]],
+        [h for h, l in zip(_handles, _labels) if l not in ["transition", "source", "repeating"]],
+        [l for l in _labels if l not in ["transition", "source", "repeating"]],
         frameon=False,
     )
     plt.savefig((path_panels / "MCDR_choice_transition_chunks").with_suffix(f".{format}"))
@@ -2098,10 +2261,111 @@ def _(mo):
 
 
 @app.cell
-def _(fig, format, mount_figure, path_panels):
+def _():
+    8.27 - 6.26771653543307
+    11.69 
+    return
+
+
+@app.cell
+def _(fig_size):
+    fig_size(1)
+    return
+
+
+@app.cell
+def _():
+    ["a", "a", "b", "b"],
+    ["c", "c", "d", "d"],
+    ["c", "c", "d", "d"],
+    # ["a", "a", "b", "b"],
+    ["e", "m", "h", "q"],
+    ["i", "i", "k", "k"],
+    ["l", "l", "m", "m"],
+    return
+
+
+@app.cell
+def _(axd, fig, format, mount_figure, project_path):
     if mount_figure:
-        fig.savefig((path_panels / "figure2").with_suffix(f".{format}"))
+        for _name, _ax in axd.items():
+            _ax.set_title("")
+            _ax.set_xlabel("")
+            if not _name.startswith("_model_comparison_parent"):
+                _ax.set_ylabel("")
+            _legend = _ax.get_legend()
+            if _legend is not None and not _ax in [axd["c"], axd["i"]]:
+                _legend.remove()
+
+        axd["a"].set_ylabel("Running fraction")
+        axd["a"].set_title("2ADC")
+        axd["a"].set_xlabel("Trial")
+
+        axd["a"].legend(
+            *axd["a"].get_legend_handles_labels(),
+            handlelength=0.4,
+            ncol=3,
+            frameon=False,
+        )
+
+        axd["b"].set_title("2AFC")
+        axd["b"].set_xlabel("Trial")
+
+        axd["c"].set_ylabel("Count")
+        axd["c"].set_xlabel("Consecutive choices")
+
+        axd["d"].set_xlabel("Consecutive choices")
+
+        axd["e"].set_ylabel("Weight")
+        axd["e"].set_xlabel("Delay")
+        axd["e"].set_title("Stimulus")
+
+        axd["f"].set_title("Prev. Choice")
+        axd["f"].set_xlabel("Lag")
+
+        axd["g"].set_xlabel("ILD")
+        axd["g"].set_title("Stimulus")
+
+        axd["h"].set_title("Prev. Choice")
+        axd["h"].set_xlabel("Lag")
+
+        axd["i"].set_ylabel("Autocorrelation")
+        axd["i"].set_xlabel("Lag")
+        axd["i"].set_title("Outcome")
+        axd["i"].legend(
+            *axd["i"].get_legend_handles_labels(),
+            handlelength=0.4,
+            ncol=2,
+            frameon=False,
+            loc="lower left",
+            bbox_to_anchor=(0, -0.06),
+            columnspacing=0.6,
+            handletextpad=0.5,
+        )
+
+        axd["j"].set_title("Outcome")
+        axd["j"].set_xlabel("Lag")
+
+        axd["k"].set_xlabel("Lag")
+        axd["k"].set_title("Repetition")
+
+        axd["l"].set_title("Repetition")
+        axd["l"].set_xlabel("Lag")
+
+        for _ax in [axd["c"], axd["d"]]:
+            _ax.set_ylim(top=1e3)
+        for _ax in [axd["i"], axd["j"], axd["k"], axd["l"]]:
+            _ax.set_xlim(0, 20.5)
+
+        fig.align_ylabels()
+        fig.savefig((project_path / "figures" / "panels2" / "figure2").with_suffix(f".{format}"))
+
     fig
+    return
+
+
+@app.cell
+def _():
     return
 
 
