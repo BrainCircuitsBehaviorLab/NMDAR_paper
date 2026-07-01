@@ -768,6 +768,13 @@ def lapse_logistic_label(
 def glmhmmt_transition_weights_df(arrays_by_subject: dict, views_by_subject: dict | None = None) -> pd.DataFrame:
     """Build a long transition-weight dataframe from loaded GLM-HMM-T arrays."""
 
+    def _state_label(view, idx: int) -> str:
+        if view is not None and hasattr(view, "state_name_by_idx"):
+            label = getattr(view, "state_name_by_idx", {}).get(idx)
+            if label is not None:
+                return str(label)
+        return f"state {idx + 1}"
+
     records: list[dict] = []
     for subject, arrays in (arrays_by_subject or {}).items():
         weights = np.asarray(arrays.get("transition_weights", []), dtype=float)
@@ -776,11 +783,43 @@ def glmhmmt_transition_weights_df(arrays_by_subject: dict, views_by_subject: dic
         if weights.ndim == 1:
             weights = weights.reshape(1, -1)
 
-        feature_names = list(arrays.get("U_cols") or [])
+        raw_feature_names = arrays.get("U_cols")
+        if raw_feature_names is None:
+            feature_names = []
+        elif hasattr(raw_feature_names, "tolist"):
+            feature_names = list(raw_feature_names.tolist())
+        else:
+            feature_names = list(raw_feature_names)
         if len(feature_names) != weights.shape[-1]:
             feature_names = [f"transition_{idx}" for idx in range(weights.shape[-1])]
 
         view = (views_by_subject or {}).get(subject)
+        if weights.ndim == 3:
+            for source_idx in range(weights.shape[0]):
+                source_label = _state_label(view, source_idx)
+                for destination_idx in range(weights.shape[1]):
+                    destination_label = _state_label(view, destination_idx)
+                    transition_idx = source_idx * weights.shape[1] + destination_idx
+                    transition_label = f"{source_label} -> {destination_label}"
+                    for feature_idx, feature in enumerate(feature_names):
+                        records.append(
+                            {
+                                "subject": str(subject),
+                                "transition_idx": transition_idx,
+                                "transition_label": transition_label,
+                                "source_state_idx": source_idx,
+                                "source_state_label": source_label,
+                                "destination_state_idx": destination_idx,
+                                "destination_state_label": destination_label,
+                                "feature": str(feature),
+                                "weight": float(weights[source_idx, destination_idx, feature_idx]),
+                            }
+                        )
+            continue
+
+        if weights.ndim != 2:
+            raise ValueError(f"transition_weights must be 1D, 2D, or full 3D, got shape {weights.shape}.")
+
         for row_idx in range(weights.shape[0]):
             transition_label = f"transition {row_idx + 1}"
             if view is not None and hasattr(view, "state_name_by_idx") and weights.shape[0] == 1 and getattr(view, "K", None) == 2:
@@ -791,6 +830,10 @@ def glmhmmt_transition_weights_df(arrays_by_subject: dict, views_by_subject: dic
                         "subject": str(subject),
                         "transition_idx": row_idx,
                         "transition_label": transition_label,
+                        "source_state_idx": None,
+                        "source_state_label": None,
+                        "destination_state_idx": None,
+                        "destination_state_label": None,
                         "feature": str(feature),
                         "weight": float(weights[row_idx, feature_idx]),
                     }
@@ -4765,10 +4808,10 @@ def _input_driven_transition_weights_with_baseline(weights: np.ndarray, *, K: in
     """Return target-wise transition weights with the implicit baseline target restored."""
     weights = np.asarray(weights, dtype=float)
     baseline_target_idx = K - 1
-    if weights.ndim == 3 and weights.shape[1] == K:
+    if weights.ndim == 3 and weights.shape[:2] != (K, K) and weights.shape[1] == K:
         weights = weights.mean(axis=0)
     if weights.ndim != 2:
-        raise ValueError(f"transition_weights must be 2D or legacy 3D, got shape {weights.shape}.")
+        raise ValueError(f"target-wise transition_weights must be 2D or legacy 3D, got shape {weights.shape}.")
     if weights.shape[0] == K:
         return weights
     if weights.shape[0] != K - 1:
@@ -4795,19 +4838,26 @@ def autocorrelogram_transition_matrices(arrays: dict, *, K: int, T: int) -> np.n
     U = arrays.get("U")
     if transition_bias is not None and transition_weights is not None and U is not None:
         bias = np.asarray(transition_bias, dtype=float)
-        weights = _input_driven_transition_weights_with_baseline(transition_weights, K=K)
+        weights = np.asarray(transition_weights, dtype=float)
         U = np.asarray(U, dtype=float)
         if bias.shape != (K, K):
             raise ValueError(f"transition_bias must have shape {(K, K)}, got {bias.shape}.")
         if U.ndim != 2 or U.shape[0] != T:
             raise ValueError(f"U must have shape (T, D) with T={T}, got {U.shape}.")
-        if U.shape[1] != weights.shape[1]:
-            raise ValueError(f"U width ({U.shape[1]}) does not match transition_weights width ({weights.shape[1]}).")
 
         # GLM-HMM-T transition inputs are destination/current-trial aligned:
         # U[t + 1] drives the transition from trial t to t + 1.
-        input_logits = U[1:] @ weights.T
-        logits = bias[None, :, :] + input_logits[:, None, :]
+        if weights.ndim == 3 and weights.shape[:2] == (K, K):
+            if U.shape[1] != weights.shape[2]:
+                raise ValueError(f"U width ({U.shape[1]}) does not match transition_weights width ({weights.shape[2]}).")
+            input_logits = np.einsum("td,ijd->tij", U[1:], weights)
+            logits = bias[None, :, :] + input_logits
+        else:
+            weights = _input_driven_transition_weights_with_baseline(weights, K=K)
+            if U.shape[1] != weights.shape[1]:
+                raise ValueError(f"U width ({U.shape[1]}) does not match transition_weights width ({weights.shape[1]}).")
+            input_logits = U[1:] @ weights.T
+            logits = bias[None, :, :] + input_logits[:, None, :]
         return _softmax_last_axis(logits)
 
     transition_matrix = arrays.get("transition_matrix")
@@ -5600,6 +5650,265 @@ def _weighted_chunk_histogram_y(
         .to_numpy(dtype=float)
     )
     return y, float(hist_data["hist_weight"].sum())
+
+
+def outcome_streak_lengths_for_sequence(
+    plot_df,
+    *,
+    task_name: str,
+    task_label: str,
+    outcome_col: str | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """Return correct/incorrect run lengths and subject-balanced accuracy."""
+
+    df = to_pandas_df(plot_df)
+    if df.empty:
+        return pd.DataFrame(), {
+            "task": task_name,
+            "task_label": task_label,
+            "p_correct": np.nan,
+            "n_subjects": 0,
+            "aggregation": "mean_subject_after_pooling_sessions",
+        }
+
+    subject_col = pick_existing_column(df, ["subject", "Subject"])
+    session_col = pick_existing_column(df, ["session", "Session"])
+    trial_col = pick_existing_column(df, ["trial_idx", "trial_index", "Trial", "trial"])
+    outcome_col = pick_existing_column(
+        df,
+        [outcome_col, "performance", "correct_bool", "correct", "outcome"],
+    )
+    if any(col is None for col in [subject_col, session_col, trial_col, outcome_col]):
+        return pd.DataFrame(), {
+            "task": task_name,
+            "task_label": task_label,
+            "p_correct": np.nan,
+            "n_subjects": 0,
+            "aggregation": "mean_subject_after_pooling_sessions",
+        }
+
+    trials = df[[subject_col, session_col, trial_col, outcome_col]].copy()
+    trials.columns = ["subject", "session", "trial_idx", "outcome_value"]
+    trials["outcome_value"] = _binary_indicator_series(trials["outcome_value"])
+    trials = (
+        trials
+        .dropna(subset=["subject", "session", "trial_idx", "outcome_value"])
+        .sort_values(["subject", "session", "trial_idx"])
+    )
+    trials = trials[trials["outcome_value"].isin([0.0, 1.0])].copy()
+    if trials.empty:
+        return pd.DataFrame(), {
+            "task": task_name,
+            "task_label": task_label,
+            "p_correct": np.nan,
+            "n_subjects": 0,
+            "aggregation": "mean_subject_after_pooling_sessions",
+        }
+
+    trials["outcome"] = trials["outcome_value"].map({1.0: "Correct", 0.0: "Incorrect"})
+    trials["outcome_streak"] = (
+        trials
+        .groupby(["subject", "session"], observed=True)["outcome"]
+        .transform(lambda outcome: outcome.ne(outcome.shift()).cumsum())
+    )
+    chunks = (
+        trials
+        .groupby(["subject", "session", "outcome", "outcome_streak"], observed=True)
+        .size()
+        .rename("chunk_length")
+        .reset_index()
+    )
+    chunks["task"] = task_name
+    chunks["task_label"] = task_label
+
+    subject_accuracy = (
+        trials
+        .assign(is_correct=trials["outcome"] == "Correct")
+        .groupby("subject", observed=True)["is_correct"]
+        .mean()
+    )
+    correct_probability = {
+        "task": task_name,
+        "task_label": task_label,
+        "p_correct": float(subject_accuracy.mean()),
+        "n_subjects": int(subject_accuracy.shape[0]),
+        "aggregation": "mean_subject_after_pooling_sessions",
+    }
+    return chunks, correct_probability
+
+
+def _outcome_streak_chunks_from_simulation(
+    simulated_df,
+    *,
+    task_name: str,
+    task_label: str,
+) -> pd.DataFrame:
+    df = to_pandas_df(simulated_df)
+    if df.empty:
+        return pd.DataFrame()
+    chunks, _ = outcome_streak_lengths_for_sequence(
+        df,
+        task_name=task_name,
+        task_label=task_label,
+        outcome_col="performance",
+    )
+    return chunks
+
+
+def _weighted_outcome_streak_histogram_y(
+    chunks: pd.DataFrame,
+    *,
+    outcome: str,
+    stat: str,
+    plot_x: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    if chunks.empty:
+        return np.zeros_like(plot_x, dtype=float), 0.0
+    hist_data = animal_chunk_histogram_weights(
+        chunks,
+        group_cols=["outcome"],
+        stat=stat,
+    )
+    hist_data = hist_data[hist_data["outcome"] == outcome]
+    y = (
+        hist_data
+        .groupby("chunk_length", observed=True)["hist_weight"]
+        .sum()
+        .reindex(plot_x, fill_value=0)
+        .sort_index()
+        .to_numpy(dtype=float)
+    )
+    return y, float(hist_data["hist_weight"].sum())
+
+
+def geometric_outcome_streak_probability(
+    chunk_lengths,
+    correct_probability: float,
+    outcome: str,
+):
+    """Geometric streak-length probability for iid correct/incorrect outcomes."""
+
+    continue_probability = (
+        correct_probability
+        if outcome == "Correct"
+        else 1.0 - correct_probability
+    )
+    return (1.0 - continue_probability) * (continue_probability ** (chunk_lengths - 1))
+
+
+def build_outcome_streak_plot_data(
+    plot_dfs: dict,
+    task_names: Sequence[str],
+    *,
+    glm_simulated_dfs: dict | None = None,
+    stat: str = "count",
+    task_labels: dict[str, str] | None = None,
+    task_order: Sequence[str] = ("2ADC", "2AFC", "MCDR"),
+    outcome_palette: dict[str, str] | None = None,
+    max_chunk_length: int = 100,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str], pd.DataFrame]:
+    """Build correct/incorrect streak tables with independent and GLM predictions."""
+
+    task_labels = {
+        "2AFC": "2AFC",
+        "2AFC_delay": "2ADC",
+        "2ADC": "2ADC",
+        "MCDR": "MCDR",
+        **(task_labels or {}),
+    }
+    glm_simulated_dfs = glm_simulated_dfs or {}
+    outcome_palette = outcome_palette or {"Correct": "tab:green", "Incorrect": "tab:red"}
+    plot_x = np.arange(1, int(max_chunk_length) + 1)
+
+    chunk_frames = []
+    correct_probability_rows = []
+    plot_rows = []
+    for task_name in task_names:
+        task_label = task_labels.get(task_name, task_name)
+        if task_label not in task_order:
+            continue
+
+        chunks, correct_probability = outcome_streak_lengths_for_sequence(
+            plot_dfs[task_name],
+            task_name=task_name,
+            task_label=task_label,
+        )
+        if not chunks.empty:
+            chunk_frames.append(chunks)
+        correct_probability_rows.append(correct_probability)
+        glm_chunks = _outcome_streak_chunks_from_simulation(
+            glm_simulated_dfs.get(task_name, pd.DataFrame()),
+            task_name=task_name,
+            task_label=task_label,
+        )
+
+        for outcome in outcome_palette:
+            data_y, data_total = _weighted_outcome_streak_histogram_y(
+                chunks,
+                outcome=outcome,
+                stat=stat,
+                plot_x=plot_x,
+            )
+            plot_rows.extend(
+                {
+                    "task_label": task_label,
+                    "chunk_length": chunk_length,
+                    "outcome": outcome,
+                    "source": "Data",
+                    "weight": weight,
+                }
+                for chunk_length, weight in zip(plot_x, data_y, strict=False)
+            )
+
+            p_correct = correct_probability["p_correct"]
+            if np.isfinite(p_correct):
+                independent_y = geometric_outcome_streak_probability(
+                    plot_x,
+                    float(p_correct),
+                    outcome,
+                )
+                if stat == "count":
+                    independent_y = independent_y * data_total
+                plot_rows.extend(
+                    {
+                        "task_label": task_label,
+                        "chunk_length": chunk_length,
+                        "outcome": outcome,
+                        "source": "Independent choices",
+                        "weight": weight,
+                    }
+                    for chunk_length, weight in zip(plot_x, independent_y, strict=False)
+                )
+
+            glm_y, _ = _weighted_outcome_streak_histogram_y(
+                glm_chunks,
+                outcome=outcome,
+                stat=stat,
+                plot_x=plot_x,
+            )
+            plot_rows.extend(
+                {
+                    "task_label": task_label,
+                    "chunk_length": chunk_length,
+                    "outcome": outcome,
+                    "source": "GLM",
+                    "weight": weight,
+                }
+                for chunk_length, weight in zip(plot_x, glm_y, strict=False)
+            )
+
+    outcome_streak_lengths = (
+        pd.concat(chunk_frames, ignore_index=True)
+        if chunk_frames
+        else pd.DataFrame()
+    )
+    outcome_streak_probabilities = pd.DataFrame(correct_probability_rows)
+    return (
+        outcome_streak_lengths,
+        pd.DataFrame(plot_rows),
+        outcome_palette,
+        outcome_streak_probabilities,
+    )
 
 
 def build_repetition_chunk_plot_data(

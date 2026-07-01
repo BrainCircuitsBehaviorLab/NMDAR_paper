@@ -18,7 +18,7 @@ def _():
     import pandas as pd
     import polars as pl
     import seaborn as sns
-    from scipy.stats import chi2, ttest_1samp
+    from scipy.stats import ttest_1samp
 
     _PROJECT_ROOT = next(
         (
@@ -44,7 +44,6 @@ def _():
 
     sns.set_theme(style="ticks", context="paper")
     return (
-        chi2,
         fig_size,
         fit_main,
         get_adapter,
@@ -75,17 +74,9 @@ def _(plt, project_root):
 def _(fig_size, project_root):
     path_panels = project_root / "figures" / "panels_glmhmmt_transition_regressor_comparison"
     path_panels.mkdir(parents=True, exist_ok=True)
-    curve_figsize = fig_size(2, 2.8)
-    ranking_figsize = fig_size(2, 1.4)
-    subject_figsize = fig_size(2, 1.6)
-    term_figsize = fig_size(1, 1.2)
-    return (
-        curve_figsize,
-        path_panels,
-        ranking_figsize,
-        subject_figsize,
-        term_figsize,
-    )
+    curve_figsize = fig_size(2, 2)
+    term_figsize = fig_size(2, 1)
+    return curve_figsize, path_panels, term_figsize
 
 
 @app.cell
@@ -685,7 +676,7 @@ def _(model_specs, read_metrics):
 
 
 @app.cell
-def _(math, mo, model_metrics, pl, score_column, subject_trial_counts):
+def _(math, model_metrics, pl, score_column, subject_trial_counts):
     score_schema = {
         "subject": pl.Utf8,
         "model_id": pl.Utf8,
@@ -710,10 +701,6 @@ def _(math, mo, model_metrics, pl, score_column, subject_trial_counts):
     if model_metrics.is_empty():
         score_col = "test_ll_per_trial_mean"
         score_df = pl.DataFrame(schema=score_schema)
-        score_summary = pl.DataFrame()
-        best_score_models = pl.DataFrame()
-        best_bic_models = pl.DataFrame()
-        metrics_output = mo.md("No matching GLM-HMM-T transition-grid metrics found yet.")
     else:
         score_col = score_column(model_metrics)
         _metrics = model_metrics.with_columns((pl.col(score_col) / math.log(2.0)).alias("score"))
@@ -727,56 +714,11 @@ def _(math, mo, model_metrics, pl, score_column, subject_trial_counts):
             .with_columns(pl.col("n_trials").cast(pl.Int64))
             .sort(["model_order", "subject"])
         )
-        score_summary = (
-            score_df
-            .group_by(
-                [
-                    "model_order",
-                    "model_id",
-                    "emission_constraint",
-                    "emission_constraint_label",
-                    "frozen_emissions_json",
-                    "terms_key",
-                    "combo_label",
-                    "added_term",
-                    "n_terms",
-                    "n_free_params",
-                ]
-            )
-            .agg(
-                pl.mean("score").alias("mean_score_bits"),
-                pl.std("score").alias("sd_score_bits"),
-                pl.mean("bic").alias("mean_bic"),
-                pl.mean("acc").alias("mean_acc"),
-                pl.len().alias("n_subjects"),
-            )
-            .sort("model_order")
-        )
-        best_score_models = score_summary.sort("mean_score_bits", descending=True).head(20)
-        best_bic_models = score_summary.sort("mean_bic").head(20)
-        metrics_output = best_score_models
-    metrics_output
-    return best_bic_models, score_col, score_df, score_summary
-
-
-@app.cell(hide_code=True)
-def _(mo, score_col):
-    mo.md(f"""
-    ## Model ranking
-
-    Score column: `{score_col}`. Log-likelihood values are shown as bits per trial.
-    """)
-    return
+    return score_col, score_df
 
 
 @app.cell
-def _(best_bic_models):
-    best_bic_models
-    return
-
-
-@app.cell
-def _(chi2, np, pl, score_df, selected_candidate_terms, ttest_1samp):
+def _(np, pl, score_df, selected_candidate_terms, ttest_1samp):
     delta_schema = {
         "subject": pl.Utf8,
         "model_id": pl.Utf8,
@@ -793,32 +735,6 @@ def _(chi2, np, pl, score_df, selected_candidate_terms, ttest_1samp):
         "delta_raw_ll_vs_base": pl.Float64,
         "delta_bic_vs_base": pl.Float64,
         "param_delta_vs_base": pl.Int64,
-    }
-    nested_schema = {
-        "subject": pl.Utf8,
-        "model_id": pl.Utf8,
-        "parent_model_id": pl.Utf8,
-        "model_order": pl.Int64,
-        "n_terms": pl.Int64,
-        "terms_key": pl.Utf8,
-        "parent_terms_key": pl.Utf8,
-        "combo_label": pl.Utf8,
-        "added_term": pl.Utf8,
-        "score": pl.Float64,
-        "parent_score": pl.Float64,
-        "raw_ll": pl.Float64,
-        "parent_raw_ll": pl.Float64,
-        "bic": pl.Float64,
-        "parent_bic": pl.Float64,
-        "n_free_params": pl.Int64,
-        "parent_n_free_params": pl.Int64,
-        "n_trials": pl.Int64,
-        "delta_score_vs_parent": pl.Float64,
-        "delta_raw_ll_vs_parent": pl.Float64,
-        "delta_bic_vs_parent": pl.Float64,
-        "df": pl.Int64,
-        "lr_stat": pl.Float64,
-        "subject_lrt_pvalue": pl.Float64,
     }
     term_gain_schema = {
         "subject": pl.Utf8,
@@ -838,15 +754,6 @@ def _(chi2, np, pl, score_df, selected_candidate_terms, ttest_1samp):
     def _terms_key(terms: tuple[str, ...]) -> str:
         return "|".join(terms) if terms else "intercept_only"
 
-    def _lrt_pvalue(row):
-        lr_stat = row["lr_stat"]
-        df = row["df"]
-        if lr_stat is None or df is None or int(df) <= 0:
-            return None
-        if not np.isfinite(float(lr_stat)):
-            return None
-        return float(chi2.sf(max(float(lr_stat), 0.0), int(df)))
-
     def _stars(pvalue):
         if not np.isfinite(pvalue) or pvalue >= 0.05:
             return "ns"
@@ -858,11 +765,6 @@ def _(chi2, np, pl, score_df, selected_candidate_terms, ttest_1samp):
 
     if score_df.is_empty():
         delta_vs_base_df = pl.DataFrame(schema=delta_schema)
-        delta_summary = pl.DataFrame()
-        nested_delta_df = pl.DataFrame(schema=nested_schema)
-        nested_delta_summary = pl.DataFrame()
-        nested_lrt_summary = pl.DataFrame()
-        term_gain_df = pl.DataFrame(schema=term_gain_schema)
         term_gain_summary = pl.DataFrame()
     else:
         _base = (
@@ -889,81 +791,6 @@ def _(chi2, np, pl, score_df, selected_candidate_terms, ttest_1samp):
             )
             .select(list(delta_schema))
             .sort(["model_order", "subject"])
-        )
-        delta_summary = (
-            delta_vs_base_df
-            .group_by(["model_order", "model_id", "n_terms", "terms_key", "combo_label", "n_free_params"])
-            .agg(
-                pl.mean("delta_score_vs_base").alias("mean_delta_score_bits"),
-                pl.std("delta_score_vs_base").alias("sd_delta_score_bits"),
-                pl.mean("delta_bic_vs_base").alias("mean_delta_bic"),
-                pl.first("param_delta_vs_base").alias("param_delta_vs_base"),
-                pl.len().alias("n_subjects"),
-            )
-            .sort("model_order")
-        )
-        _parents = (
-            score_df
-            .select(
-                [
-                    "subject",
-                    pl.col("model_id").alias("parent_model_id"),
-                    pl.col("terms_key").alias("parent_terms_key"),
-                    pl.col("score").alias("parent_score"),
-                    pl.col("raw_ll").alias("parent_raw_ll"),
-                    pl.col("bic").alias("parent_bic"),
-                    pl.col("n_free_params").alias("parent_n_free_params"),
-                ]
-            )
-        )
-        nested_delta_df = (
-            score_df
-            .filter(pl.col("parent_model_id").is_not_null())
-            .join(_parents, on=["subject", "parent_model_id", "parent_terms_key"], how="inner")
-            .with_columns(
-                (pl.col("score") - pl.col("parent_score")).alias("delta_score_vs_parent"),
-                (pl.col("raw_ll") - pl.col("parent_raw_ll")).alias("delta_raw_ll_vs_parent"),
-                (pl.col("bic") - pl.col("parent_bic")).alias("delta_bic_vs_parent"),
-                (pl.col("n_free_params") - pl.col("parent_n_free_params")).cast(pl.Int64).alias("df"),
-            )
-            .with_columns((2.0 * pl.col("delta_raw_ll_vs_parent")).alias("lr_stat"))
-            .with_columns(
-                pl.struct(["lr_stat", "df"])
-                .map_elements(_lrt_pvalue, return_dtype=pl.Float64)
-                .alias("subject_lrt_pvalue")
-            )
-            .select(list(nested_schema))
-            .sort(["model_order", "subject"])
-        )
-        nested_delta_summary = (
-            nested_delta_df
-            .group_by(["model_order", "model_id", "n_terms", "terms_key", "combo_label", "added_term", "n_free_params"])
-            .agg(
-                pl.mean("delta_score_vs_parent").alias("mean_delta_score_bits"),
-                pl.std("delta_score_vs_parent").alias("sd_delta_score_bits"),
-                pl.mean("delta_bic_vs_parent").alias("mean_delta_bic"),
-                pl.first("df").alias("df_per_subject"),
-                pl.len().alias("n_subjects"),
-            )
-            .sort("model_order")
-        )
-        nested_lrt_summary = (
-            nested_delta_df
-            .group_by(["model_order", "model_id", "n_terms", "combo_label", "added_term"])
-            .agg(
-                pl.sum("lr_stat").alias("total_lr_stat"),
-                pl.first("df").alias("df_per_subject"),
-                pl.len().alias("n_subjects"),
-                pl.mean("subject_lrt_pvalue").alias("mean_subject_lrt_pvalue"),
-                pl.mean("delta_score_vs_parent").alias("mean_delta_score_bits"),
-            )
-            .with_columns((pl.col("df_per_subject") * pl.col("n_subjects")).cast(pl.Int64).alias("total_df"))
-            .with_columns(
-                pl.struct(["total_lr_stat", "total_df"])
-                .map_elements(lambda row: _lrt_pvalue({"lr_stat": row["total_lr_stat"], "df": row["total_df"]}), return_dtype=pl.Float64)
-                .alias("aggregate_lrt_pvalue")
-            )
-            .sort("model_order")
         )
 
         score_pd = score_df.to_pandas()
@@ -1023,183 +850,12 @@ def _(chi2, np, pl, score_df, selected_candidate_terms, ttest_1samp):
                         "significance": _stars(pvalue),
                     }
                 )
-            term_gain_summary = pl.DataFrame(summary_rows).sort("mean_marginal_delta_bits", descending=True)
-    return (
-        delta_summary,
-        delta_vs_base_df,
-        nested_delta_summary,
-        nested_lrt_summary,
-        term_gain_summary,
-    )
-
-
-@app.cell
-def _(delta_vs_base_df, np, pl):
-    if delta_vs_base_df.is_empty():
-        model_selection_summary = pl.DataFrame()
-        best_subject_model_table = pl.DataFrame()
-        subject_model_delta_table = pl.DataFrame()
-    else:
-        _delta_scored = delta_vs_base_df.with_columns(
-            (pl.col("delta_score_vs_base") * 10000.0).alias("delta_bits_10k_trials"),
-            (pl.col("delta_score_vs_base") * 10000.0 * np.log10(2.0)).alias("log10_likelihood_ratio_10k"),
-            (pl.col("delta_score_vs_base") * pl.col("n_trials")).alias("delta_total_bits_observed"),
-            (pl.col("delta_score_vs_base") * pl.col("n_trials") * np.log10(2.0)).alias("log10_likelihood_ratio_observed"),
-        )
-        subject_model_delta_table = (
-            _delta_scored
-            .filter(pl.col("model_order") > 0)
-            .select(
-                [
-                    "subject",
-                    "combo_label",
-                    "delta_score_vs_base",
-                    "delta_bits_10k_trials",
-                    "log10_likelihood_ratio_10k",
-                    "n_trials",
-                    "delta_total_bits_observed",
-                    "log10_likelihood_ratio_observed",
-                    "delta_bic_vs_base",
-                ]
+            term_gain_summary = (
+                pl.DataFrame(summary_rows).sort("mean_marginal_delta_bits", descending=True)
+                if summary_rows
+                else pl.DataFrame()
             )
-            .sort(["subject", "delta_score_vs_base"], descending=[False, True])
-        )
-        model_selection_summary = (
-            _delta_scored
-            .filter(pl.col("model_order") > 0)
-            .group_by(["model_order", "model_id", "combo_label", "n_terms", "n_free_params"])
-            .agg(
-                pl.mean("delta_score_vs_base").alias("mean_delta_score_bits"),
-                pl.median("delta_score_vs_base").alias("median_delta_score_bits"),
-                pl.std("delta_score_vs_base").alias("sd_delta_score_bits"),
-                (pl.col("delta_score_vs_base") > 0).cast(pl.Int64).sum().alias("n_subjects_positive"),
-                pl.len().alias("n_subjects"),
-                pl.sum("delta_total_bits_observed").alias("sum_delta_bits_observed"),
-                pl.mean("delta_bic_vs_base").alias("mean_delta_bic"),
-            )
-            .with_columns(
-                (pl.col("n_subjects_positive") / pl.col("n_subjects")).alias("frac_subjects_positive"),
-                (pl.col("mean_delta_score_bits") * 10000.0).alias("mean_delta_bits_10k_trials"),
-                (pl.col("mean_delta_score_bits") * 10000.0 * np.log10(2.0)).alias("mean_log10_likelihood_ratio_10k"),
-                (pl.col("sum_delta_bits_observed") * np.log10(2.0)).alias("sum_log10_likelihood_ratio_observed"),
-            )
-            .sort(["mean_delta_score_bits", "frac_subjects_positive"], descending=[True, True])
-        )
-        best_subject_model_table = (
-            subject_model_delta_table
-            .group_by("subject", maintain_order=True)
-            .first()
-            .sort("delta_score_vs_base", descending=True)
-        )
-    return (
-        best_subject_model_table,
-        model_selection_summary,
-        subject_model_delta_table,
-    )
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## Model-selection diagnostics
-
-    Deltas are paired within subject against the transition-intercept model. The
-    10k-trial columns convert bits/trial into an equivalent likelihood-ratio
-    scale for a 10,000-trial dataset.
-    """)
-    return
-
-
-@app.cell
-def _(model_selection_summary):
-    model_selection_summary
-    return
-
-
-@app.cell
-def _(best_subject_model_table):
-    best_subject_model_table
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## Delta vs transition-intercept baseline
-    """)
-    return
-
-
-@app.cell
-def _(delta_summary):
-    delta_summary
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## Marginal regressor gain
-
-    Each row compares models with the regressor against the matched model with
-    the same other regressors but without that regressor.
-    """)
-    return
-
-
-@app.cell
-def _(term_gain_summary):
-    term_gain_summary
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Nested parent comparisons
-
-    Parent comparisons drop the last term in the selected regressor order.
-    Use LRT p-values only for in-sample fits (`Fit score = none`). With
-    cross-validation, use held-out LL and marginal gain summaries as the main
-    comparison.
-    """)
-    return
-
-
-@app.cell
-def _(nested_delta_summary):
-    nested_delta_summary
-    return
-
-
-@app.cell
-def _(nested_lrt_summary):
-    nested_lrt_summary
-    return
-
-
-@app.cell
-def _(mo, path_panels, plt, ranking_figsize, score_summary, sns):
-    if score_summary.is_empty():
-        top_score_ax = mo.md("No score summary rows to plot.")
-    else:
-        _top = score_summary.sort("mean_score_bits").tail(20).to_pandas()
-        plt.figure(figsize=ranking_figsize, constrained_layout=True)
-        top_score_ax = plt.gca()
-        sns.barplot(
-            data=_top,
-            x="mean_score_bits",
-            y="combo_label",
-            color="0.25",
-            ax=top_score_ax,
-        )
-        top_score_ax.set_xlabel("Mean LL (bits/trial)")
-        top_score_ax.set_ylabel("")
-        sns.despine(ax=top_score_ax)
-        top_score_ax.figure.savefig((path_panels / "top_mean_score").with_suffix(".svg"))
-        top_score_ax.figure.savefig((path_panels / "top_mean_score").with_suffix(".png"))
-    top_score_ax
-    return
+    return delta_vs_base_df, term_gain_summary
 
 
 @app.cell
@@ -1267,8 +923,8 @@ def _(
                 order=_positions,
                 show_ns=True,
             )
-            delta_base_ax.set_xlabel("Transition model")
             _score_label = "CV test LL" if score_col == "test_ll_per_trial_mean" else "LL"
+            delta_base_ax.set_xlabel("Transition model")
             delta_base_ax.set_ylabel(f"Delta {_score_label} vs transition intercept (bits/trial)")
             delta_base_ax.set_xticks(_positions)
             delta_base_ax.set_xticklabels(_labels, rotation=45, ha="right")
@@ -1281,95 +937,33 @@ def _(
 
 
 @app.cell
-def _(
-    mo,
-    model_selection_summary,
-    path_panels,
-    pl,
-    plt,
-    sns,
-    subject_figsize,
-    subject_model_delta_table,
-):
-    if model_selection_summary.is_empty() or subject_model_delta_table.is_empty():
-        subject_delta_ax = mo.md("No subject-level model-selection deltas to plot.")
-    else:
-        _labels = model_selection_summary.head(8).get_column("combo_label").to_list()
-        _df = (
-            subject_model_delta_table
-            .filter(pl.col("combo_label").is_in(_labels))
-            .to_pandas()
-        )
-        if _df.empty:
-            subject_delta_ax = mo.md("No selected subject-level deltas to plot.")
-        else:
-            plt.figure(figsize=subject_figsize, constrained_layout=True)
-            subject_delta_ax = plt.gca()
-            sns.stripplot(
-                data=_df,
-                x="delta_score_vs_base",
-                y="combo_label",
-                order=_labels,
-                color="0.55",
-                size=2.4,
-                jitter=0.18,
-                ax=subject_delta_ax,
-            )
-            sns.pointplot(
-                data=_df,
-                x="delta_score_vs_base",
-                y="combo_label",
-                order=_labels,
-                errorbar=("se", 1),
-                markers="D",
-                markersize=3,
-                linestyles="none",
-                color="black",
-                ax=subject_delta_ax,
-            )
-            subject_delta_ax.axvline(0, color="0.5", linestyle="--", linewidth=0.8)
-            subject_delta_ax.set_xlabel("Delta CV test LL vs transition intercept (bits/trial)")
-            subject_delta_ax.set_ylabel("")
-            sns.despine(ax=subject_delta_ax)
-            subject_delta_ax.figure.savefig((path_panels / "subject_delta_top_models").with_suffix(".svg"))
-            subject_delta_ax.figure.savefig((path_panels / "subject_delta_top_models").with_suffix(".png"))
-    subject_delta_ax
-    return
-
-
-@app.cell
 def _(mo, path_panels, plt, sns, term_figsize, term_gain_summary):
     if term_gain_summary.is_empty():
         term_gain_ax = mo.md("No marginal regressor-gain rows to plot.")
     else:
         _df = term_gain_summary.sort("mean_marginal_delta_bits").to_pandas()
+
         plt.figure(figsize=term_figsize, constrained_layout=True)
         term_gain_ax = plt.gca()
+
         sns.barplot(
             data=_df,
-            x="mean_marginal_delta_bits",
-            y="term",
+            x="term",
+            y="mean_marginal_delta_bits",
             color="0.35",
             ax=term_gain_ax,
         )
-        xmax = float(_df["mean_marginal_delta_bits"].max())
-        xmin = float(_df["mean_marginal_delta_bits"].min())
-        pad = max((xmax - xmin) * 0.06, 0.002)
-        term_gain_ax.set_xlim(right=xmax + pad * 6)
-        for _idx, _row in _df.reset_index(drop=True).iterrows():
-            term_gain_ax.text(
-                float(_row["mean_marginal_delta_bits"]) + pad,
-                _idx,
-                str(_row["significance"]),
-                va="center",
-                ha="left",
-            )
-        term_gain_ax.axvline(0, color="0.5", linestyle="--", linewidth=0.8)
-        term_gain_ax.set_xlabel("Mean marginal delta LL (bits/trial)")
-        term_gain_ax.set_ylabel("")
+
+        term_gain_ax.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+        term_gain_ax.set_xlabel("")
+        term_gain_ax.set_ylabel("Mean marginal delta LL (bits/trial)")
+        term_gain_ax.tick_params(axis="x", rotation=90)
+
         sns.despine(ax=term_gain_ax)
+
         term_gain_ax.figure.savefig((path_panels / "term_marginal_gain").with_suffix(".svg"))
         term_gain_ax.figure.savefig((path_panels / "term_marginal_gain").with_suffix(".png"))
+
     term_gain_ax
     return
 

@@ -31,6 +31,7 @@ def _():
     import pandas as pd
     import polars as pl
     import seaborn as sns
+    from scipy.stats import ttest_1samp
 
     from glmhmmt.notebook_support.analysis_common import (
         build_trial_and_weights_df,
@@ -42,6 +43,7 @@ def _():
     from src.process import nuo_auditory as process_nuo_auditory
     from src.process.common import (
         add_choice_lag_summary_regressor,
+        add_fixed_accuracy_repetition_band,
         build_transition_chunk_plot_data,
         prepare_closed_loop_model_autocorrelograms,
         prepare_corrected_behavior_autocorrelograms,
@@ -58,6 +60,7 @@ def _():
     return (
         Path,
         add_choice_lag_summary_regressor,
+        add_fixed_accuracy_repetition_band,
         animal_chunk_histogram,
         boxplot_STYLE,
         build_session_repetition_data,
@@ -82,6 +85,7 @@ def _():
         process_nuo_auditory,
         re,
         sns,
+        ttest_1samp,
     )
 
 
@@ -761,6 +765,174 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Fixed-accuracy band position
+    """)
+    return
+
+
+@app.cell
+def _(
+    TASK_NAME,
+    adapters,
+    add_fixed_accuracy_repetition_band,
+    build_session_repetition_data,
+    pd,
+    plot_dfs,
+):
+    band_position_order = ["Below", "In", "Above"]
+    _session_rows = []
+    _session_index = (
+        plot_dfs[TASK_NAME]
+        .select(["subject", "session"])
+        .unique()
+        .sort(["subject", "session"])
+        .to_pandas()
+    )
+
+    for _subject, _session in _session_index.itertuples(index=False, name=None):
+        try:
+            _session_data = build_session_repetition_data(
+                plot_dfs[TASK_NAME],
+                subject=_subject,
+                session=_session,
+                adapter=adapters[TASK_NAME],
+                window=20,
+            )
+        except ValueError:
+            continue
+
+        _session_data = add_fixed_accuracy_repetition_band(_session_data)
+        _required = {
+            "response_repeat_window_fraction",
+            "fixed_accuracy_repeat_low",
+            "fixed_accuracy_repeat_high",
+        }
+        if not _required.issubset(_session_data.columns):
+            continue
+
+        _band_data = _session_data[list(_required)].dropna()
+        if _band_data.empty:
+            continue
+
+        _observed = _band_data["response_repeat_window_fraction"]
+        _below = _observed < _band_data["fixed_accuracy_repeat_low"]
+        _above = _observed > _band_data["fixed_accuracy_repeat_high"]
+        _in = ~(_below | _above)
+        for _position, _mask in [
+            ("Below", _below),
+            ("In", _in),
+            ("Above", _above),
+        ]:
+            _session_rows.append(
+                {
+                    "subject": str(_subject),
+                    "session": str(_session),
+                    "position": _position,
+                    "proportion": float(_mask.mean()),
+                }
+            )
+
+    if _session_rows:
+        _subject_summary = (
+            pd.DataFrame(_session_rows)
+            .groupby(["subject", "position"], as_index=False, observed=True)["proportion"]
+            .mean()
+        )
+        _subject_summary["position"] = pd.Categorical(
+            _subject_summary["position"],
+            categories=band_position_order,
+            ordered=True,
+        )
+        _subject_summary = _subject_summary.sort_values(["position", "subject"])
+        _subject_summary["task"] = TASK_NAME
+        _subject_summary["task_label"] = "2AFC"
+    else:
+        _subject_summary = pd.DataFrame(
+            columns=["subject", "position", "proportion", "task", "task_label"]
+        )
+
+    band_position_by_task = {TASK_NAME: _subject_summary, "2AFC": _subject_summary}
+    return band_position_by_task, band_position_order
+
+
+@app.cell
+def _(np, pd, ttest_1samp):
+    def _band_position_stars(pvalue):
+        if not np.isfinite(pvalue) or pvalue >= 0.05:
+            return ""
+        if pvalue < 0.001:
+            return "***"
+        if pvalue < 0.01:
+            return "**"
+        return "*"
+
+
+    def add_band_position_zero_annotations(ax, df, *, order):
+        if df is None or df.empty or not {"position", "proportion"}.issubset(df.columns):
+            return
+
+        for _x_idx, _position in enumerate(order):
+            _values = pd.to_numeric(
+                df.loc[df["position"] == _position, "proportion"],
+                errors="coerce",
+            ).dropna()
+            if len(_values) < 2:
+                continue
+
+            _pvalue = float(ttest_1samp(_values.to_numpy(dtype=float), popmean=0.0).pvalue)
+            _stars = _band_position_stars(_pvalue)
+            if not _stars:
+                continue
+
+            _text_y = min(0.96, max(0.06, float(_values.max()) + 0.04))
+            ax.text(_x_idx, _text_y, _stars, ha="center", va="bottom")
+
+    return (add_band_position_zero_annotations,)
+
+
+@app.cell
+def _(
+    add_band_position_zero_annotations,
+    band_position_by_task,
+    band_position_order,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    path_panels,
+    plt,
+    sns,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    fixed_band_position_2AFC = plt.gca()
+
+    _plot_df = band_position_by_task["2AFC"]
+    sns.boxplot(
+        data=_plot_df,
+        x="position",
+        y="proportion",
+        order=band_position_order,
+        color="tab:blue",
+        ax=fixed_band_position_2AFC,
+        **boxplot_STYLE,
+    )
+    fixed_band_position_2AFC.set_xlabel("")
+    fixed_band_position_2AFC.set_ylabel("Proportion of trials")
+    fixed_band_position_2AFC.set_ylim(0, 1)
+    add_band_position_zero_annotations(
+        fixed_band_position_2AFC,
+        _plot_df,
+        order=band_position_order,
+    )
+    fixed_band_position_2AFC.figure.savefig(
+        (path_panels / "2AFC_fixed_accuracy_band_position").with_suffix(f".{format}")
+    )
+    fixed_band_position_2AFC
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## Histograms of repetition/alternation chunks
     """)
     return
@@ -857,7 +1029,7 @@ def _(
     transition_chunk_plot_data,
     transition_palette,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     consec_rep_nuo = plt.gca() if not mount_figure else axd["transition_chunks"]
     consec_rep_nuo.clear()
 
@@ -875,10 +1047,10 @@ def _(
         errorbar=None,
         ax=consec_rep_nuo,
     )
-    consec_rep_nuo.set_xlim(0, 30)
-    consec_rep_nuo.set_ylim(1, 1e3)
+    consec_rep_nuo.set_xlim(0, 10)
+    consec_rep_nuo.set_ylim(10, 1e3)
     # consec_rep_nuo.set_ylim(1e-6,1)
-    consec_rep_nuo.set_yscale("log")
+    # consec_rep_nuo.set_yscale("log")
     consec_rep_nuo.set_xlabel("Consecutive choices")
     consec_rep_nuo.set_ylabel(chunk_hist_ylabel)
     _handles, _labels = consec_rep_nuo.get_legend_handles_labels()

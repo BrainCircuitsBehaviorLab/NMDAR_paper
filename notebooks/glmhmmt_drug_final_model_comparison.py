@@ -18,7 +18,7 @@ def _():
     import pandas as pd
     import polars as pl
     import seaborn as sns
-    from scipy.stats import chi2, ttest_1samp, ttest_rel
+    from scipy.stats import ttest_1samp
 
     _PROJECT_ROOT = next(
         (
@@ -44,7 +44,6 @@ def _():
 
     sns.set_theme(style="ticks", context="paper")
     return (
-        chi2,
         fig_size,
         fit_main,
         get_adapter,
@@ -60,7 +59,6 @@ def _():
         project_root,
         sns,
         ttest_1samp,
-        ttest_rel,
     )
 
 
@@ -73,7 +71,7 @@ def _(plt, project_root):
 
 
 @app.cell
-def _(np, pd, ttest_1samp, ttest_rel):
+def _(np, pd, ttest_1samp):
     def _stars(pvalue):
         if not np.isfinite(pvalue) or pvalue >= 0.05:
             return "ns"
@@ -82,56 +80,6 @@ def _(np, pd, ttest_1samp, ttest_rel):
         if pvalue < 0.01:
             return "**"
         return "*"
-
-    def add_numeric_pair_annotations(
-        ax,
-        df,
-        *,
-        x,
-        y,
-        pairs,
-        subject_col="subject",
-        show_ns=True,
-    ):
-        if df is None or df.empty or not {x, y, subject_col}.issubset(df.columns):
-            return
-        y_values = pd.to_numeric(df[y], errors="coerce")
-        finite = y_values[np.isfinite(y_values)]
-        if finite.empty:
-            return
-        y_min = float(finite.min())
-        y_max = float(finite.max())
-        pad = max((y_max - y_min) * 0.08, 0.002)
-        base_y = y_max + pad
-        ax.set_ylim(top=base_y + pad * (len(pairs) + 1))
-
-        annotation_idx = 0
-        for left, right in pairs:
-            sub = df[df[x].isin([left, right])]
-            paired = sub.pivot_table(
-                values=y,
-                index=subject_col,
-                columns=x,
-                aggfunc="first",
-            )
-            if left not in paired.columns or right not in paired.columns:
-                continue
-            paired = paired.dropna(subset=[left, right])
-            if len(paired) < 2:
-                continue
-            pvalue = float(ttest_rel(paired[left], paired[right]).pvalue)
-            label = _stars(pvalue)
-            if label == "ns" and not show_ns:
-                continue
-            y_pos = base_y + pad * annotation_idx
-            ax.plot(
-                [left, left, right, right],
-                [y_pos, y_pos + pad * 0.25, y_pos + pad * 0.25, y_pos],
-                color="0.35",
-                linewidth=0.7,
-            )
-            ax.text((left + right) / 2, y_pos + pad * 0.3, label, ha="center", va="bottom")
-            annotation_idx += 1
 
     def add_one_sample_zero_annotations(ax, df, *, x, y, order, show_ns=False):
         if df is None or df.empty or not {x, y}.issubset(df.columns):
@@ -163,8 +111,8 @@ def _(fig_size, project_root):
     path_panels = project_root / "figures" / "panels_glmhmmt_drug_final_model_comparison"
     path_panels.mkdir(parents=True, exist_ok=True)
     figsize = fig_size(2, 2.2)
-    ranking_figsize = fig_size(2, 1.2)
-    return figsize, path_panels, ranking_figsize
+    delta_figsize = fig_size(1, 2)
+    return delta_figsize, figsize, path_panels
 
 
 @app.cell(hide_code=True)
@@ -697,7 +645,7 @@ def _(model_specs_by_task, read_metrics, task_name):
 
 
 @app.cell
-def _(math, mo, model_metrics, pl, score_column, subject_trial_counts):
+def _(math, model_metrics, pl, score_column, subject_trial_counts):
     score_schema = {
         "subject": pl.Utf8,
         "model_id": pl.Utf8,
@@ -726,10 +674,6 @@ def _(math, mo, model_metrics, pl, score_column, subject_trial_counts):
     if model_metrics.is_empty():
         score_col = "test_ll_per_trial_mean"
         score_df = pl.DataFrame(schema=score_schema)
-        score_summary = pl.DataFrame()
-        best_score_models = pl.DataFrame()
-        best_bic_models = pl.DataFrame()
-        metrics_output = mo.md("No matching GLM-HMM-T final-model metrics found yet.")
     else:
         score_col = score_column(model_metrics)
         _metrics = model_metrics.with_columns((pl.col(score_col) / math.log(2.0)).alias("score"))
@@ -742,56 +686,11 @@ def _(math, mo, model_metrics, pl, score_column, subject_trial_counts):
             .with_columns(pl.col("n_trials").cast(pl.Int64))
             .sort(["model_order", "subject"])
         )
-        score_summary = (
-            score_df
-            .group_by(
-                [
-                    "model_order",
-                    "model_id",
-                    "n_drug_terms",
-                    "step_label",
-                    "added_terms",
-                    "freeze_label",
-                    "drug_placement",
-                    "emission_label",
-                    "transition_label",
-                    "n_free_params",
-                ]
-            )
-            .agg(
-                pl.mean("score").alias("mean_score_bits"),
-                pl.std("score").alias("sd_score_bits"),
-                pl.mean("bic").alias("mean_bic"),
-                pl.mean("acc").alias("mean_acc"),
-                pl.len().alias("n_subjects"),
-            )
-            .sort("model_order")
-        )
-        best_score_models = score_summary.sort("mean_score_bits", descending=True).head(15)
-        best_bic_models = score_summary.sort("mean_bic").head(15)
-        metrics_output = best_score_models
-    metrics_output
-    return best_bic_models, score_col, score_df, score_summary
-
-
-@app.cell(hide_code=True)
-def _(mo, score_col):
-    mo.md(f"""
-    ## Model ranking
-
-    Score column: `{score_col}`. Log-likelihood values are shown as bits per trial.
-    """)
-    return
+    return score_col, score_df
 
 
 @app.cell
-def _(best_bic_models):
-    best_bic_models
-    return
-
-
-@app.cell
-def _(chi2, np, pl, score_df):
+def _(pl, score_df):
     delta_vs_base_schema = {
         "subject": pl.Utf8,
         "model_id": pl.Utf8,
@@ -810,46 +709,9 @@ def _(chi2, np, pl, score_df):
         "delta_bic_vs_base": pl.Float64,
         "param_delta_vs_base": pl.Int64,
     }
-    nested_delta_schema = {
-        "subject": pl.Utf8,
-        "model_id": pl.Utf8,
-        "parent_model_id": pl.Utf8,
-        "model_order": pl.Int64,
-        "n_drug_terms": pl.Int64,
-        "step_label": pl.Utf8,
-        "added_terms": pl.Utf8,
-        "score": pl.Float64,
-        "parent_score": pl.Float64,
-        "raw_ll": pl.Float64,
-        "parent_raw_ll": pl.Float64,
-        "bic": pl.Float64,
-        "parent_bic": pl.Float64,
-        "n_free_params": pl.Int64,
-        "parent_n_free_params": pl.Int64,
-        "n_trials": pl.Int64,
-        "delta_score_vs_parent": pl.Float64,
-        "delta_raw_ll_vs_parent": pl.Float64,
-        "delta_bic_vs_parent": pl.Float64,
-        "df": pl.Int64,
-        "lr_stat": pl.Float64,
-        "subject_lrt_pvalue": pl.Float64,
-    }
-
-    def _lrt_pvalue(row):
-        lr_stat = row["lr_stat"]
-        df = row["df"]
-        if lr_stat is None or df is None or int(df) <= 0:
-            return None
-        if not np.isfinite(float(lr_stat)):
-            return None
-        return float(chi2.sf(max(float(lr_stat), 0.0), int(df)))
 
     if score_df.is_empty():
         delta_vs_base_df = pl.DataFrame(schema=delta_vs_base_schema)
-        nested_delta_df = pl.DataFrame(schema=nested_delta_schema)
-        delta_summary = pl.DataFrame()
-        nested_delta_summary = pl.DataFrame()
-        nested_lrt_summary = pl.DataFrame()
     else:
         _base = (
             score_df
@@ -876,133 +738,7 @@ def _(chi2, np, pl, score_df):
             .select(list(delta_vs_base_schema))
             .sort(["model_order", "subject"])
         )
-        delta_summary = (
-            delta_vs_base_df
-            .group_by(["model_order", "model_id", "n_drug_terms", "step_label", "added_terms", "n_free_params"])
-            .agg(
-                pl.mean("delta_score_vs_base").alias("mean_delta_score_bits"),
-                pl.std("delta_score_vs_base").alias("sd_delta_score_bits"),
-                pl.mean("delta_bic_vs_base").alias("mean_delta_bic"),
-                pl.first("param_delta_vs_base").alias("param_delta_vs_base"),
-                pl.len().alias("n_subjects"),
-            )
-            .sort("model_order")
-        )
-        _parents = (
-            score_df
-            .select(
-                [
-                    "subject",
-                    pl.col("model_id").alias("parent_model_id"),
-                    pl.col("score").alias("parent_score"),
-                    pl.col("raw_ll").alias("parent_raw_ll"),
-                    pl.col("bic").alias("parent_bic"),
-                    pl.col("n_free_params").alias("parent_n_free_params"),
-                ]
-            )
-        )
-        nested_delta_df = (
-            score_df
-            .filter(pl.col("parent_model_id").is_not_null())
-            .join(_parents, on=["subject", "parent_model_id"], how="inner")
-            .with_columns(
-                (pl.col("score") - pl.col("parent_score")).alias("delta_score_vs_parent"),
-                (pl.col("raw_ll") - pl.col("parent_raw_ll")).alias("delta_raw_ll_vs_parent"),
-                (pl.col("bic") - pl.col("parent_bic")).alias("delta_bic_vs_parent"),
-                (pl.col("n_free_params") - pl.col("parent_n_free_params")).cast(pl.Int64).alias("df"),
-            )
-            .with_columns((2.0 * pl.col("delta_raw_ll_vs_parent")).alias("lr_stat"))
-            .with_columns(
-                pl.struct(["lr_stat", "df"])
-                .map_elements(_lrt_pvalue, return_dtype=pl.Float64)
-                .alias("subject_lrt_pvalue")
-            )
-            .select(list(nested_delta_schema))
-            .sort(["model_order", "subject"])
-        )
-        nested_delta_summary = (
-            nested_delta_df
-            .group_by(["model_order", "model_id", "n_drug_terms", "step_label", "added_terms", "n_free_params"])
-            .agg(
-                pl.mean("delta_score_vs_parent").alias("mean_delta_score_bits"),
-                pl.std("delta_score_vs_parent").alias("sd_delta_score_bits"),
-                pl.mean("delta_bic_vs_parent").alias("mean_delta_bic"),
-                pl.first("df").alias("df_per_subject"),
-                pl.len().alias("n_subjects"),
-            )
-            .sort("model_order")
-        )
-        nested_lrt_summary = (
-            nested_delta_df
-            .group_by(["model_order", "model_id", "n_drug_terms", "step_label", "added_terms"])
-            .agg(
-                pl.sum("lr_stat").alias("total_lr_stat"),
-                pl.first("df").alias("df_per_subject"),
-                pl.len().alias("n_subjects"),
-                pl.mean("subject_lrt_pvalue").alias("mean_subject_lrt_pvalue"),
-                pl.mean("delta_score_vs_parent").alias("mean_delta_score_bits"),
-            )
-            .with_columns((pl.col("df_per_subject") * pl.col("n_subjects")).cast(pl.Int64).alias("total_df"))
-            .with_columns(
-                pl.struct(["total_lr_stat", "total_df"])
-                .map_elements(lambda row: _lrt_pvalue({"lr_stat": row["total_lr_stat"], "df": row["total_df"]}), return_dtype=pl.Float64)
-                .alias("aggregate_lrt_pvalue")
-            )
-            .sort("model_order")
-        )
-    return (
-        delta_summary,
-        delta_vs_base_df,
-        nested_delta_summary,
-        nested_lrt_summary,
-    )
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## Drug terms vs base model
-    """)
-    return
-
-
-@app.cell
-def _(delta_summary):
-    delta_summary
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## Nested parent comparisons
-    """)
-    return
-
-
-@app.cell
-def _(nested_delta_summary):
-    nested_delta_summary
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Nested likelihood-ratio tests
-
-    The LRT table is for in-sample comparisons against each model's canonical
-    nested parent, defined by dropping the last term in the fixed term order.
-    Use it when the battery was fit with `Fit score = none`; with
-    cross-validation, the held-out LL plots below are the primary comparison.
-    """)
-    return
-
-
-@app.cell
-def _(nested_lrt_summary):
-    nested_lrt_summary
-    return
+    return (delta_vs_base_df,)
 
 
 @app.function
@@ -1016,81 +752,53 @@ def clean_lineplot_edges(ax):
 
 
 @app.cell
-def _(mo, path_panels, plt, ranking_figsize, score_summary, sns):
-    if score_summary.is_empty():
-        top_score_ax = mo.md("No score summary rows to plot.")
-    else:
-        _top = score_summary.sort("mean_score_bits").to_pandas()
-        _labels = _top["step_label"] + " (" + _top["added_terms"] + ")"
-        plt.figure(figsize=ranking_figsize, constrained_layout=True)
-        top_score_ax = plt.gca()
-        sns.barplot(
-            data=_top.assign(plot_label=_labels),
-            x="mean_score_bits",
-            y="plot_label",
-            color="0.25",
-            ax=top_score_ax,
-        )
-        top_score_ax.set_xlabel("Mean LL (bits/trial)")
-        top_score_ax.set_ylabel("")
-        sns.despine(ax=top_score_ax)
-        top_score_ax.figure.savefig((path_panels / "top_mean_score").with_suffix(".svg"))
-        top_score_ax.figure.savefig((path_panels / "top_mean_score").with_suffix(".png"))
-    top_score_ax
-    return
-
-
-@app.cell
-def _(figsize, mo, path_panels, plt, score_col, score_df, sns):
-    if score_df.is_empty():
-        nested_ll_ax = mo.md("No model scores to plot.")
-    else:
-        _df = score_df.to_pandas()
-        _ticks = (
-            score_df
-            .select(["model_order", "step_label"])
-            .unique()
-            .sort("model_order")
-        )
-        _positions = _ticks.get_column("model_order").to_list()
-        _labels = _ticks.get_column("step_label").to_list()
-        plt.figure(figsize=figsize, constrained_layout=True)
-        nested_ll_ax = plt.gca()
-        sns.lineplot(
-            data=_df,
-            x="model_order",
-            y="score",
-            units="subject",
-            estimator=None,
-            color="0.84",
-            linewidth=0.7,
-            sort=False,
-            ax=nested_ll_ax,
-        )
-        sns.lineplot(
-            data=_df,
-            x="model_order",
-            y="score",
-            errorbar=("se", 1),
-            marker="o",
-            markersize=3.5,
-            markeredgewidth=0,
-            markeredgecolor="none",
-            err_kws={"edgecolor": "none", "linewidth": 0},
-            color="black",
-            linewidth=1,
-            sort=False,
-            ax=nested_ll_ax,
-        )
-        nested_ll_ax.set_xlabel("Model combination")
-        _score_label = "CV test LL" if score_col == "test_ll_per_trial_mean" else "LL"
-        nested_ll_ax.set_ylabel(f"{_score_label} (bits/trial)")
-        nested_ll_ax.set_xticks(_positions)
-        nested_ll_ax.set_xticklabels(_labels, rotation=30, ha="right")
-        clean_lineplot_edges(nested_ll_ax)
-        sns.despine(ax=nested_ll_ax)
-        nested_ll_ax.figure.savefig((path_panels / "nested_ll_curve").with_suffix(".svg"))
-        nested_ll_ax.figure.savefig((path_panels / "nested_ll_curve").with_suffix(".png"))
+def _(figsize, path_panels, plt, score_col, score_df, sns):
+    _df = score_df.to_pandas()
+    _ticks = (
+        score_df
+        .select(["model_order", "step_label"])
+        .unique()
+        .sort("model_order")
+    )
+    _positions = _ticks.get_column("model_order").to_list()
+    _labels = _ticks.get_column("step_label").to_list()
+    plt.figure(figsize=figsize, constrained_layout=True)
+    nested_ll_ax = plt.gca()
+    sns.lineplot(
+        data=_df,
+        x="model_order",
+        y="score",
+        units="subject",
+        estimator=None,
+        color="0.84",
+        linewidth=0.7,
+        sort=False,
+        ax=nested_ll_ax,
+    )
+    sns.lineplot(
+        data=_df,
+        x="model_order",
+        y="score",
+        errorbar=("se", 1),
+        marker="o",
+        markersize=3.5,
+        markeredgewidth=0,
+        markeredgecolor="none",
+        err_kws={"edgecolor": "none", "linewidth": 0},
+        color="black",
+        linewidth=1,
+        sort=False,
+        ax=nested_ll_ax,
+    )
+    nested_ll_ax.set_xlabel("Model combination")
+    _score_label = "CV test LL" if score_col == "test_ll_per_trial_mean" else "LL"
+    nested_ll_ax.set_ylabel(f"{_score_label} (bits/trial)")
+    nested_ll_ax.set_xticks(_positions)
+    nested_ll_ax.set_xticklabels(_labels, rotation=30, ha="right")
+    clean_lineplot_edges(nested_ll_ax)
+    sns.despine(ax=nested_ll_ax)
+    nested_ll_ax.figure.savefig((path_panels / "nested_ll_curve").with_suffix(".svg"))
+    nested_ll_ax.figure.savefig((path_panels / "nested_ll_curve").with_suffix(".png"))
     nested_ll_ax
     return
 
@@ -1098,77 +806,72 @@ def _(figsize, mo, path_panels, plt, score_col, score_df, sns):
 @app.cell
 def _(
     add_one_sample_zero_annotations,
+    delta_figsize,
     delta_vs_base_df,
-    fig_size,
-    mo,
     path_panels,
     pl,
     plt,
     score_col,
     sns,
 ):
-    if delta_vs_base_df.is_empty():
-        delta_base_ax = mo.md("No delta-vs-base scores to plot.")
-    else:
-        _df = delta_vs_base_df.filter(pl.col("model_order") > 0).to_pandas()
-        if _df.empty:
-            delta_base_ax = mo.md("No non-base delta-vs-base scores to plot.")
-        else:
-            _ticks = (
-                delta_vs_base_df
-                .filter(pl.col("model_order") > 0)
-                .select(["model_order", "step_label"])
-                .unique()
-                .sort("model_order")
-            )
-            _positions = _ticks.get_column("model_order").to_list()
-            _labels = _ticks.get_column("step_label").to_list()
-            plt.figure(figsize=fig_size(1,2), constrained_layout=True)
-            delta_base_ax = plt.gca()
-            sns.lineplot(
-                data=_df,
-                x="model_order",
-                y="delta_score_vs_base",
-                units="subject",
-                estimator=None,
-                color="0.84",
-                linewidth=0.7,
-                sort=False,
-                ax=delta_base_ax,
-            )
-            sns.lineplot(
-                data=_df,
-                x="model_order",
-                y="delta_score_vs_base",
-                errorbar=("se", 1),
-                marker="o",
-                markersize=3.5,
-                markeredgewidth=0,
-                markeredgecolor="none",
-                err_kws={"edgecolor": "none", "linewidth": 0},
-                color="black",
-                linewidth=1,
-                sort=False,
-                ax=delta_base_ax,
-            )
-            delta_base_ax.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-            add_one_sample_zero_annotations(
-                delta_base_ax,
-                _df,
-                x="model_order",
-                y="delta_score_vs_base",
-                order=_positions,
-                show_ns=True,
-            )
-            delta_base_ax.set_xlabel("Model combination")
-            _score_label = "CV test LL" if score_col == "test_ll_per_trial_mean" else "LL"
-            delta_base_ax.set_ylabel(f"Delta {_score_label} vs base (bits/trial)")
-            delta_base_ax.set_xticks(_positions)
-            delta_base_ax.set_xticklabels(_labels, rotation=30, ha="right")
-            clean_lineplot_edges(delta_base_ax)
-            sns.despine(ax=delta_base_ax)
-            delta_base_ax.figure.savefig((path_panels / "nested_delta_vs_base").with_suffix(".svg"))
-            delta_base_ax.figure.savefig((path_panels / "nested_delta_vs_base").with_suffix(".png"))
+
+    _df = delta_vs_base_df.filter(pl.col("model_order") > 0).to_pandas()
+
+    _ticks = (
+        delta_vs_base_df
+        .filter(pl.col("model_order") > 0)
+        .select(["model_order", "step_label"])
+        .unique()
+        .sort("model_order")
+    )
+    _positions = _ticks.get_column("model_order").to_list()
+    _labels = _ticks.get_column("step_label").to_list()
+    plt.figure(figsize=delta_figsize, constrained_layout=True)
+    delta_base_ax = plt.gca()
+    sns.lineplot(
+        data=_df,
+        x="model_order",
+        y="delta_score_vs_base",
+        units="subject",
+        estimator=None,
+        color="0.84",
+        linewidth=0.7,
+        sort=False,
+        ax=delta_base_ax,
+    )
+    sns.lineplot(
+        data=_df,
+        x="model_order",
+        y="delta_score_vs_base",
+        errorbar=("se", 1),
+        marker="o",
+        markersize=3.5,
+        markeredgewidth=0,
+        markeredgecolor="none",
+        err_kws={"edgecolor": "none", "linewidth": 0},
+        color="black",
+        linewidth=1,
+        sort=False,
+        ax=delta_base_ax,
+    )
+    delta_base_ax.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+    add_one_sample_zero_annotations(
+        delta_base_ax,
+        _df,
+        x="model_order",
+        y="delta_score_vs_base",
+        order=_positions,
+        show_ns=True,
+    )
+    delta_base_ax.set_xlabel("Model combination")
+    _score_label = "CV test LL" if score_col == "test_ll_per_trial_mean" else "LL"
+    delta_base_ax.set_ylabel(f"Delta {_score_label} vs base (bits/trial)")
+    delta_base_ax.set_xticks(_positions)
+    delta_base_ax.set_xticklabels(_labels, rotation=30, ha="right")
+    clean_lineplot_edges(delta_base_ax)
+    sns.despine(ax=delta_base_ax)
+    delta_base_ax.figure.savefig((path_panels / "nested_delta_vs_base").with_suffix(".svg"))
+    delta_base_ax.figure.savefig((path_panels / "nested_delta_vs_base").with_suffix(".png"))
     delta_base_ax
     return
 

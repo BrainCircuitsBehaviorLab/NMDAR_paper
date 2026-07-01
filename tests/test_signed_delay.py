@@ -1,6 +1,11 @@
 import pandas as pd
+import numpy as np
 
-from src.process.common import attach_signed_delay_columns
+from src.process.common import (
+    attach_signed_delay_columns,
+    closed_loop_autocorrelogram_x,
+    infer_autocorrelogram_choice_history_values,
+)
 from src.process.two_adc import _stimulus_to_signed_side
 
 
@@ -41,3 +46,31 @@ def test_stimulus_to_signed_side_maps_tiffany_binary_stimulus():
     side = _stimulus_to_signed_side(pd.Series([0, 1, 0, 1]))
 
     assert side.tolist() == [-1.0, 1.0, -1.0, 1.0]
+
+
+def test_autocorrelogram_history_infers_aggregate_choice_lag_orientation():
+    y = np.asarray([0, 1, 0, 1, 0, 1], dtype=float)
+    base_x = np.asarray([[0.0], [1.0], [-1.0], [1.0], [-1.0], [1.0]], dtype=float)
+    sessions = np.asarray(["s1"] * len(y))
+    x_cols = ["choice_lag_param"]
+
+    history_values = infer_autocorrelogram_choice_history_values(
+        y,
+        base_x,
+        sessions,
+        x_cols,
+    )
+
+    assert history_values == {0: 1.0, 1: -1.0}
+
+    x_trial = closed_loop_autocorrelogram_x(
+        np.asarray([0.0], dtype=float),
+        trial_idx=2,
+        choices=np.asarray([0, 1, np.nan], dtype=float),
+        starts=np.asarray([0, 0, 0]),
+        x_cols=x_cols,
+        lag_param_weights={"choice_lag_param": {1: 0.7}},
+        choice_history_values=history_values,
+    )
+
+    assert x_trial.tolist() == [-0.7]

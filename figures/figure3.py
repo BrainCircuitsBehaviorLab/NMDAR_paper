@@ -53,7 +53,6 @@ def _():
         glmhmmt_state_dwell_df,
         glmhmmt_state_metric_df,
         glmhmmt_state_occupancy_df,
-        glmhmmt_state_psychometric_df,
         glmhmmt_state_switch_histogram_df,
         glmhmmt_state_switches_df,
         glmhmmt_state_trace_df,
@@ -81,7 +80,6 @@ def _():
         glmhmmt_state_dwell_df,
         glmhmmt_state_metric_df,
         glmhmmt_state_occupancy_df,
-        glmhmmt_state_psychometric_df,
         glmhmmt_state_switch_histogram_df,
         glmhmmt_state_switches_df,
         glmhmmt_state_trace_df,
@@ -129,21 +127,26 @@ def _(mo):
 @app.cell
 def _():
     mount_figure = True
-    format = "pdf"
-    return format, mount_figure
+    return (mount_figure,)
 
 
 @app.cell
 def _():
-    model_type = "glmhmm"
+    format = "pdf"
+    return (format,)
+
+
+@app.cell
+def _():
+    model_type = "glmhmmt"
     return (model_type,)
 
 
 @app.cell
 def _():
     MODEL_BY_TASK = {
-        "2AFC_delay": "param",
-        "2AFC": "param2",
+        "2AFC_delay": "param half-pure",
+        "2AFC": "param half-pure",
         # "MCDR": "param",
     }
     task_names = tuple(MODEL_BY_TASK)
@@ -485,6 +488,7 @@ def _(
     dfs,
     load_fit_arrays,
     model_configs,
+    model_type,
     paths,
     prepare_predictions_df,
     task_names,
@@ -502,7 +506,7 @@ def _(
         _adapter = adapters[_task_name]
         _df_all = dfs[_task_name]
         _model_id = _cfg["model_id"]
-        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmm" / _model_id
+        _model_dir = paths.RESULTS / "fits" / _task_name / model_type / _model_id
         _K = int((_cfg.get("K_list") or [2])[0])
         _subjects = [str(_subject) for _subject in (_cfg.get("subjects") or list(_df_all["subject"].unique()))]
         _emission_cols = _cfg.get("emission_cols") or None
@@ -510,7 +514,7 @@ def _(
 
         _arrays_store, _ = load_fit_arrays(
             out_dir=_model_dir,
-            arrays_suffix="glmhmm_arrays.npz",
+            arrays_suffix=f"{model_type}_arrays.npz",
             adapter=_adapter,
             df_all=_df_all,
             subjects=_subjects,
@@ -626,11 +630,11 @@ def _(
     glmhmmt_state_dwell_df,
     glmhmmt_state_metric_df,
     glmhmmt_state_occupancy_df,
-    glmhmmt_state_psychometric_df,
     glmhmmt_state_switch_histogram_df,
     glmhmmt_state_switches_df,
     glmhmmt_state_trace_df,
     glmhmmt_transition_weights_df,
+    np,
     pd,
     pl,
     plot_dfs,
@@ -655,6 +659,107 @@ def _(
     psychometric_x_labels = {}
     action_trace_psychometric_dfs = {}
 
+    def prediction_col(df):
+        return next((col for col in ("p_model_right", "p_pred", "pR") if col in df.columns), None)
+
+    def state_psychometric_data_model_df(
+        trial_df,
+        *,
+        x_col,
+        x_order=None,
+        response_col="response",
+        state_col="state_label",
+        subject_col="subject",
+    ):
+        df = trial_df.to_pandas().copy() if hasattr(trial_df, "to_pandas") else pd.DataFrame(trial_df).copy()
+        empty = pd.DataFrame(
+            columns=[
+                subject_col,
+                state_col,
+                "source",
+                "x_value",
+                "x_label",
+                "x_numeric",
+                "x_position",
+                "p_right",
+                "n_trials",
+            ]
+        )
+        model_col = prediction_col(df)
+        required = {subject_col, state_col, x_col, response_col}
+        if df.empty or not required.issubset(df.columns):
+            return empty
+
+        cols = [subject_col, state_col, x_col, response_col]
+        if model_col is not None:
+            cols.append(model_col)
+        out = df[cols].copy()
+        out["_response_right"] = (pd.to_numeric(out[response_col], errors="coerce") > 0).astype(float)
+        if model_col is not None:
+            out["_model_right"] = pd.to_numeric(out[model_col], errors="coerce")
+        else:
+            out["_model_right"] = np.nan
+        out = out.dropna(subset=[subject_col, state_col, x_col, "_response_right"])
+        if out.empty:
+            return empty
+
+        if x_order is None:
+            unique_values = list(pd.unique(out[x_col]))
+            numeric_values = pd.to_numeric(pd.Series(unique_values), errors="coerce")
+            if numeric_values.notna().all():
+                order = [
+                    value
+                    for _, value in sorted(
+                        zip(numeric_values.astype(float), unique_values, strict=False),
+                        key=lambda item: item[0],
+                    )
+                ]
+            else:
+                order = sorted(unique_values, key=lambda value: str(value))
+        else:
+            order = list(x_order)
+
+        def format_x_label(value):
+            numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+            if pd.notna(numeric):
+                return f"{float(numeric):g}"
+            return str(value)
+
+        label_order = [format_x_label(value) for value in order]
+        label_by_position = dict(enumerate(label_order))
+        out["x_value"] = pd.Categorical(out[x_col], categories=order, ordered=True)
+        out = out.dropna(subset=["x_value"])
+        if out.empty:
+            return empty
+
+        out["x_position"] = out["x_value"].cat.codes
+        out["x_label"] = pd.Categorical(
+            out["x_position"].map(label_by_position),
+            categories=label_order,
+            ordered=True,
+        )
+        summary = (
+            out.groupby([subject_col, state_col, "x_value", "x_position", "x_label"], as_index=False, observed=True)
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=("_model_right", "mean"),
+                n_trials=("_response_right", "size"),
+            )
+            .sort_values([state_col, "x_position", subject_col])
+        )
+        summary["x_numeric"] = pd.to_numeric(summary["x_label"].astype(str), errors="coerce")
+        data_summary = (
+            summary.assign(source="Data", p_right=summary["data_mean"])
+            [[subject_col, state_col, "source", "x_value", "x_label", "x_numeric", "x_position", "p_right", "n_trials"]]
+        )
+        if model_col is None:
+            return data_summary
+        model_summary = (
+            summary.assign(source="Model", p_right=summary["model_mean"])
+            [[subject_col, state_col, "source", "x_value", "x_label", "x_numeric", "x_position", "p_right", "n_trials"]]
+        )
+        return pd.concat([data_summary, model_summary], ignore_index=True)
+
     def action_trace_psychometric_df(
         trial_df,
         *,
@@ -667,6 +772,7 @@ def _(
         empty = pd.DataFrame(
             columns=[
                 "subject",
+                "source",
                 "action_bin",
                 "x_value",
                 "x_label",
@@ -677,12 +783,20 @@ def _(
             ]
         )
         action_col = next((col for col in action_cols if col in df.columns), None)
+        model_col = prediction_col(df)
         if action_col is None or not {"subject", x_col, "response"}.issubset(df.columns):
             return empty
 
-        out = df[["subject", x_col, "response", action_col]].copy()
+        cols = ["subject", x_col, "response", action_col]
+        if model_col is not None:
+            cols.append(model_col)
+        out = df[cols].copy()
         out["_action_trace"] = pd.to_numeric(out[action_col], errors="coerce")
         out["_response_right"] = (pd.to_numeric(out["response"], errors="coerce") > 0).astype(float)
+        if model_col is not None:
+            out["_model_right"] = pd.to_numeric(out[model_col], errors="coerce")
+        else:
+            out["_model_right"] = np.nan
         out = out.dropna(subset=["subject", x_col, "_response_right", "_action_trace"])
         if out.empty or out["_action_trace"].nunique() < 2:
             return empty
@@ -733,11 +847,25 @@ def _(
         )
         summary = (
             out.groupby(["subject", "action_bin", "x_value", "x_position", "x_label"], as_index=False, observed=True)
-            .agg(p_right=("_response_right", "mean"), n_trials=("_response_right", "size"))
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=("_model_right", "mean"),
+                n_trials=("_response_right", "size"),
+            )
             .sort_values(["action_bin", "x_position", "subject"])
         )
         summary["x_numeric"] = pd.to_numeric(summary["x_label"].astype(str), errors="coerce")
-        return summary
+        data_summary = (
+            summary.assign(source="Data", p_right=summary["data_mean"])
+            [["subject", "source", "action_bin", "x_value", "x_label", "x_numeric", "x_position", "p_right", "n_trials"]]
+        )
+        if model_col is None:
+            return data_summary
+        model_summary = (
+            summary.assign(source="Model", p_right=summary["model_mean"])
+            [["subject", "source", "action_bin", "x_value", "x_label", "x_numeric", "x_position", "p_right", "n_trials"]]
+        )
+        return pd.concat([data_summary, model_summary], ignore_index=True)
 
     def choice_lag_psychometric_df(trial_df, *, n_bins=9):
         df = trial_df.to_pandas().copy() if hasattr(trial_df, "to_pandas") else pd.DataFrame(trial_df).copy()
@@ -745,6 +873,7 @@ def _(
             columns=[
                 "subject",
                 "state_label",
+                "source",
                 "x_value",
                 "x_label",
                 "x_numeric",
@@ -753,13 +882,21 @@ def _(
                 "n_trials",
             ]
         )
+        model_col = prediction_col(df)
         required = {"subject", "state_label", "choice_lag_param", "response"}
         if df.empty or not required.issubset(df.columns):
             return empty
 
-        out = df[["subject", "state_label", "choice_lag_param", "response"]].copy()
+        cols = ["subject", "state_label", "choice_lag_param", "response"]
+        if model_col is not None:
+            cols.append(model_col)
+        out = df[cols].copy()
         out["_choice_lag"] = pd.to_numeric(out["choice_lag_param"], errors="coerce")
         out["_response_right"] = (pd.to_numeric(out["response"], errors="coerce") > 0).astype(float)
+        if model_col is not None:
+            out["_model_right"] = pd.to_numeric(out[model_col], errors="coerce")
+        else:
+            out["_model_right"] = np.nan
         out = out.dropna(subset=["subject", "state_label", "_choice_lag", "_response_right"])
         if out.empty:
             return empty
@@ -775,17 +912,41 @@ def _(
         out["x_numeric"] = out["x_position"].map(dict(enumerate(bin_centers))).astype(float)
         out["x_label"] = out["x_numeric"].map(lambda value: f"{value:g}")
 
-        return (
+        summary = (
             out.groupby(["subject", "state_label", "x_value", "x_position", "x_numeric", "x_label"], as_index=False, observed=True)
-            .agg(p_right=("_response_right", "mean"), n_trials=("_response_right", "size"))
+            .agg(
+                data_mean=("_response_right", "mean"),
+                model_mean=("_model_right", "mean"),
+                n_trials=("_response_right", "size"),
+            )
             .sort_values(["state_label", "x_position", "subject"])
         )
+        data_summary = (
+            summary.assign(source="Data", p_right=summary["data_mean"])
+            [["subject", "state_label", "source", "x_value", "x_label", "x_numeric", "x_position", "p_right", "n_trials"]]
+        )
+        if model_col is None:
+            return data_summary
+        model_summary = (
+            summary.assign(source="Model", p_right=summary["model_mean"])
+            [["subject", "state_label", "source", "x_value", "x_label", "x_numeric", "x_position", "p_right", "n_trials"]]
+        )
+        return pd.concat([data_summary, model_summary], ignore_index=True)
 
     for _task_name in active_task_names:
         emission_plot_dfs[_task_name] = with_feature_labels(weight_dfs[_task_name].to_pandas())
-        transition_plot_dfs[_task_name] = with_feature_labels(
+        _transition_df = with_feature_labels(
             glmhmmt_transition_weights_df(arrays_by_task[_task_name], views[_task_name])
         )
+        if "transition_label" in _transition_df.columns and _transition_df["transition_label"].nunique() > 1:
+            _transition_df["transition_feature_label"] = (
+                _transition_df["transition_label"].astype(str)
+                + "\n"
+                + _transition_df["feature_label"].astype(str)
+            )
+        else:
+            _transition_df["transition_feature_label"] = _transition_df["feature_label"].astype(str)
+        transition_plot_dfs[_task_name] = _transition_df
         _psychometric_source_df = plot_dfs[_task_name]
         if _task_name == "2AFC_delay":
             _psychometric_source_df = _psychometric_source_df.clone().with_columns(
@@ -810,7 +971,7 @@ def _(
             "2AFC_delay": "Signed delay",
             "MCDR": "Trial type",
         }[_task_name]
-        psychometric_dfs[_task_name] = glmhmmt_state_psychometric_df(
+        psychometric_dfs[_task_name] = state_psychometric_data_model_df(
             _psychometric_source_df,
             x_col=_x_col,
             x_order=delay_order if _task_name == "2AFC_delay" else None,
@@ -894,7 +1055,7 @@ def _(
 
     transition_orders = {}
     if model_type == "glmhmmt":  # Check if it is a model with transitions
-        transition_orders = {task: ordered_feature_values(transition_plot_dfs[task], "feature_label") for task in task_names}
+        transition_orders = {task: ordered_values(transition_plot_dfs[task], "transition_feature_label") for task in task_names}
 
     psychometric_orders = {
         task: (
@@ -1549,7 +1710,7 @@ def _(
     else: 
         sns.boxplot(
             data=transition_plot_dfs["2AFC_delay"],
-            x="feature_label",
+            x="transition_feature_label",
             y="weight",
             order=transition_orders["2AFC_delay"],
             color="tab:gray",
@@ -1557,7 +1718,7 @@ def _(
             **boxplot_STYLE,
         )
         transition_weights_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-        add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=transition_orders["2AFC_delay"])
+        add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2AFC_delay"], x="transition_feature_label", y="weight", order=transition_orders["2AFC_delay"])
     transition_weights_2ADC.set_title(task_labels["2AFC_delay"])
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_ylabel("Transition weight")
@@ -1602,7 +1763,7 @@ def _(
     else:
         sns.boxplot(
             data=transition_plot_dfs["2AFC"],
-            x="feature_label",
+            x="transition_feature_label",
             y="weight",
             order=transition_orders["2AFC"],
             color="tab:gray",
@@ -1610,7 +1771,7 @@ def _(
             **boxplot_STYLE,
         )
         transition_weights_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-        add_one_sample_zero_annotations(transition_weights_2AFC, transition_plot_dfs["2AFC"], x="feature_label", y="weight",
+        add_one_sample_zero_annotations(transition_weights_2AFC, transition_plot_dfs["2AFC"], x="transition_feature_label", y="weight",
                                         order=transition_orders["2AFC"])
     transition_weights_2AFC.set_title(task_labels["2AFC"])
     transition_weights_2AFC.set_xlabel("")
@@ -1654,17 +1815,18 @@ def _(
         if not mount_figure:
             transition_weights_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_transition_weights").with_suffix(f".{format}"))
         transition_weights_3CDR
-    sns.boxplot(
-        data=transition_plot_dfs["MCDR"],
-        x="feature_label",
-        y="weight",
-        order=transition_orders["MCDR"],
-        color="tab:gray",
-        ax=transition_weights_3CDR,
-        **boxplot_STYLE,
-    )
-    transition_weights_3CDR.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    add_one_sample_zero_annotations(transition_weights_3CDR, transition_plot_dfs["MCDR"], x="feature_label", y="weight", order=transition_orders["MCDR"])
+    else:
+        sns.boxplot(
+            data=transition_plot_dfs["MCDR"],
+            x="transition_feature_label",
+            y="weight",
+            order=transition_orders["MCDR"],
+            color="tab:gray",
+            ax=transition_weights_3CDR,
+            **boxplot_STYLE,
+        )
+        transition_weights_3CDR.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+        add_one_sample_zero_annotations(transition_weights_3CDR, transition_plot_dfs["MCDR"], x="transition_feature_label", y="weight", order=transition_orders["MCDR"])
     transition_weights_3CDR.set_title(task_labels["MCDR"])
     transition_weights_3CDR.set_xlabel("")
     transition_weights_3CDR.set_ylabel("Transition weight")
@@ -1709,20 +1871,35 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2ADC", plt.gca())
     psychometric_by_state_2ADC.clear()
+    _plot_df = psychometric_dfs["2AFC_delay"]
+    _model = _plot_df[_plot_df["source"] == "Model"]
+    _data = _plot_df[_plot_df["source"] == "Data"]
     sns.lineplot(
-        data=psychometric_dfs["2AFC_delay"],
+        data=_model,
         x="x_position",
         y="p_right",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        marker="o",
-        markeredgewidth=0,
         err_kws={
             "edgecolor": "none",
             "linewidth": 0,
         },
         palette=state_palette,
+        ax=psychometric_by_state_2ADC,
+    )
+    sns.pointplot(
+        data=_data,
+        x="x_position",
+        y="p_right",
+        hue="state_label",
+        estimator="mean",
+        errorbar="se",
+        markers="o",
+        linestyles="none",
+        native_scale=True,
+        palette=state_palette,
+        legend=False,
         ax=psychometric_by_state_2ADC,
     )
     psychometric_by_state_2ADC.set_xticks(range(len(delay_order)))
@@ -1765,20 +1942,36 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2AFC", plt.gca())
     psychometric_by_state_2AFC.clear()
+    _plot_df = psychometric_dfs["2AFC"]
+    _model = _plot_df[_plot_df["source"] == "Model"]
+    _data = _plot_df[_plot_df["source"] == "Data"]
     sns.lineplot(
-        data=psychometric_dfs["2AFC"],
+        data=_model,
         x="x_numeric",
         y="p_right",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        marker="o",
-        markeredgewidth=0,
         err_kws={
             "edgecolor": "none",
             "linewidth": 0,
         },
         palette=state_palette,
+        ax=psychometric_by_state_2AFC,
+    )
+    sns.pointplot(
+        data=_data,
+        x="x_numeric",
+        y="p_right",
+        hue="state_label",
+        estimator="mean",
+        errorbar="se",
+        markers="o",
+        ms = 5,
+        linestyles="none",
+        native_scale=True,
+        palette=state_palette,
+        legend=False,
         ax=psychometric_by_state_2AFC,
     )
     xticks = sorted(psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
@@ -1823,17 +2016,39 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_3CDR = plt.gca() if not mount_figure else axd.get("psychometric_by_state_3CDR", plt.gca())
     psychometric_by_state_3CDR.clear()
-    sns.pointplot(
-        data=psychometric_dfs["MCDR"],
-        x="x_label",
+    _plot_df = psychometric_dfs["MCDR"]
+    _model = _plot_df[_plot_df["source"] == "Model"]
+    _data = _plot_df[_plot_df["source"] == "Data"]
+    sns.lineplot(
+        data=_model,
+        x="x_position",
         y="p_right",
         hue="state_label",
-        order=psychometric_orders["MCDR"],
+        estimator="mean",
         errorbar="se",
-        dodge=0.2,
+        err_kws={
+            "edgecolor": "none",
+            "linewidth": 0,
+        },
         palette=state_palette,
         ax=psychometric_by_state_3CDR,
     )
+    sns.pointplot(
+        data=_data,
+        x="x_position",
+        y="p_right",
+        hue="state_label",
+        estimator="mean",
+        errorbar="se",
+        markers="o",
+        linestyles="none",
+        native_scale=True,
+        palette=state_palette,
+        legend=False,
+        ax=psychometric_by_state_3CDR,
+    )
+    psychometric_by_state_3CDR.set_xticks(range(len(psychometric_orders["MCDR"])))
+    psychometric_by_state_3CDR.set_xticklabels(psychometric_orders["MCDR"])
     psychometric_by_state_3CDR.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
     psychometric_by_state_3CDR.set_title(task_labels["MCDR"])
     psychometric_by_state_3CDR.set_xlabel(psychometric_x_labels["MCDR"])
@@ -1878,20 +2093,35 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_action_trace_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2ADC", plt.gca())
     psychometric_by_action_trace_2ADC.clear()
+    _plot_df = choice_lag_psychometric_dfs["2AFC_delay"]
+    _model = _plot_df[_plot_df["source"] == "Model"]
+    _data = _plot_df[_plot_df["source"] == "Data"]
     sns.lineplot(
-        data=choice_lag_psychometric_dfs["2AFC_delay"],
+        data=_model,
         x="x_numeric",
         y="p_right",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        marker="o",
-        markeredgewidth=0,
         err_kws={
             "edgecolor": "none",
             "linewidth": 0,
         },
         palette=state_palette,
+        ax=psychometric_by_action_trace_2ADC,
+    )
+    sns.pointplot(
+        data=_data,
+        x="x_numeric",
+        y="p_right",
+        hue="state_label",
+        estimator="mean",
+        errorbar="se",
+        markers="o",
+        linestyles="none",
+        native_scale=True,
+        palette=state_palette,
+        legend=False,
         ax=psychometric_by_action_trace_2ADC,
     )
     # _xticks = sorted(choice_lag_psychometric_dfs["2AFC_delay"]["x_numeric"].dropna().unique())
@@ -1936,20 +2166,35 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_action_trace_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2AFC", plt.gca())
     psychometric_by_action_trace_2AFC.clear()
+    _plot_df = choice_lag_psychometric_dfs["2AFC"]
+    _model = _plot_df[_plot_df["source"] == "Model"]
+    _data = _plot_df[_plot_df["source"] == "Data"]
     sns.lineplot(
-        data=choice_lag_psychometric_dfs["2AFC"],
+        data=_model,
         x="x_numeric",
         y="p_right",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        marker="o",
-        markeredgewidth=0,
         err_kws={
             "edgecolor": "none",
             "linewidth": 0,
         },
         palette=state_palette,
+        ax=psychometric_by_action_trace_2AFC,
+    )
+    sns.pointplot(
+        data=_data,
+        x="x_numeric",
+        y="p_right",
+        hue="state_label",
+        estimator="mean",
+        errorbar="se",
+        markers="o",
+        linestyles="none",
+        native_scale=True,
+        palette=state_palette,
+        legend=False,
         ax=psychometric_by_action_trace_2AFC,
     )
     # _xticks = sorted(choice_lag_psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
@@ -1994,20 +2239,35 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_action_trace_3CDR = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_3CDR", plt.gca())
     psychometric_by_action_trace_3CDR.clear()
+    _plot_df = choice_lag_psychometric_dfs["MCDR"]
+    _model = _plot_df[_plot_df["source"] == "Model"]
+    _data = _plot_df[_plot_df["source"] == "Data"]
     sns.lineplot(
-        data=choice_lag_psychometric_dfs["MCDR"],
+        data=_model,
         x="x_numeric",
         y="p_right",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        marker="o",
-        markeredgewidth=0,
         err_kws={
             "edgecolor": "none",
             "linewidth": 0,
         },
         palette=state_palette,
+        ax=psychometric_by_action_trace_3CDR,
+    )
+    sns.pointplot(
+        data=_data,
+        x="x_numeric",
+        y="p_right",
+        hue="state_label",
+        estimator="mean",
+        errorbar="se",
+        markers="o",
+        linestyles="none",
+        native_scale=True,
+        palette=state_palette,
+        legend=False,
         ax=psychometric_by_action_trace_3CDR,
     )
     # _xticks = sorted(choice_lag_psychometric_dfs["MCDR"]["x_numeric"].dropna().unique())
@@ -3230,10 +3490,9 @@ def _(
         zorder=0,
     )
 
-    single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2)
-    single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2)
-    if "accuracy_window_fraction" in session_repetition_data_2ADC:
-        single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2ADC, zorder=2)
+    single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
+    single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
+    single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
     single_session_2ADC.set_title(task_labels["2AFC_delay"])
     single_session_2ADC.set_xlabel("Trial")
     single_session_2ADC.set_ylabel("Running fraction")
@@ -3337,10 +3596,10 @@ def _(
         zorder=0,
     )
 
-    single_session_2AFC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2AFC, zorder=2)
-    single_session_2AFC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2AFC, zorder=2)
+    single_session_2AFC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
+    single_session_2AFC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
     if "accuracy_window_fraction" in session_repetition_data_2AFC:
-        single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2AFC, zorder=2)
+        single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
     single_session_2AFC.set_title(task_labels["2AFC"])
     single_session_2AFC.set_xlabel("Trial")
     single_session_2AFC.set_ylabel("Running fraction")
