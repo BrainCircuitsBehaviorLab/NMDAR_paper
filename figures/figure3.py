@@ -24,7 +24,6 @@ def _():
     import json
     import os
     from pathlib import Path
-
     import marimo as mo
     import matplotlib.pyplot as plt
     from matplotlib.ticker import FuncFormatter
@@ -126,31 +125,21 @@ def _(mo):
 
 @app.cell
 def _():
-    mount_figure = True
-    return (mount_figure,)
-
-
-@app.cell
-def _():
-    format = "pdf"
-    return (format,)
+    mount_figure = False
+    format = "svg"
+    return format, mount_figure
 
 
 @app.cell
 def _():
     model_type = "glmhmmt"
-    return (model_type,)
-
-
-@app.cell
-def _():
     MODEL_BY_TASK = {
         "2AFC_delay": "param half-pure",
         "2AFC": "param half-pure",
         # "MCDR": "param",
     }
     task_names = tuple(MODEL_BY_TASK)
-    return MODEL_BY_TASK, task_names
+    return MODEL_BY_TASK, model_type, task_names
 
 
 @app.cell(hide_code=True)
@@ -185,7 +174,7 @@ def _(mo):
 
 @app.cell
 def _(ROOT, plt, sns):
-    sns.set_theme(style="ticks", context="paper")
+    sns.set_theme(style="ticks", context="notebook")
     plt.style.use(ROOT / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = "none"
     plt.rcParams["savefig.bbox"] = "standard"
@@ -215,7 +204,7 @@ def _(ROOT, plt, sns):
         "stim": "Stim.",
         "stim_param": "Stim.",
         "stim_vals": "Stimulus",
-        "stim_x_delay_param": "Stim.",
+        "stim_x_delay_param": "Delay",
         "choice_lag_param": "A",
         "choice_lag_param_correct": "A",
         "prev_choice": "Prev. choice",
@@ -1206,30 +1195,30 @@ def _(
     _data_autocorr = autocorrelograms_by_task["2AFC_delay"]["data"]["autocorr"]
     _model_autocorr = autocorrelograms_by_task["2AFC_delay"]["glmhmmt"]["autocorr"]
 
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd.get("autocorrelograms_2ADC_outcome", plt.gca())
     autocorrelograms_2ADC_outcome.clear()
 
     _data_sub = _data_autocorr[_data_autocorr["signal"] == "Outcome"].sort_values("lag")
-    # autocorrelograms_2ADC_outcome.errorbar(
-    #     _data_sub["lag"],
-    #     _data_sub["autocorr"],
-    #     yerr=_data_sub.get("autocorr_sem"),
-    #     fmt="o",
-    #     capsize=0,
-    #     ms=3,
-    #     color="tab:blue",
-    #     ecolor="tab:blue",
-    #     label="Data",
-    #     zorder=4,
-    # )
-    autocorrelograms_2ADC_outcome.plot(
+    autocorrelograms_2ADC_outcome.errorbar(
         _data_sub["lag"],
         _data_sub["autocorr"],
+        yerr=_data_sub.get("autocorr_sem"),
+        fmt="o",
+        capsize=0,
+        ms=3,
         color="tab:blue",
+        ecolor="tab:blue",
         label="Data",
-        zorder=3,
+        zorder=4,
     )
+    # autocorrelograms_2ADC_outcome.plot(
+    #     _data_sub["lag"],
+    #     _data_sub["autocorr"],
+    #     color="tab:blue",
+    #     label="Data",
+    #     zorder=3,
+    # )
 
     _model_sub = _model_autocorr[_model_autocorr["signal"] == "Outcome"].sort_values("lag")
     autocorrelograms_2ADC_outcome.plot(
@@ -1240,8 +1229,8 @@ def _(
         zorder=3,
     )
 
-    autocorrelograms_2ADC_outcome.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
-    autocorrelograms_2ADC_outcome.set_title("Outcome")
+    autocorrelograms_2ADC_outcome.axhline(0.0, color="0.5", linestyle="--")
+    autocorrelograms_2ADC_outcome.set_title("Outcomes")
     autocorrelograms_2ADC_outcome.set_xlabel("Lag")
     autocorrelograms_2ADC_outcome.set_ylabel("Autocorrelation")
     autocorrelograms_2ADC_outcome.legend(frameon=False)
@@ -1334,7 +1323,7 @@ def _(
     _data_autocorr = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
     _model_autocorr = autocorrelograms_by_task["2AFC"]["glmhmmt"]["autocorr"]
 
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd.get("autocorrelograms_2AFC_outcome", plt.gca())
     autocorrelograms_2AFC_outcome.clear()
 
@@ -1361,8 +1350,8 @@ def _(
         zorder=3,
     )
 
-    autocorrelograms_2AFC_outcome.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
-    autocorrelograms_2AFC_outcome.set_title("Outcome")
+    autocorrelograms_2AFC_outcome.axhline(0.0, color="0.5", linestyle="--")
+    autocorrelograms_2AFC_outcome.set_title("Outcomes")
     autocorrelograms_2AFC_outcome.set_xlabel("Lag")
     autocorrelograms_2AFC_outcome.set_ylabel("Autocorrelation")
     autocorrelograms_2AFC_outcome.legend(frameon=False)
@@ -1528,9 +1517,8 @@ def _(
     plt,
     sns,
     state_palette,
-    task_labels,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     emission_weights_2ADC = plt.gca() if not mount_figure else axd.get("emission_weights_2ADC", plt.gca())
     emission_weights_2ADC.clear()
     sns.boxplot(
@@ -1548,11 +1536,12 @@ def _(
     # add_subject_pair_lines(emission_weights_2ADC, emission_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=emission_orders["2AFC_delay"])
     add_paired_state_annotation(emission_weights_2ADC, emission_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=emission_orders["2AFC_delay"])
     emission_weights_2ADC.axhline(0, color="0.5", linestyle="--")
-    emission_weights_2ADC.set_title(task_labels["2AFC_delay"])
+    # emission_weights_2ADC.set_title(task_labels["2AFC_delay"])
     emission_weights_2ADC.set_xlabel("")
     emission_weights_2ADC.set_ylabel("Emission weight")
     emission_weights_2ADC.tick_params(axis="x")
-    emission_weights_2ADC.legend(frameon=False, title="")
+    # emission_weights_2ADC.legend(frameon=False, title="")
+    emission_weights_2ADC.legend_.remove()
     if not mount_figure:
         emission_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_emission_weights").with_suffix(f".{format}"))
     emission_weights_2ADC
@@ -1582,9 +1571,8 @@ def _(
     plt,
     sns,
     state_palette,
-    task_labels,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     emission_weights_2AFC = plt.gca() if not mount_figure else axd.get("emission_weights_2AFC", plt.gca())
     emission_weights_2AFC.clear()
     sns.boxplot(
@@ -1602,11 +1590,12 @@ def _(
     # add_subject_pair_lines(emission_weights_2AFC, emission_plot_dfs["2AFC"], x="feature_label", y="weight", order=emission_orders["2AFC"])
     add_paired_state_annotation(emission_weights_2AFC, emission_plot_dfs["2AFC"], x="feature_label", y="weight", order=emission_orders["2AFC"])
     emission_weights_2AFC.axhline(0, color="0.5", linestyle="--")
-    emission_weights_2AFC.set_title(task_labels["2AFC"])
+    # emission_weights_2AFC.set_title(task_labels["2AFC"])
     emission_weights_2AFC.set_xlabel("")
     emission_weights_2AFC.set_ylabel("Emission weight")
     emission_weights_2AFC.tick_params(axis="x")
-    emission_weights_2AFC.legend(frameon=False, title="")
+    # emission_weights_2AFC.legend(frameon=False, title="")
+    emission_weights_2AFC.legend_.remove()
     if not mount_figure:
         emission_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_emission_weights").with_suffix(f".{format}"))
     emission_weights_2AFC
@@ -1696,11 +1685,10 @@ def _(
     path_panels,
     plt,
     sns,
-    task_labels,
     transition_orders,
     transition_plot_dfs,
 ):
-    plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     transition_weights_2ADC = plt.gca() if not mount_figure else axd.get("transition_weights_2ADC", plt.gca())
     transition_weights_2ADC.clear()
     if model_type != "glmhmmt":
@@ -1717,12 +1705,13 @@ def _(
             ax=transition_weights_2ADC,
             **boxplot_STYLE,
         )
-        transition_weights_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+        transition_weights_2ADC.axhline(0, color="0.5", linestyle="--")
         add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2AFC_delay"], x="transition_feature_label", y="weight", order=transition_orders["2AFC_delay"])
-    transition_weights_2ADC.set_title(task_labels["2AFC_delay"])
+    # transition_weights_2ADC.set_title(task_labels["2AFC_delay"])
     transition_weights_2ADC.set_xlabel("")
+    transition_weights_2ADC.set_xticklabels(["E->E", "E->D", "D->E", "D->D"])
     transition_weights_2ADC.set_ylabel("Transition weight")
-    transition_weights_2ADC.tick_params(axis="x", rotation=30)
+    transition_weights_2ADC.tick_params(axis="x", rotation=45)
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2ADC
@@ -1749,11 +1738,10 @@ def _(
     path_panels,
     plt,
     sns,
-    task_labels,
     transition_orders,
     transition_plot_dfs,
 ):
-    plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     transition_weights_2AFC = plt.gca() if not mount_figure else axd.get("transition_weights_2AFC", plt.gca())
     transition_weights_2AFC.clear()
     if model_type != "glmhmmt":
@@ -1770,13 +1758,14 @@ def _(
             ax=transition_weights_2AFC,
             **boxplot_STYLE,
         )
-        transition_weights_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+        transition_weights_2AFC.axhline(0, color="0.5", linestyle="--")
         add_one_sample_zero_annotations(transition_weights_2AFC, transition_plot_dfs["2AFC"], x="transition_feature_label", y="weight",
                                         order=transition_orders["2AFC"])
-    transition_weights_2AFC.set_title(task_labels["2AFC"])
+    # transition_weights_2AFC.set_title(task_labels["2AFC"])
     transition_weights_2AFC.set_xlabel("")
+    transition_weights_2AFC.set_xticklabels(["E->E", "E->D", "D->E", "D->D"])
     transition_weights_2AFC.set_ylabel("Transition weight")
-    transition_weights_2AFC.tick_params(axis="x", rotation=30)
+    transition_weights_2AFC.tick_params(axis="x", rotation=45)
     if not mount_figure:
         transition_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2AFC
@@ -1866,9 +1855,8 @@ def _(
     psychometric_x_labels,
     sns,
     state_palette,
-    task_labels,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     psychometric_by_state_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2ADC", plt.gca())
     psychometric_by_state_2ADC.clear()
     _plot_df = psychometric_dfs["2AFC_delay"]
@@ -1904,13 +1892,14 @@ def _(
     )
     psychometric_by_state_2ADC.set_xticks(range(len(delay_order)))
     psychometric_by_state_2ADC.set_xticklabels([f"{value:g}" for value in delay_order])
-    psychometric_by_state_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_state_2ADC.set_title(task_labels["2AFC_delay"])
+    psychometric_by_state_2ADC.axhline(0.5, color="0.5", linestyle="--")
+    # psychometric_by_state_2ADC.set_title(task_labels["2AFC_delay"])
     psychometric_by_state_2ADC.set_xlabel(psychometric_x_labels["2AFC_delay"])
     psychometric_by_state_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_state_2ADC.legend(frameon=False, title="")
     psychometric_by_state_2ADC.set_ylim(0,1)
     psychometric_by_state_2ADC.set_yticks([0, 0.5,1], [0, 0.5,1], )
+    psychometric_by_state_2ADC.legend_.remove()
     if not mount_figure:
         psychometric_by_state_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2ADC
@@ -1937,9 +1926,8 @@ def _(
     psychometric_x_labels,
     sns,
     state_palette,
-    task_labels,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     psychometric_by_state_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2AFC", plt.gca())
     psychometric_by_state_2AFC.clear()
     _plot_df = psychometric_dfs["2AFC"]
@@ -1978,12 +1966,13 @@ def _(
     xticks = [float(tick) for tick in xticks]
     psychometric_by_state_2AFC.set_xticks(xticks)
     psychometric_by_state_2AFC.set_xticklabels([f"{tick:g}" if abs(float(tick)) not in {2.0, 4.0} else "" for tick in xticks])
-    psychometric_by_state_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_state_2AFC.set_title(task_labels["2AFC"])
+    psychometric_by_state_2AFC.axhline(0.5, color="0.5", linestyle="--")
+    # psychometric_by_state_2AFC.set_title(task_labels["2AFC"])
     psychometric_by_state_2AFC.set_xlabel(psychometric_x_labels["2AFC"])
     psychometric_by_state_2AFC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_state_2AFC.legend(frameon=False, title="")
     psychometric_by_state_2AFC.set_yticks([0, 0.5,1], [0, 0.5,1], )
+    psychometric_by_state_2AFC.legend_.remove()
     if not mount_figure:
         psychometric_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2AFC
@@ -2088,9 +2077,8 @@ def _(
     plt,
     sns,
     state_palette,
-    task_labels,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     psychometric_by_action_trace_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2ADC", plt.gca())
     psychometric_by_action_trace_2ADC.clear()
     _plot_df = choice_lag_psychometric_dfs["2AFC_delay"]
@@ -2128,13 +2116,14 @@ def _(
     # _xticks = [float(tick) for tick in _xticks]
     # psychometric_by_action_trace_2ADC.set_xticks(_xticks)
     # psychometric_by_action_trace_2ADC.set_xticklabels([f"{tick:g}" for tick in _xticks])
-    psychometric_by_action_trace_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_action_trace_2ADC.set_title(task_labels["2AFC_delay"])
+    psychometric_by_action_trace_2ADC.axhline(0.5, color="0.5", linestyle="--")
+    # psychometric_by_action_trace_2ADC.set_title(task_labels["2AFC_delay"])
     psychometric_by_action_trace_2ADC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_action_trace_2ADC.legend(frameon=False, title="")
     psychometric_by_action_trace_2ADC.set_ylim(0,1)
     psychometric_by_action_trace_2ADC.set_yticks([0, 0.5,1], [0, 0.5,1], )
+    psychometric_by_action_trace_2ADC.legend_.remove()
     if not mount_figure:
         psychometric_by_action_trace_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_psychometric_by_action_trace").with_suffix(f".{format}"))
     psychometric_by_action_trace_2ADC
@@ -2161,9 +2150,8 @@ def _(
     plt,
     sns,
     state_palette,
-    task_labels,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     psychometric_by_action_trace_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2AFC", plt.gca())
     psychometric_by_action_trace_2AFC.clear()
     _plot_df = choice_lag_psychometric_dfs["2AFC"]
@@ -2201,13 +2189,14 @@ def _(
     # _xticks = [float(tick) for tick in _xticks]
     # psychometric_by_action_trace_2AFC.set_xticks(_xticks)
     # psychometric_by_action_trace_2AFC.set_xticklabels([f"{tick:g}" for tick in _xticks])
-    psychometric_by_action_trace_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_action_trace_2AFC.set_title(task_labels["2AFC"])
+    psychometric_by_action_trace_2AFC.axhline(0.5, color="0.5", linestyle="--")
+    # psychometric_by_action_trace_2AFC.set_title(task_labels["2AFC"])
     psychometric_by_action_trace_2AFC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2AFC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_action_trace_2AFC.legend(frameon=False, title="")
     psychometric_by_action_trace_2AFC.set_ylim(0,1)
     psychometric_by_action_trace_2AFC.set_yticks([0, 0.5,1], [0, 0.5,1], )
+    psychometric_by_action_trace_2AFC.legend_.remove()
     if not mount_figure:
         psychometric_by_action_trace_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_psychometric_by_action_trace").with_suffix(f".{format}"))
     psychometric_by_action_trace_2AFC

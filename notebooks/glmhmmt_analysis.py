@@ -175,7 +175,7 @@ def _():
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
-    sns.set_context("paper")
+    sns.set_context("notebook")
     paths = get_runtime_paths()
 
     from statannotations.Annotator import Annotator
@@ -556,7 +556,8 @@ def _(
 
     _feature_labels = {
         "stim_param": r"$\mathrm{Stim}_{\mathrm{param}}$",
-        "stim_x_delay_param": r"$\mathrm{Stim:delay}_{\mathrm{param}}$",
+        # "stim_x_delay_param": r"$\mathrm{Stim:delay}_{\mathrm{param}}$",
+        "stim_x_delay_param": "Delay",
         "drug_x_stim_param": r"$\mathrm{NMDAr}\times\mathrm{Stim}_{\mathrm{param}}$",
         "drug_x_stim_x_delay_param": r"$\mathrm{NMDAr}\times\mathrm{Stim:delay}_{\mathrm{param}}$",
         "bias_param": r"$\mathrm{Bias}_{\mathrm{param}}$",

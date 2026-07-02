@@ -110,6 +110,7 @@ def _(load_app_config, process_mcdr, process_two_adc, process_two_afc):
         if task_name == "MCDR":
             return process_mcdr.prepare_predictions_df(df, cfg=load_app_config())
         if task_name in {"2AFC_delay", "2ADC", "2ADC_DRUG", "2AFC_delay_DRUG"}:
+        # if task_name in {"2ADC", "2ADC_DRUG", "2AFC", "2AFC_DRUG"}:
             return process_two_adc.prepare_predictions_df(df)
         return process_two_afc.prepare_predictions_df(df)
 
@@ -126,8 +127,8 @@ def _(mo):
 
 @app.cell
 def _():
-    mount_figure = True
-    format = "pdf"
+    mount_figure = False
+    format = "svg"
     return format, mount_figure
 
 
@@ -140,8 +141,8 @@ def _():
 @app.cell
 def _():
     MODEL_BY_TASK = {
-        "2AFC_DRUG": "base_model_pure ",
-        "2ADC_DRUG": "base_model_pure ",
+        "2AFC_DRUG": "param half-pure",
+        "2ADC_DRUG": "param half-pure",
         # "MCDR": "param",
     }
     task_names = tuple(MODEL_BY_TASK)
@@ -180,20 +181,18 @@ def _(mo):
 
 @app.cell
 def _(ROOT, plt, sns):
-    sns.set_theme(style="ticks", context="paper")
+    sns.set_theme(style="ticks", context="notebook")
     plt.style.use(ROOT / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = "none"
     plt.rcParams["savefig.bbox"] = "standard"
 
     task_labels = {
-        "2AFC_drug": "2ADC",
-        "2ADC_drug": "2AFC",
-        # "MCDR": "3CDR",
+        "2AFC_DRUG": "2AFC",
+        "2ADC_DRUG": "2ADC",
     }
     task_palette = {
-        "2AFC_drug": "tab:green",
-        "2ADC_drug": "tab:blue",
-        # "MCDR": "tab:orange",
+        "2AFC_DRUG": "tab:green",
+        "2ADC_DRUG": "tab:blue",
     }
     state_palette = {
         "Engaged": "tab:green",
@@ -435,7 +434,7 @@ def _(MODEL_BY_TASK, get_adapter, pl):
         for _task_name, _adapter in adapters.items()
     }
     if "2AFC" in dfs:
-        dfs["2AFC"] = dfs["2AFC"].filter(pl.col("subject") != "326")
+        dfs["2AFC_DRUG"] = dfs["2AFC_DRUG"].filter(pl.col("subject") != "326")
     if "MCDR" in dfs:
         dfs["MCDR"] = dfs["MCDR"].filter(pl.col("subject").str.contains("B"))
     return adapters, dfs
@@ -742,7 +741,7 @@ def _(
             glmhmmt_transition_weights_df(arrays_by_task[_task_name], views[_task_name])
         )
         _psychometric_source_df = plot_dfs[_task_name]
-        if _task_name == "2ADC_drug":
+        if _task_name == "2ADC_DRUG":
             _psychometric_source_df = _psychometric_source_df.clone().with_columns(
                 (
                     pl.col("delays").cast(pl.Float64)
@@ -756,25 +755,25 @@ def _(
             _x_col = "signed_delay"
         else:
             _x_col = {
-                "2AFC_drug": "ILD",
+                "2AFC_DRUG": "ILD",
                 "MCDR": "ttype_c",
             }[_task_name]
         psychometric_x_cols[_task_name] = _x_col
         psychometric_x_labels[_task_name] = {
-            "2AFC_drug": "ILD",
-            "2ADC_drug": "Signed delay",
+            "2AFC_DRUG": "ILD",
+            "2ADC_DRUG": "Signed delay",
             "MCDR": "Trial type",
         }[_task_name]
         psychometric_dfs[_task_name] = glmhmmt_state_psychometric_df(
             _psychometric_source_df,
             x_col=_x_col,
-            x_order=delay_order if _task_name == "2ADC_drug" else None,
+            x_order=delay_order if _task_name == "2ADC_DRUG" else None,
         )
         choice_lag_psychometric_dfs[_task_name] = choice_lag_psychometric_df(_psychometric_source_df)
         action_trace_psychometric_dfs[_task_name] = action_trace_psychometric_df(
             _psychometric_source_df,
             x_col=_x_col,
-            x_order=delay_order if _task_name == "2ADC_drug" else None,
+            x_order=delay_order if _task_name == "2ADC_DRUG" else None,
         )
         accuracy_dfs[_task_name] = glmhmmt_state_accuracy_df(plot_dfs[_task_name])
         occupancy_dfs[_task_name] = glmhmmt_state_occupancy_df(plot_dfs[_task_name])
@@ -872,8 +871,8 @@ def _(
     task_label_orders = {task: [task_labels.get(task, task)] for task in task_names}
     accuracy_hue_orders = {task: ordered_states(accuracy_plot_dfs[task]) for task in task_names}
     occupancy_hue_orders = {task: ordered_states(occupancy_plot_dfs[task]) for task in task_names}
-    metric_order = ordered_values(metric_dfs["2AFC"], "metric")
-    metric_hue_order = ordered_states(metric_dfs["2AFC"])
+    metric_order = ordered_values(metric_dfs["2AFC_DRUG"], "metric")
+    metric_hue_order = ordered_states(metric_dfs["2AFC_DRUG"])
     switch_hist_summary_dfs = {
         task: (
             switch_hist_dfs[task]
@@ -894,11 +893,16 @@ def _(
         occupancy_annotation_dfs,
         occupancy_hue_orders,
         occupancy_plot_dfs,
-        psychometric_orders,
         switch_hist_summary_dfs,
         task_label_orders,
         transition_orders,
     )
+
+
+@app.cell
+def _(metric_dfs):
+    metric_dfs
+    return
 
 
 @app.cell(hide_code=True)
@@ -1008,21 +1012,21 @@ def _(
     emission_weights_2ADC = plt.gca() if not mount_figure else axd.get("emission_weights_2ADC", plt.gca())
     emission_weights_2ADC.clear()
     sns.boxplot(
-        data=emission_plot_dfs["2AFC_delay"],
+        data=emission_plot_dfs["2ADC_DRUG"],
         x="feature_label",
         y="weight",
         hue="state_label",
-        order=emission_orders["2AFC_delay"],
-        hue_order=emission_hue_orders["2AFC_delay"],
+        order=emission_orders["2ADC_DRUG"],
+        hue_order=emission_hue_orders["2ADC_DRUG"],
         gap=0.2,
         palette=state_palette,
         ax=emission_weights_2ADC,
         **boxplot_STYLE,
     )
-    # add_subject_pair_lines(emission_weights_2ADC, emission_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=emission_orders["2AFC_delay"])
-    add_paired_state_annotation(emission_weights_2ADC, emission_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=emission_orders["2AFC_delay"])
+    # add_subject_pair_lines(emission_weights_2ADC, emission_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=emission_orders["2ADC_DRUG"])
+    add_paired_state_annotation(emission_weights_2ADC, emission_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=emission_orders["2ADC_DRUG"])
     emission_weights_2ADC.axhline(0, color="0.5", linestyle="--")
-    emission_weights_2ADC.set_title(task_labels["2AFC_delay"])
+    emission_weights_2ADC.set_title(task_labels["2ADC_DRUG"])
     emission_weights_2ADC.set_xlabel("")
     emission_weights_2ADC.set_ylabel("Emission weight")
     emission_weights_2ADC.tick_params(axis="x")
@@ -1062,21 +1066,21 @@ def _(
     emission_weights_2AFC = plt.gca() if not mount_figure else axd.get("emission_weights_2AFC", plt.gca())
     emission_weights_2AFC.clear()
     sns.boxplot(
-        data=emission_plot_dfs["2AFC"],
+        data=emission_plot_dfs["2AFC_DRUG"],
         x="feature_label",
         y="weight",
         hue="state_label",
-        order=emission_orders["2AFC"],
-        hue_order=emission_hue_orders["2AFC"],
+        order=emission_orders["2AFC_DRUG"],
+        hue_order=emission_hue_orders["2AFC_DRUG"],
         gap=0.2,
         palette=state_palette,
         ax=emission_weights_2AFC,
         **boxplot_STYLE,
     )
-    # add_subject_pair_lines(emission_weights_2AFC, emission_plot_dfs["2AFC"], x="feature_label", y="weight", order=emission_orders["2AFC"])
-    add_paired_state_annotation(emission_weights_2AFC, emission_plot_dfs["2AFC"], x="feature_label", y="weight", order=emission_orders["2AFC"])
+    # add_subject_pair_lines(emission_weights_2AFC, emission_plot_dfs["2AFC_DRUG"], x="feature_label", y="weight", order=emission_orders["2AFC_DRUG"])
+    add_paired_state_annotation(emission_weights_2AFC, emission_plot_dfs["2AFC_DRUG"], x="feature_label", y="weight", order=emission_orders["2AFC_DRUG"])
     emission_weights_2AFC.axhline(0, color="0.5", linestyle="--")
-    emission_weights_2AFC.set_title(task_labels["2AFC"])
+    emission_weights_2AFC.set_title(task_labels["2AFC_DRUG"])
     emission_weights_2AFC.set_xlabel("")
     emission_weights_2AFC.set_ylabel("Emission weight")
     emission_weights_2AFC.tick_params(axis="x")
@@ -1096,49 +1100,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    add_paired_state_annotation,
-    add_subject_pair_lines,
-    axd,
-    boxplot_STYLE,
-    emission_hue_orders,
-    emission_orders,
-    emission_plot_dfs,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    state_palette,
-    task_labels,
-):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    emission_weights_3CDR = plt.gca() if not mount_figure else axd.get("emission_weights_3CDR", plt.gca())
-    emission_weights_3CDR.clear()
-    sns.boxplot(
-        data=emission_plot_dfs["MCDR"],
-        x="feature_label",
-        y="weight",
-        hue="state_label",
-        order=emission_orders["MCDR"],
-        hue_order=emission_hue_orders["MCDR"],
-        gap=0.2,
-        palette=state_palette,
-        ax=emission_weights_3CDR,
-        **boxplot_STYLE,
-    )
-    add_subject_pair_lines(emission_weights_3CDR, emission_plot_dfs["MCDR"], x="feature_label", y="weight", order=emission_orders["MCDR"])
-    add_paired_state_annotation(emission_weights_3CDR, emission_plot_dfs["MCDR"], x="feature_label", y="weight", order=emission_orders["MCDR"])
-    emission_weights_3CDR.axhline(0, color="0.5", linestyle="--")
-    emission_weights_3CDR.set_title(task_labels["MCDR"])
-    emission_weights_3CDR.set_xlabel("")
-    emission_weights_3CDR.set_ylabel("Emission weight")
-    emission_weights_3CDR.tick_params(axis="x")
-    emission_weights_3CDR.legend(frameon=False, title="")
-    if not mount_figure:
-        emission_weights_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_emission_weights").with_suffix(f".{format}"))
-    emission_weights_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -1183,17 +1146,17 @@ def _(
         transition_weights_2ADC.text(0.5, 0.3, "Weights", ha="center", va="center",)
     else: 
         sns.boxplot(
-            data=transition_plot_dfs["2AFC_delay"],
+            data=transition_plot_dfs["2ADC_DRUG"],
             x="feature_label",
             y="weight",
-            order=transition_orders["2AFC_delay"],
+            order=transition_orders["2ADC_DRUG"],
             color="tab:gray",
             ax=transition_weights_2ADC,
             **boxplot_STYLE,
         )
         transition_weights_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-        add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=transition_orders["2AFC_delay"])
-    transition_weights_2ADC.set_title(task_labels["2AFC_delay"])
+        add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
+    transition_weights_2ADC.set_title(task_labels["2ADC_DRUG"])
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_ylabel("Transition weight")
     transition_weights_2ADC.tick_params(axis="x", rotation=30)
@@ -1236,18 +1199,18 @@ def _(
         transition_weights_2AFC.text(0.5, 0.3, "Weights", ha="center", va="center",)
     else:
         sns.boxplot(
-            data=transition_plot_dfs["2AFC"],
+            data=transition_plot_dfs["2AFC_DRUG"],
             x="feature_label",
             y="weight",
-            order=transition_orders["2AFC"],
+            order=transition_orders["2AFC_DRUG"],
             color="tab:gray",
             ax=transition_weights_2AFC,
             **boxplot_STYLE,
         )
         transition_weights_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-        add_one_sample_zero_annotations(transition_weights_2AFC, transition_plot_dfs["2AFC"], x="feature_label", y="weight",
-                                        order=transition_orders["2AFC"])
-    transition_weights_2AFC.set_title(task_labels["2AFC"])
+        add_one_sample_zero_annotations(transition_weights_2AFC, transition_plot_dfs["2AFC_DRUG"], x="feature_label", y="weight",
+                                        order=transition_orders["2AFC_DRUG"])
+    transition_weights_2AFC.set_title(task_labels["2AFC_DRUG"])
     transition_weights_2AFC.set_xlabel("")
     transition_weights_2AFC.set_ylabel("Transition weight")
     transition_weights_2AFC.tick_params(axis="x", rotation=30)
@@ -1266,47 +1229,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    add_one_sample_zero_annotations,
-    axd,
-    boxplot_STYLE,
-    fig_size,
-    format,
-    model_type,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    task_labels,
-    transition_orders,
-    transition_plot_dfs,
-):
-    plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
-    transition_weights_3CDR = plt.gca() if not mount_figure else axd.get("transition_weights_3CDR", plt.gca())
-    transition_weights_3CDR.clear()
-    if model_type != "glmhmmt":
-        transition_weights_3CDR.set_axis_off()
-        if not mount_figure:
-            transition_weights_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_transition_weights").with_suffix(f".{format}"))
-        transition_weights_3CDR
-    sns.boxplot(
-        data=transition_plot_dfs["MCDR"],
-        x="feature_label",
-        y="weight",
-        order=transition_orders["MCDR"],
-        color="tab:gray",
-        ax=transition_weights_3CDR,
-        **boxplot_STYLE,
-    )
-    transition_weights_3CDR.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    add_one_sample_zero_annotations(transition_weights_3CDR, transition_plot_dfs["MCDR"], x="feature_label", y="weight", order=transition_orders["MCDR"])
-    transition_weights_3CDR.set_title(task_labels["MCDR"])
-    transition_weights_3CDR.set_xlabel("")
-    transition_weights_3CDR.set_ylabel("Transition weight")
-    transition_weights_3CDR.tick_params(axis="x", rotation=30)
-    if not mount_figure:
-        transition_weights_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_transition_weights").with_suffix(f".{format}"))
-    transition_weights_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -1345,7 +1269,7 @@ def _(
     psychometric_by_state_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2ADC", plt.gca())
     psychometric_by_state_2ADC.clear()
     sns.lineplot(
-        data=psychometric_dfs["2AFC_delay"],
+        data=psychometric_dfs["2ADC_DRUG"],
         x="x_position",
         y="p_right",
         hue="state_label",
@@ -1363,8 +1287,8 @@ def _(
     psychometric_by_state_2ADC.set_xticks(range(len(delay_order)))
     psychometric_by_state_2ADC.set_xticklabels([f"{value:g}" for value in delay_order])
     psychometric_by_state_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_state_2ADC.set_title(task_labels["2AFC_delay"])
-    psychometric_by_state_2ADC.set_xlabel(psychometric_x_labels["2AFC_delay"])
+    psychometric_by_state_2ADC.set_title(task_labels["2ADC_DRUG"])
+    psychometric_by_state_2ADC.set_xlabel(psychometric_x_labels["2ADC_DRUG"])
     psychometric_by_state_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_state_2ADC.legend(frameon=False, title="")
     psychometric_by_state_2ADC.set_ylim(0,1)
@@ -1401,7 +1325,7 @@ def _(
     psychometric_by_state_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2AFC", plt.gca())
     psychometric_by_state_2AFC.clear()
     sns.lineplot(
-        data=psychometric_dfs["2AFC"],
+        data=psychometric_dfs["2AFC_DRUG"],
         x="x_numeric",
         y="p_right",
         hue="state_label",
@@ -1416,13 +1340,13 @@ def _(
         palette=state_palette,
         ax=psychometric_by_state_2AFC,
     )
-    xticks = sorted(psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
+    xticks = sorted(psychometric_dfs["2AFC_DRUG"]["x_numeric"].dropna().unique())
     xticks = [float(tick) for tick in xticks]
     psychometric_by_state_2AFC.set_xticks(xticks)
     psychometric_by_state_2AFC.set_xticklabels([f"{tick:g}" if abs(float(tick)) not in {2.0, 4.0} else "" for tick in xticks])
     psychometric_by_state_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_state_2AFC.set_title(task_labels["2AFC"])
-    psychometric_by_state_2AFC.set_xlabel(psychometric_x_labels["2AFC"])
+    psychometric_by_state_2AFC.set_title(task_labels["2AFC_DRUG"])
+    psychometric_by_state_2AFC.set_xlabel(psychometric_x_labels["2AFC_DRUG"])
     psychometric_by_state_2AFC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_state_2AFC.legend(frameon=False, title="")
     psychometric_by_state_2AFC.set_yticks([0, 0.5,1], [0, 0.5,1], )
@@ -1441,42 +1365,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    axd,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    psychometric_dfs,
-    psychometric_orders,
-    psychometric_x_labels,
-    sns,
-    state_palette,
-    task_labels,
-):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    psychometric_by_state_3CDR = plt.gca() if not mount_figure else axd.get("psychometric_by_state_3CDR", plt.gca())
-    psychometric_by_state_3CDR.clear()
-    sns.pointplot(
-        data=psychometric_dfs["MCDR"],
-        x="x_label",
-        y="p_right",
-        hue="state_label",
-        order=psychometric_orders["MCDR"],
-        errorbar="se",
-        dodge=0.2,
-        palette=state_palette,
-        ax=psychometric_by_state_3CDR,
-    )
-    psychometric_by_state_3CDR.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_state_3CDR.set_title(task_labels["MCDR"])
-    psychometric_by_state_3CDR.set_xlabel(psychometric_x_labels["MCDR"])
-    psychometric_by_state_3CDR.set_ylabel(r"$p(\mathrm{right})$")
-    psychometric_by_state_3CDR.legend(frameon=False, title="")
-    if not mount_figure:
-        psychometric_by_state_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
-    psychometric_by_state_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -1514,7 +1404,7 @@ def _(
     psychometric_by_action_trace_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2ADC", plt.gca())
     psychometric_by_action_trace_2ADC.clear()
     sns.lineplot(
-        data=choice_lag_psychometric_dfs["2AFC_delay"],
+        data=choice_lag_psychometric_dfs["2ADC_DRUG"],
         x="x_numeric",
         y="p_right",
         hue="state_label",
@@ -1529,12 +1419,12 @@ def _(
         palette=state_palette,
         ax=psychometric_by_action_trace_2ADC,
     )
-    # _xticks = sorted(choice_lag_psychometric_dfs["2AFC_delay"]["x_numeric"].dropna().unique())
+    # _xticks = sorted(choice_lag_psychometric_dfs["2ADC_DRUG"]["x_numeric"].dropna().unique())
     # _xticks = [float(tick) for tick in _xticks]
     # psychometric_by_action_trace_2ADC.set_xticks(_xticks)
     # psychometric_by_action_trace_2ADC.set_xticklabels([f"{tick:g}" for tick in _xticks])
     psychometric_by_action_trace_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_action_trace_2ADC.set_title(task_labels["2AFC_delay"])
+    psychometric_by_action_trace_2ADC.set_title(task_labels["2ADC_DRUG"])
     psychometric_by_action_trace_2ADC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_action_trace_2ADC.legend(frameon=False, title="")
@@ -1572,7 +1462,7 @@ def _(
     psychometric_by_action_trace_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2AFC", plt.gca())
     psychometric_by_action_trace_2AFC.clear()
     sns.lineplot(
-        data=choice_lag_psychometric_dfs["2AFC"],
+        data=choice_lag_psychometric_dfs["2AFC_DRUG"],
         x="x_numeric",
         y="p_right",
         hue="state_label",
@@ -1587,12 +1477,12 @@ def _(
         palette=state_palette,
         ax=psychometric_by_action_trace_2AFC,
     )
-    # _xticks = sorted(choice_lag_psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
+    # _xticks = sorted(choice_lag_psychometric_dfs["2AFC_DRUG"]["x_numeric"].dropna().unique())
     # _xticks = [float(tick) for tick in _xticks]
     # psychometric_by_action_trace_2AFC.set_xticks(_xticks)
     # psychometric_by_action_trace_2AFC.set_xticklabels([f"{tick:g}" for tick in _xticks])
     psychometric_by_action_trace_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_action_trace_2AFC.set_title(task_labels["2AFC"])
+    psychometric_by_action_trace_2AFC.set_title(task_labels["2AFC_DRUG"])
     psychometric_by_action_trace_2AFC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2AFC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_action_trace_2AFC.legend(frameon=False, title="")
@@ -1613,51 +1503,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    axd,
-    choice_lag_psychometric_dfs,
-    feature_labels,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    state_palette,
-    task_labels,
-):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    psychometric_by_action_trace_3CDR = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_3CDR", plt.gca())
-    psychometric_by_action_trace_3CDR.clear()
-    sns.lineplot(
-        data=choice_lag_psychometric_dfs["MCDR"],
-        x="x_numeric",
-        y="p_right",
-        hue="state_label",
-        estimator="mean",
-        errorbar="se",
-        marker="o",
-        markeredgewidth=0,
-        err_kws={
-            "edgecolor": "none",
-            "linewidth": 0,
-        },
-        palette=state_palette,
-        ax=psychometric_by_action_trace_3CDR,
-    )
-    # _xticks = sorted(choice_lag_psychometric_dfs["MCDR"]["x_numeric"].dropna().unique())
-    # _xticks = [float(tick) for tick in _xticks]
-    # psychometric_by_action_trace_3CDR.set_xticks(_xticks)
-    # psychometric_by_action_trace_3CDR.set_xticklabels([f"{tick:g}" for tick in _xticks])
-    psychometric_by_action_trace_3CDR.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    psychometric_by_action_trace_3CDR.set_title(task_labels["MCDR"])
-    psychometric_by_action_trace_3CDR.set_xlabel(feature_labels["choice_lag_param"])
-    psychometric_by_action_trace_3CDR.set_ylabel(r"$p(\mathrm{right})$")
-    psychometric_by_action_trace_3CDR.legend(frameon=False, title="")
-    psychometric_by_action_trace_3CDR.set_ylim(0,1)
-    if not mount_figure:
-        psychometric_by_action_trace_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_psychometric_by_action_trace").with_suffix(f".{format}"))
-    psychometric_by_action_trace_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -1698,18 +1545,18 @@ def _(
     accuracy_by_state_2ADC = plt.gca() if not mount_figure else axd.get("accuracy_by_state_2ADC", plt.gca())
     accuracy_by_state_2ADC.clear()
     sns.boxplot(
-        data=accuracy_plot_dfs["2AFC_delay"],
+        data=accuracy_plot_dfs["2ADC_DRUG"],
         x="task_label",
         y="accuracy",
         hue="state_label",
-        order=task_label_orders["2AFC_delay"],
-        hue_order=accuracy_hue_orders["2AFC_delay"],
+        order=task_label_orders["2ADC_DRUG"],
+        hue_order=accuracy_hue_orders["2ADC_DRUG"],
         palette=state_palette,
         ax=accuracy_by_state_2ADC,
         **boxplot_STYLE,
     )
-    add_subject_pair_lines(accuracy_by_state_2ADC, accuracy_plot_dfs["2AFC_delay"], x="task_label", y="accuracy", order=task_label_orders["2AFC_delay"])
-    add_paired_state_annotation(accuracy_by_state_2ADC, accuracy_plot_dfs["2AFC_delay"], x="task_label", y="accuracy", order=task_label_orders["2AFC_delay"])
+    add_subject_pair_lines(accuracy_by_state_2ADC, accuracy_plot_dfs["2ADC_DRUG"], x="task_label", y="accuracy", order=task_label_orders["2ADC_DRUG"])
+    add_paired_state_annotation(accuracy_by_state_2ADC, accuracy_plot_dfs["2ADC_DRUG"], x="task_label", y="accuracy", order=task_label_orders["2ADC_DRUG"])
     accuracy_by_state_2ADC.set_xlabel("")
     accuracy_by_state_2ADC.set_ylabel("Accuracy")
     accuracy_by_state_2ADC.legend(frameon=False, title="")
@@ -1748,18 +1595,18 @@ def _(
     accuracy_by_state_2AFC = plt.gca() if not mount_figure else axd.get("accuracy_by_state_2AFC", plt.gca())
     accuracy_by_state_2AFC.clear()
     sns.boxplot(
-        data=accuracy_plot_dfs["2AFC"],
+        data=accuracy_plot_dfs["2AFC_DRUG"],
         x="task_label",
         y="accuracy",
         hue="state_label",
-        order=task_label_orders["2AFC"],
-        hue_order=accuracy_hue_orders["2AFC"],
+        order=task_label_orders["2AFC_DRUG"],
+        hue_order=accuracy_hue_orders["2AFC_DRUG"],
         palette=state_palette,
         ax=accuracy_by_state_2AFC,
         **boxplot_STYLE,
     )
-    add_subject_pair_lines(accuracy_by_state_2AFC, accuracy_plot_dfs["2AFC"], x="task_label", y="accuracy", order=task_label_orders["2AFC"])
-    add_paired_state_annotation(accuracy_by_state_2AFC, accuracy_plot_dfs["2AFC"], x="task_label", y="accuracy", order=task_label_orders["2AFC"])
+    add_subject_pair_lines(accuracy_by_state_2AFC, accuracy_plot_dfs["2AFC_DRUG"], x="task_label", y="accuracy", order=task_label_orders["2AFC_DRUG"])
+    add_paired_state_annotation(accuracy_by_state_2AFC, accuracy_plot_dfs["2AFC_DRUG"], x="task_label", y="accuracy", order=task_label_orders["2AFC_DRUG"])
     accuracy_by_state_2AFC.set_xlabel("")
     accuracy_by_state_2AFC.set_ylabel("Accuracy")
     accuracy_by_state_2AFC.legend(frameon=False, title="")
@@ -1778,44 +1625,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    accuracy_hue_orders,
-    accuracy_plot_dfs,
-    add_paired_state_annotation,
-    add_subject_pair_lines,
-    axd,
-    boxplot_STYLE,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    state_palette,
-    task_label_orders,
-):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    accuracy_by_state_3CDR = plt.gca() if not mount_figure else axd.get("accuracy_by_state_3CDR", plt.gca())
-    accuracy_by_state_3CDR.clear()
-    sns.boxplot(
-        data=accuracy_plot_dfs["MCDR"],
-        x="task_label",
-        y="accuracy",
-        hue="state_label",
-        order=task_label_orders["MCDR"],
-        hue_order=accuracy_hue_orders["MCDR"],
-        palette=state_palette,
-        ax=accuracy_by_state_3CDR,
-        **boxplot_STYLE,
-    )
-    add_subject_pair_lines(accuracy_by_state_3CDR, accuracy_plot_dfs["MCDR"], x="task_label", y="accuracy", order=task_label_orders["MCDR"])
-    add_paired_state_annotation(accuracy_by_state_3CDR, accuracy_plot_dfs["MCDR"], x="task_label", y="accuracy", order=task_label_orders["MCDR"])
-    accuracy_by_state_3CDR.set_xlabel("")
-    accuracy_by_state_3CDR.set_ylabel("Accuracy")
-    accuracy_by_state_3CDR.legend(frameon=False, title="")
-    if not mount_figure:
-        accuracy_by_state_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_accuracy_by_state").with_suffix(f".{format}"))
-    accuracy_by_state_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -1856,17 +1667,17 @@ def _(
     occupancy_by_state_2ADC = plt.gca() if not mount_figure else axd.get("occupancy_by_state_2ADC", plt.gca())
     occupancy_by_state_2ADC.clear()
     sns.boxplot(
-        data=occupancy_plot_dfs["2AFC_delay"],
+        data=occupancy_plot_dfs["2ADC_DRUG"],
         x="task_label",
         y="occupancy",
         hue="state_label",
-        order=task_label_orders["2AFC_delay"],
-        hue_order=occupancy_hue_orders["2AFC_delay"],
+        order=task_label_orders["2ADC_DRUG"],
+        hue_order=occupancy_hue_orders["2ADC_DRUG"],
         palette=state_palette,
         ax=occupancy_by_state_2ADC,
         **boxplot_STYLE,
     )
-    add_subject_pair_lines(occupancy_by_state_2ADC, occupancy_annotation_dfs["2AFC_delay"], x="task_label", y="occupancy", order=task_label_orders["2AFC_delay"])
+    add_subject_pair_lines(occupancy_by_state_2ADC, occupancy_annotation_dfs["2ADC_DRUG"], x="task_label", y="occupancy", order=task_label_orders["2ADC_DRUG"])
     occupancy_by_state_2ADC.set_xlabel("")
     occupancy_by_state_2ADC.set_ylabel("Occupancy")
     occupancy_by_state_2ADC.legend(frameon=False, title="")
@@ -1905,17 +1716,17 @@ def _(
     occupancy_by_state_2AFC = plt.gca() if not mount_figure else axd.get("occupancy_by_state_2AFC", plt.gca())
     occupancy_by_state_2AFC.clear()
     sns.boxplot(
-        data=occupancy_plot_dfs["2AFC"],
+        data=occupancy_plot_dfs["2AFC_DRUG"],
         x="task_label",
         y="occupancy",
         hue="state_label",
-        order=task_label_orders["2AFC"],
-        hue_order=occupancy_hue_orders["2AFC"],
+        order=task_label_orders["2AFC_DRUG"],
+        hue_order=occupancy_hue_orders["2AFC_DRUG"],
         palette=state_palette,
         ax=occupancy_by_state_2AFC,
         **boxplot_STYLE,
     )
-    add_subject_pair_lines(occupancy_by_state_2AFC, occupancy_annotation_dfs["2AFC"], x="task_label", y="occupancy", order=task_label_orders["2AFC"])
+    add_subject_pair_lines(occupancy_by_state_2AFC, occupancy_annotation_dfs["2AFC_DRUG"], x="task_label", y="occupancy", order=task_label_orders["2AFC_DRUG"])
     occupancy_by_state_2AFC.set_xlabel("")
     occupancy_by_state_2AFC.set_ylabel("Occupancy")
     occupancy_by_state_2AFC.legend(frameon=False, title="")
@@ -1934,43 +1745,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    add_subject_pair_lines,
-    axd,
-    boxplot_STYLE,
-    fig_size,
-    format,
-    mount_figure,
-    occupancy_annotation_dfs,
-    occupancy_hue_orders,
-    occupancy_plot_dfs,
-    path_panels,
-    plt,
-    sns,
-    state_palette,
-    task_label_orders,
-):
-    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    occupancy_by_state_3CDR = plt.gca() if not mount_figure else axd.get("occupancy_by_state_3CDR", plt.gca())
-    occupancy_by_state_3CDR.clear()
-    sns.boxplot(
-        data=occupancy_plot_dfs["MCDR"],
-        x="task_label",
-        y="occupancy",
-        hue="state_label",
-        order=task_label_orders["MCDR"],
-        hue_order=occupancy_hue_orders["MCDR"],
-        palette=state_palette,
-        ax=occupancy_by_state_3CDR,
-        **boxplot_STYLE,
-    )
-    add_subject_pair_lines(occupancy_by_state_3CDR, occupancy_annotation_dfs["MCDR"], x="task_label", y="occupancy", order=task_label_orders["MCDR"])
-    occupancy_by_state_3CDR.set_xlabel("")
-    occupancy_by_state_3CDR.set_ylabel("Occupancy")
-    occupancy_by_state_3CDR.legend(frameon=False, title="")
-    if not mount_figure:
-        occupancy_by_state_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_occupancy_by_state").with_suffix(f".{format}"))
-    occupancy_by_state_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -2007,7 +1783,7 @@ def _(
     mean_state_traces_2ADC = plt.gca() if not mount_figure else axd.get("mean_state_traces_2ADC", plt.gca())
     mean_state_traces_2ADC.clear()
     sns.lineplot(
-        data=trace_dfs["2AFC_delay"],
+        data=trace_dfs["2ADC_DRUG"],
         x="trial_bin",
         y="p_state",
         hue="state_label",
@@ -2016,7 +1792,7 @@ def _(
         palette=state_palette,
         ax=mean_state_traces_2ADC,
     )
-    mean_state_traces_2ADC.set_title(task_labels["2AFC_delay"])
+    mean_state_traces_2ADC.set_title(task_labels["2ADC_DRUG"])
     mean_state_traces_2ADC.set_xlabel("Normalized session time")
     mean_state_traces_2ADC.set_ylabel("State posterior")
     mean_state_traces_2ADC.set_ylim(0,1)
@@ -2052,7 +1828,7 @@ def _(
     mean_state_traces_2AFC = plt.gca() if not mount_figure else axd.get("mean_state_traces_2AFC", plt.gca())
     mean_state_traces_2AFC.clear()
     sns.lineplot(
-        data=trace_dfs["2AFC"],
+        data=trace_dfs["2AFC_DRUG"],
         x="trial_bin",
         y="p_state",
         hue="state_label",
@@ -2061,7 +1837,7 @@ def _(
         palette=state_palette,
         ax=mean_state_traces_2AFC,
     )
-    mean_state_traces_2AFC.set_title(task_labels["2AFC"])
+    mean_state_traces_2AFC.set_title(task_labels["2AFC_DRUG"])
     mean_state_traces_2AFC.set_xlabel("Normalized session time")
     mean_state_traces_2AFC.set_ylabel("State posterior")
     mean_state_traces_2AFC.set_ylim(0,1)
@@ -2081,38 +1857,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    axd,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    state_palette,
-    task_labels,
-    trace_dfs,
-):
-    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    mean_state_traces_3CDR = plt.gca() if not mount_figure else axd.get("mean_state_traces_3CDR", plt.gca())
-    mean_state_traces_3CDR.clear()
-    sns.lineplot(
-        data=trace_dfs["MCDR"],
-        x="trial_bin",
-        y="p_state",
-        hue="state_label",
-        estimator="mean",
-        errorbar="se",
-        palette=state_palette,
-        ax=mean_state_traces_3CDR,
-    )
-    mean_state_traces_3CDR.set_title(task_labels["MCDR"])
-    mean_state_traces_3CDR.set_xlabel("Normalized session time")
-    mean_state_traces_3CDR.set_ylabel("State posterior")
-    mean_state_traces_3CDR.legend(frameon=False, title="")
-    if not mount_figure:
-        mean_state_traces_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_mean_state_traces").with_suffix(f".{format}"))
-    mean_state_traces_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -2152,7 +1898,7 @@ def _(
     rt_by_state_2AFC.clear()
 
     sns.boxplot(
-        data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("RT")],
+        data=metric_dfs["2AFC_DRUG"][metric_dfs["2AFC_DRUG"]["metric"].eq("RT")],
         x="state_label",
         y="value",
         order=state_order,
@@ -2166,7 +1912,7 @@ def _(
     _annotator = Annotator(
         rt_by_state_2AFC,
         [("Engaged", "Disengaged")],
-        data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("RT")],
+        data=metric_dfs["2AFC_DRUG"][metric_dfs["2AFC_DRUG"]["metric"].eq("RT")],
         x="state_label",
         y="value",
         order=state_order,
@@ -2223,7 +1969,7 @@ def _(
     nlicks_by_state_2AFC.clear()
 
     sns.boxplot(
-        data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("nLicks")],
+        data=metric_dfs["2AFC_DRUG"][metric_dfs["2AFC_DRUG"]["metric"].eq("nLicks")],
         x="state_label",
         y="value",
         order=state_order,
@@ -2236,7 +1982,7 @@ def _(
     _annotator = Annotator(
         nlicks_by_state_2AFC,
         [("Engaged", "Disengaged")],
-        data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("nLicks")],
+        data=metric_dfs["2AFC_DRUG"][metric_dfs["2AFC_DRUG"]["metric"].eq("nLicks")],
         x="state_label",
         y="value",
         order=state_order,
@@ -2280,7 +2026,7 @@ def _(
     ili_by_state_2AFC.clear()
 
     sns.boxplot(
-        data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("ILI")],
+        data=metric_dfs["2AFC_DRUG"][metric_dfs["2AFC_DRUG"]["metric"].eq("ILI")],
         x="state_label",
         y="value",
         order=state_order,
@@ -2294,7 +2040,7 @@ def _(
     _annotator = Annotator(
         ili_by_state_2AFC,
         [("Engaged", "Disengaged")],
-        data=metric_dfs["2AFC"][metric_dfs["2AFC"]["metric"].eq("ILI")],
+        data=metric_dfs["2AFC_DRUG"][metric_dfs["2AFC_DRUG"]["metric"].eq("ILI")],
         x="state_label",
         y="value",
         order=state_order,
@@ -2350,13 +2096,13 @@ def _(
     dwell_time_cdf_2ADC = plt.gca() if not mount_figure else axd.get("dwell_time_cdf_2ADC", plt.gca())
     dwell_time_cdf_2ADC.clear()
     sns.ecdfplot(
-        data=dwell_dfs["2AFC_delay"],
+        data=dwell_dfs["2ADC_DRUG"],
         x="dwell_trials",
         hue="state_label",
         palette=state_palette,
         ax=dwell_time_cdf_2ADC,
     )
-    dwell_time_cdf_2ADC.set_title(task_labels["2AFC_delay"])
+    dwell_time_cdf_2ADC.set_title(task_labels["2ADC_DRUG"])
     dwell_time_cdf_2ADC.set_xlabel("Dwell time (trials)")
     dwell_time_cdf_2ADC.set_ylabel("Cumulative probability")
     dwell_time_cdf_2ADC.legend(frameon=False, title="")
@@ -2391,13 +2137,13 @@ def _(
     dwell_time_cdf_2AFC = plt.gca() if not mount_figure else axd.get("dwell_time_cdf_2AFC", plt.gca())
     dwell_time_cdf_2AFC.clear()
     sns.ecdfplot(
-        data=dwell_dfs["2AFC"],
+        data=dwell_dfs["2AFC_DRUG"],
         x="dwell_trials",
         hue="state_label",
         palette=state_palette,
         ax=dwell_time_cdf_2AFC,
     )
-    dwell_time_cdf_2AFC.set_title(task_labels["2AFC"])
+    dwell_time_cdf_2AFC.set_title(task_labels["2AFC_DRUG"])
     dwell_time_cdf_2AFC.set_xlabel("Dwell time (trials)")
     dwell_time_cdf_2AFC.set_ylabel("Cumulative probability")
     dwell_time_cdf_2AFC.legend(frameon=False, title="")
@@ -2416,35 +2162,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    axd,
-    dwell_dfs,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    state_palette,
-    task_labels,
-):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    dwell_time_cdf_3CDR = plt.gca() if not mount_figure else axd.get("dwell_time_cdf_3CDR", plt.gca())
-    dwell_time_cdf_3CDR.clear()
-    sns.ecdfplot(
-        data=dwell_dfs["MCDR"],
-        x="dwell_trials",
-        hue="state_label",
-        palette=state_palette,
-        ax=dwell_time_cdf_3CDR,
-    )
-    dwell_time_cdf_3CDR.set_title(task_labels["MCDR"])
-    dwell_time_cdf_3CDR.set_xlabel("Dwell time (trials)")
-    dwell_time_cdf_3CDR.set_ylabel("Cumulative probability")
-    dwell_time_cdf_3CDR.legend(frameon=False, title="")
-    if not mount_figure:
-        dwell_time_cdf_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_dwell_time_cdf").with_suffix(f".{format}"))
-    dwell_time_cdf_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -2482,27 +2201,27 @@ def _(
     state_switch_histogram_by_animal_2ADC = plt.gca() if not mount_figure else axd.get("state_switch_histogram_by_animal_2ADC", plt.gca())
     state_switch_histogram_by_animal_2ADC.clear()
     sns.histplot(
-        data=switch_hist_dfs["2AFC_delay"],
+        data=switch_hist_dfs["2ADC_DRUG"],
         x="n_switches",
         weights="switch_probability",
         discrete=True,
         stat="probability",
         shrink=0.85,
-        color=task_palette["2AFC_delay"],
+        color=task_palette["2ADC_DRUG"],
         edgecolor="white",
         ax=state_switch_histogram_by_animal_2ADC,
     )
     state_switch_histogram_by_animal_2ADC.errorbar(
-        switch_hist_summary_dfs["2AFC_delay"]["n_switches"],
-        switch_hist_summary_dfs["2AFC_delay"]["switch_probability"],
-        yerr=switch_hist_summary_dfs["2AFC_delay"]["sem"],
+        switch_hist_summary_dfs["2ADC_DRUG"]["n_switches"],
+        switch_hist_summary_dfs["2ADC_DRUG"]["switch_probability"],
+        yerr=switch_hist_summary_dfs["2ADC_DRUG"]["sem"],
         fmt="none",
         color="0.2",
         capsize=2,
         linewidth=0.8,
     )
-    state_switch_histogram_by_animal_2ADC.set_xticks(sorted(switch_hist_dfs["2AFC_delay"]["n_switches"].dropna().astype(int).unique()))
-    state_switch_histogram_by_animal_2ADC.set_title(task_labels["2AFC_delay"])
+    state_switch_histogram_by_animal_2ADC.set_xticks(sorted(switch_hist_dfs["2ADC_DRUG"]["n_switches"].dropna().astype(int).unique()))
+    state_switch_histogram_by_animal_2ADC.set_title(task_labels["2ADC_DRUG"])
     state_switch_histogram_by_animal_2ADC.set_xlabel("Mean switches per session")
     state_switch_histogram_by_animal_2ADC.set_ylabel("Animal probability")
     if not mount_figure:
@@ -2537,27 +2256,27 @@ def _(
     state_switch_histogram_by_animal_2AFC = plt.gca() if not mount_figure else axd.get("state_switch_histogram_by_animal_2AFC", plt.gca())
     state_switch_histogram_by_animal_2AFC.clear()
     sns.histplot(
-        data=switch_hist_dfs["2AFC"],
+        data=switch_hist_dfs["2AFC_DRUG"],
         x="n_switches",
         weights="switch_probability",
         discrete=True,
         stat="probability",
         shrink=0.85,
-        color=task_palette["2AFC"],
+        color=task_palette["2AFC_DRUG"],
         edgecolor="white",
         ax=state_switch_histogram_by_animal_2AFC,
     )
     state_switch_histogram_by_animal_2AFC.errorbar(
-        switch_hist_summary_dfs["2AFC"]["n_switches"],
-        switch_hist_summary_dfs["2AFC"]["switch_probability"],
-        yerr=switch_hist_summary_dfs["2AFC"]["sem"],
+        switch_hist_summary_dfs["2AFC_DRUG"]["n_switches"],
+        switch_hist_summary_dfs["2AFC_DRUG"]["switch_probability"],
+        yerr=switch_hist_summary_dfs["2AFC_DRUG"]["sem"],
         fmt="none",
         color="0.2",
         capsize=2,
         linewidth=0.8,
     )
-    state_switch_histogram_by_animal_2AFC.set_xticks(sorted(switch_hist_dfs["2AFC"]["n_switches"].dropna().astype(int).unique()))
-    state_switch_histogram_by_animal_2AFC.set_title(task_labels["2AFC"])
+    state_switch_histogram_by_animal_2AFC.set_xticks(sorted(switch_hist_dfs["2AFC_DRUG"]["n_switches"].dropna().astype(int).unique()))
+    state_switch_histogram_by_animal_2AFC.set_title(task_labels["2AFC_DRUG"])
     state_switch_histogram_by_animal_2AFC.set_xlabel("Mean switches per session")
     state_switch_histogram_by_animal_2AFC.set_ylabel("Animal probability")
     if not mount_figure:
@@ -2575,49 +2294,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    axd,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    switch_hist_dfs,
-    switch_hist_summary_dfs,
-    task_labels,
-    task_palette,
-):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    state_switch_histogram_by_animal_3CDR = plt.gca() if not mount_figure else axd.get("state_switch_histogram_by_animal_3CDR", plt.gca())
-    state_switch_histogram_by_animal_3CDR.clear()
-    sns.histplot(
-        data=switch_hist_dfs["MCDR"],
-        x="n_switches",
-        weights="switch_probability",
-        discrete=True,
-        stat="probability",
-        shrink=0.85,
-        color=task_palette["MCDR"],
-        edgecolor="white",
-        ax=state_switch_histogram_by_animal_3CDR,
-    )
-    state_switch_histogram_by_animal_3CDR.errorbar(
-        switch_hist_summary_dfs["MCDR"]["n_switches"],
-        switch_hist_summary_dfs["MCDR"]["switch_probability"],
-        yerr=switch_hist_summary_dfs["MCDR"]["sem"],
-        fmt="none",
-        color="0.2",
-        capsize=2,
-        linewidth=0.8,
-    )
-    state_switch_histogram_by_animal_3CDR.set_xticks(sorted(switch_hist_dfs["MCDR"]["n_switches"].dropna().astype(int).unique()))
-    state_switch_histogram_by_animal_3CDR.set_title(task_labels["MCDR"])
-    state_switch_histogram_by_animal_3CDR.set_xlabel("Mean switches per session")
-    state_switch_histogram_by_animal_3CDR.set_ylabel("Animal probability")
-    if not mount_figure:
-        state_switch_histogram_by_animal_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_state_switch_histogram_by_animal").with_suffix(f".{format}"))
-    state_switch_histogram_by_animal_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -2654,7 +2332,7 @@ def _(
     posteriors_around_change_2ADC = plt.gca() if not mount_figure else axd.get("posteriors_around_change_2ADC", plt.gca())
     posteriors_around_change_2ADC.clear()
     sns.lineplot(
-        data=change_posterior_dfs["2AFC_delay"],
+        data=change_posterior_dfs["2ADC_DRUG"],
         x="lag",
         y="p_state",
         hue="state_label",
@@ -2665,7 +2343,7 @@ def _(
     )
     posteriors_around_change_2ADC.axvline(0, color="0.5", linestyle="--", linewidth=0.8)
     posteriors_around_change_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    posteriors_around_change_2ADC.set_title(task_labels["2AFC_delay"])
+    posteriors_around_change_2ADC.set_title(task_labels["2ADC_DRUG"])
     posteriors_around_change_2ADC.set_xlabel("Trials from state change")
     posteriors_around_change_2ADC.set_ylabel("State posterior")
     posteriors_around_change_2ADC.legend(frameon=False, title="")
@@ -2700,7 +2378,7 @@ def _(
     posteriors_around_change_2AFC = plt.gca() if not mount_figure else axd.get("posteriors_around_change_2AFC", plt.gca())
     posteriors_around_change_2AFC.clear()
     sns.lineplot(
-        data=change_posterior_dfs["2AFC"],
+        data=change_posterior_dfs["2AFC_DRUG"],
         x="lag",
         y="p_state",
         hue="state_label",
@@ -2711,7 +2389,7 @@ def _(
     )
     posteriors_around_change_2AFC.axvline(0, color="0.5", linestyle="--", linewidth=0.8)
     posteriors_around_change_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    posteriors_around_change_2AFC.set_title(task_labels["2AFC"])
+    posteriors_around_change_2AFC.set_title(task_labels["2AFC_DRUG"])
     posteriors_around_change_2AFC.set_xlabel("Trials from state change")
     posteriors_around_change_2AFC.set_ylabel("State posterior")
     posteriors_around_change_2AFC.legend(frameon=False, title="")
@@ -2730,39 +2408,8 @@ def _(mo):
 
 
 @app.cell
-def _(
-    axd,
-    change_posterior_dfs,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    state_palette,
-    task_labels,
-):
-    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    posteriors_around_change_3CDR = plt.gca() if not mount_figure else axd.get("posteriors_around_change_3CDR", plt.gca())
-    posteriors_around_change_3CDR.clear()
-    sns.lineplot(
-        data=change_posterior_dfs["MCDR"],
-        x="lag",
-        y="p_state",
-        hue="state_label",
-        estimator="mean",
-        errorbar="se",
-        palette=state_palette,
-        ax=posteriors_around_change_3CDR,
-    )
-    posteriors_around_change_3CDR.axvline(0, color="0.5", linestyle="--", linewidth=0.8)
-    posteriors_around_change_3CDR.set_title(task_labels["MCDR"])
-    posteriors_around_change_3CDR.set_xlabel("Trials from state change")
-    posteriors_around_change_3CDR.set_ylabel("State posterior")
-    posteriors_around_change_3CDR.legend(frameon=False, title="")
-    if not mount_figure:
-        posteriors_around_change_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_posteriors_around_change").with_suffix(f".{format}"))
-    posteriors_around_change_3CDR
+def _():
+    # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
     return
 
 
@@ -2792,7 +2439,7 @@ def _(
 ):
     _subject = "C37"
     _session = "35"
-    _task_df = plot_dfs["2AFC_delay"]
+    _task_df = plot_dfs["2ADC_DRUG"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (
             _task_df
@@ -2806,7 +2453,7 @@ def _(
         _task_df,
         subject=_subject,
         session=_session,
-        adapter=adapters["2AFC_delay"],
+        adapter=adapters["2ADC_DRUG"],
         window=20,
     )
     plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
@@ -2869,7 +2516,7 @@ def _(
     single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2)
     if "accuracy_window_fraction" in session_repetition_data_2ADC:
         single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2ADC, zorder=2)
-    single_session_2ADC.set_title(task_labels["2AFC_delay"])
+    single_session_2ADC.set_title(task_labels["2ADC_DRUG"])
     single_session_2ADC.set_xlabel("Trial")
     single_session_2ADC.set_ylabel("Running fraction")
     single_session_2ADC.set_ylim(0, 1)
@@ -2900,7 +2547,7 @@ def _(
 ):
     _subject = "335"
     _session = "335_stage_training_v2_20220329-111341"
-    _task_df = plot_dfs["2AFC"]
+    _task_df = plot_dfs["2AFC_DRUG"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (
             _task_df
@@ -2914,7 +2561,7 @@ def _(
         _task_df,
         subject=_subject,
         session=_session,
-        adapter=adapters["2AFC"],
+        adapter=adapters["2AFC_DRUG"],
         window=20,
     )
     plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
@@ -2976,7 +2623,7 @@ def _(
     single_session_2AFC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2AFC, zorder=2)
     if "accuracy_window_fraction" in session_repetition_data_2AFC:
         single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2AFC, zorder=2)
-    single_session_2AFC.set_title(task_labels["2AFC"])
+    single_session_2AFC.set_title(task_labels["2AFC_DRUG"])
     single_session_2AFC.set_xlabel("Trial")
     single_session_2AFC.set_ylabel("Running fraction")
     single_session_2AFC.set_ylim(0, 1)
@@ -3039,12 +2686,12 @@ def _(MODEL_BY_TASK, load_metrics_dir_raw, paths, pl):
         )
 
     ll_bic_delta_2ADC = model_delta_df(
-        load_model_metrics("2AFC_delay", "glm", "one hot2", "GLM"),
-        load_model_metrics("2AFC_delay", "glmhmm", MODEL_BY_TASK["2AFC_delay"], "GLM-HMM-T"),
+        load_model_metrics("2ADC_DRUG", "glm", "one hot2", "GLM"),
+        load_model_metrics("2ADC_DRUG", "glmhmm", MODEL_BY_TASK["2ADC_DRUG"], "GLM-HMM-T"),
     )
     ll_bic_delta_2AFC = model_delta_df(
-        load_model_metrics("2AFC", "glm", "one hot2", "GLM"),
-        load_model_metrics("2AFC", "glmhmm", MODEL_BY_TASK["2AFC"], "GLM-HMM-T"),
+        load_model_metrics("2AFC_DRUG", "glm", "one hot2", "GLM"),
+        load_model_metrics("2AFC_DRUG", "glmhmm", MODEL_BY_TASK["2AFC_DRUG"], "GLM-HMM-T"),
     )
     return ll_bic_delta_2ADC, ll_bic_delta_2AFC
 
@@ -3079,7 +2726,7 @@ def _(np, pd, plot_dfs):
         return positive.to_numpy(dtype=bool), (positive | negative).to_numpy(dtype=bool)
 
 
-    plot_df_2AFC = plot_dfs["2AFC"].to_pandas()
+    plot_df_2AFC = plot_dfs["2AFC_DRUG"].to_pandas()
     fpr_grid_2AFC = np.linspace(0, 1, 101)
 
     roc_metrics_2AFC = {
@@ -3170,7 +2817,7 @@ def _(
         y="delta",
         order=["GLM-HMM-T - GLM"],
     )
-    model_comparison_ll_2ADC.set_title(task_labels["2AFC_delay"])
+    model_comparison_ll_2ADC.set_title(task_labels["2ADC_DRUG"])
     model_comparison_ll_2ADC.set_xlabel("")
     model_comparison_ll_2ADC.set_ylabel("Delta CV test LL / trial")
     align_zero_to_axis_fraction(model_comparison_ll_2ADC, zero_fraction=0.5)
@@ -3273,7 +2920,7 @@ def _(
         y="delta",
         order=["GLM-HMM-T - GLM"],
     )
-    model_comparison_ll_2AFC.set_title(task_labels["2AFC"])
+    model_comparison_ll_2AFC.set_title(task_labels["2AFC_DRUG"])
     model_comparison_ll_2AFC.set_xlabel("")
     model_comparison_ll_2AFC.set_ylabel("Delta CV test LL / trial")
     model_comparison_ll_2AFC.set_ylim(-0.1, 0.1)
@@ -3324,7 +2971,7 @@ def _(
     )
     align_zero_to_axis_fraction(model_comparison_bic_2AFC, zero_fraction=0.5)
     format_delta_bic_axis(model_comparison_bic_2AFC)
-    # model_comparison_bic_2AFC.set_title(task_labels["2AFC"])
+    # model_comparison_bic_2AFC.set_title(task_labels["2AFC_DRUG"])
     model_comparison_bic_2AFC.set_xlabel("")
     # model_comparison_bic_2AFC.set_ylabel(r"Delta BIC ($\times 10^3$)")
     model_comparison_bic_2AFC.set_xticklabels(["BIC"])

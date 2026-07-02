@@ -138,13 +138,13 @@ def _(mo):
 
 @app.cell
 def _():
-    mount_figure = True
+    mount_figure = False
     return (mount_figure,)
 
 
 @app.cell
 def _():
-    format = "pdf"
+    format = "svg"
     return (format,)
 
 
@@ -186,7 +186,7 @@ def _(mo):
 
 @app.cell
 def _(Path, plt, sns):
-    sns.set_theme(style='ticks', context='paper')
+    sns.set_theme(style='ticks', context='notebook')
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = 'none'
     plt.rcParams['savefig.bbox'] = 'standard'
@@ -3147,12 +3147,12 @@ def _(axd, fig, format, mount_figure, project_path):
 
         # axd["single_sess_acc_2ADC"].set_ylabel("Running Accuracy")
         # axd["single_sess_acc_2ADC"].set_xlabel("Trial")
-    
+
         # axd["single_sess_acc_2AFC"].set_xlabel("Trial")
-    
+
         axd["hist_correct_2ADC"].set_xlabel("Corr. Streak length")
         axd["hist_correct_2ADC"].set_ylabel("Count")
-    
+
         # axd["hist_repeat_2ADC"].set_ylabel("Count")
         axd["hist_repeat_2ADC"].set_xlabel("Rep. Streak length")
         axd["hist_repeat_2ADC"].legend(
@@ -3161,16 +3161,16 @@ def _(axd, fig, format, mount_figure, project_path):
             frameon=False,
         )
 
-    
+
         # axd["hist_correct_2ADC"].legend(
         #     axd["hist_correct_2ADC"].get_legend_handles_labels()[:3],
         #     handlelength=1,
         #     frameon=False,
         #     title = ""
         # )
-    
+
         axd["hist_repeat_2AFC"].set_xlabel("Rep. Streak length")
-    
+
         axd["hist_correct_2AFC"].set_xlabel("Corr. Streak length")
 
         axd["e"].set_ylabel("Weight")
