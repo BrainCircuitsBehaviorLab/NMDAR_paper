@@ -1772,7 +1772,7 @@ def plot_rb(
         ylabel="Rep. bias",
         title=title,
         baseline=0.5,
-        baseline_area=True,
+        baseline_area=False,
         color=color if color is not None else "tab:blue",
         show_baseline_ttest=show_baseline_ttest,
         ax=ax,

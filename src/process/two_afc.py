@@ -1420,7 +1420,7 @@ class TwoAFCAdapter(TaskAdapter):
         if df is not None:
             columns = list(df.columns)
             default_cols.extend(_infer_bias_hot_cols_from_df(df))
-            default_cols.extend(_infer_stim_abs_cols_from_df(df))
+            default_cols.extend(col for col in _infer_stim_abs_cols_from_df(df) if col != "stim_0")
             default_cols.extend(_infer_abs_ild_hot_cols_from_df(df))
             default_cols.extend(
                 numeric_prefixed(columns, "choice_lag_")

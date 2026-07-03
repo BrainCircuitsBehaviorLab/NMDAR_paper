@@ -817,7 +817,7 @@ def plot_rb(df, ax=None, figsize=(3.0, 3.0), title="MCDR", **kwargs):
         ylabel="Rep. bias",
         title=title,
         baseline=1 / 3,
-        baseline_area=True,
+        baseline_area=False,
         color=kwargs.get("color") if kwargs.get("color") is not None else "tab:blue",
         show_baseline_ttest=bool(kwargs.get("show_baseline_ttest", False)),
         ax=ax,

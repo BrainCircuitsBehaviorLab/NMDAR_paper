@@ -123,11 +123,6 @@ def _(load_app_config, process_mcdr, process_two_adc, process_two_afc):
     return (prepare_predictions_df,)
 
 
-@app.cell
-def _():
-    return
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -139,13 +134,8 @@ def _(mo):
 @app.cell
 def _():
     mount_figure = False
-    return (mount_figure,)
-
-
-@app.cell
-def _():
     format = "svg"
-    return (format,)
+    return format, mount_figure
 
 
 @app.cell(hide_code=True)
@@ -1261,7 +1251,7 @@ def _(
     plt,
     session_repetition_data_2ADC,
 ):
-    plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     single_session_2ADC_repetition = plt.gca() if not mount_figure else axd["a"]
     single_session_2ADC_repetition.clear()
 
@@ -3091,13 +3081,6 @@ def _(mo):
     mo.md(r"""
     # Full figure
     """)
-    return
-
-
-@app.cell
-def _():
-    8.27 - 6.26771653543307
-    11.69 
     return
 
 

@@ -1228,7 +1228,7 @@ def plot_mean_over_data(
     ylabel: str = "Accuracy",
     title: str,
     baseline: float,
-    baseline_area: bool = True,
+    baseline_area: bool = False,
     color: str = "#2b7bba",
     invert_x: bool = False,
     show_baseline_ttest: bool = False,

@@ -1160,6 +1160,7 @@ def _(
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_ylabel("Transition weight")
     transition_weights_2ADC.tick_params(axis="x", rotation=30)
+    plt.ylim(-3, 3)
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2ADC
@@ -2437,8 +2438,8 @@ def _(
     state_palette,
     task_labels,
 ):
-    _subject = "C37"
-    _session = "35"
+    _subject = "E11"
+    _session = "E11_StageTraining_Ephys_V1_20210409-115620"
     _task_df = plot_dfs["2ADC_DRUG"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (
@@ -2545,8 +2546,8 @@ def _(
     state_palette,
     task_labels,
 ):
-    _subject = "335"
-    _session = "335_stage_training_v2_20220329-111341"
+    _subject = "875"
+    _session = "875_stage_training_v4_20230717-112113" 
     _task_df = plot_dfs["2AFC_DRUG"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (

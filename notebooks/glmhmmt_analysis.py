@@ -73,7 +73,7 @@ def _():
     boxplot_tick_rotation = 0
     boxplot_fixed_panel = True
     from src.plots.common import fig_size
-    boxplot_figsize = fig_size(2,1)
+    boxplot_figsize = fig_size(2,2)
     boxplot_panel_bounds = (0.16, 0.22, 0.80, 0.70)
 
     def put_legend_inside_panel(ax, *, loc="upper right", anchor=(0.98, 0.98)):
@@ -575,13 +575,14 @@ def _(
         "current_abs_delay": r"$|\mathrm{Delay}_t|$",
         "prev_abs_stim" :  r"$\mathrm{Stim}_{t-1}$",
         "prev_reward" :  r"$\mathrm{Rew}_{t-1}$",
-        "cumulative_reward" :  r"$\sum_0^{t}\mathrm{Rew}$",
+        # "cumulative_reward" :  r"$\sum_0^{t}\mathrm{Rew}$",
+        "cumulative_reward" :  "Cum. reward",
         "filtered_choice": r"filtered choice",
         "filtered_reward": r"filtered reward",
         "filtered_stim_side": r"filtered stim side",
-        "drug_code" : "NMDAr hypofunction" ,
+        "drug_code" : "Drug" ,
         # "Drug" : "NMDAr hypofunction" 
-        "Drug" : "drug"
+        "Drug" : "Drug"
 
     }
     feature_labeler = lambda feature: _feature_labels.get(str(feature), str(feature))
@@ -725,6 +726,7 @@ def _(
     make_boxplot_axis,
     mo,
     model_plots,
+    plt,
     save_plot,
     selected,
     views,
@@ -775,6 +777,7 @@ def _(
         ],
         align="center",
     )
+    plt.savefig('test.svg')
     return
 
 
@@ -820,7 +823,7 @@ def _(
     _summary_ax = model_plots.transition_weights_summary_boxplot(
         _weights_df,
         feature_order=_transition_feature_order,
-        connect_subjects=True,
+        connect_subjects=False,
         show_ttests=True,
         feature_labeler=feature_labeler,
         ax=_summary_ax,

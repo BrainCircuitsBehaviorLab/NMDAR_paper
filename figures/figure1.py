@@ -26,9 +26,8 @@ def _():
     from glmhmmt.tasks import get_adapter
     from glmhmmt.runtime import configure_paths
     from glmhmmt.tasks.fitted_regressors import FittedWeightRegressorSpec, mean_feature_weights_from_fit
-    from src.utils import fig_size
     from src.process.common import attach_signed_delay_columns
-    from src.plots.common import plot_mean_over_data, psychometric_repeat
+    from src.plots.common import plot_mean_over_data, psychometric_repeat, fig_size
 
     return (
         Path,
@@ -155,6 +154,7 @@ def _(df_2AFC_delay, figsize, path_panels, pl, plt, two_afc_delay_plots):
     acc_2ADC = plt.gca()
     two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'Saline'), ax=acc_2ADC, color="tab:gray", title="", label='Saline')
     two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'NR2B'), ax=acc_2ADC, color="tab:pink", title="", label='Drug')
+    plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/acc_2ADC.svg')
     plt.savefig(f'{path_panels}/acc_2ADC.png')
     acc_2ADC
@@ -239,6 +239,7 @@ def _(df_2AFC_delay, figsize, path_panels, pl, plt, two_afc_delay_plots):
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "NR2B"), ax = rb_2ADC, title='', color = "tab:pink")
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Saline"), ax = rb_2ADC, title='', color = "tab:gray")
     # two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Rest"), ax = rb_2ADC, title='', color = "k")
+    plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/rb_2ADC.svg')
     plt.savefig(f'{path_panels}/rb_2ADC.png')
     rb_2ADC
@@ -310,6 +311,7 @@ def _(df_2AFC, figsize, path_panels, pl, plt, two_afc_plots):
     acc_2AFC = plt.gca()
     two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 0), ax=acc_2AFC, color="tab:gray", title="", label='Saline')
     two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 1), ax=acc_2AFC, color="tab:pink", title="", label='Drug')
+    plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/acc_2AFC.svg')
     plt.savefig(f'{path_panels}/acc_2AFC.png')
     acc_2AFC
@@ -383,6 +385,7 @@ def _(df_2AFC, figsize, path_panels, pl, plt, two_afc_plots):
     rb_2AFC = plt.gca()
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 0), ax=rb_2AFC, title="", color="tab:gray")
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 1), ax=rb_2AFC, title="", color="tab:pink")
+    plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/rb_2AFC.svg')
     plt.savefig(f'{path_panels}/rb_2AFC.png')
     rb_2AFC
@@ -464,7 +467,7 @@ def _(df_MCDR, figsize, path_panels, pl, plot_mean_over_data, plt):
         ylabel="Accuracy",
         title="",
         baseline=1/3,
-        baseline_area=True,
+        baseline_area=False,
         color="tab:gray",
         ax=acc_MCDR,
     )
@@ -479,11 +482,11 @@ def _(df_MCDR, figsize, path_panels, pl, plot_mean_over_data, plt):
         ylabel="Accuracy",
         title="",
         baseline=1/3,
-        baseline_area=True,
+        baseline_area=False,
         color="tab:pink",
         ax=acc_MCDR,
     )
-
+    plt.ylim(0.3, 1)
     plt.savefig(f'{path_panels}/acc_MCDR.svg')
     plt.savefig(f'{path_panels}/acc_MCDR.png')
     acc_MCDR
@@ -583,6 +586,7 @@ def _(MCDR_plots, df_MCDR, figsize, path_panels, pl, plt):
     MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "drug", pl.col("batch") == "11B"), ax=rb_MCDR, title='', color="tab:pink")
     # MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "rest", pl.col("batch") == "11B"), ax=rb_MCDR, , title='', color="tab:red")
     # MCDR_plots.plot_rb(df_MCDR.filter(pl.col("batch") == "11B"), ax=rb_MCDR, , title="", color='k')
+    plt.ylim(0.3, 1)
     plt.savefig(f'{path_panels}/rb_MCDR.svg')
     plt.savefig(f'{path_panels}/rb_MCDR.png')
     rb_MCDR

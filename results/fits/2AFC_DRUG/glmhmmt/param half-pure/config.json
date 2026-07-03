@@ -6,7 +6,6 @@
         "16",
         "17",
         "18",
-        "19",
         "20",
         "22",
         "23",
@@ -14,14 +13,13 @@
         "25"
     ],
     "emission_cols": [
-        "bias",
-        "stim_param",
         "choice_lag_param",
-        "stim_0"
+        "bias",
+        "stim_param"
     ],
     "transition_cols": [
-        "cumulative_reward",
-        "Drug"
+        "Drug",
+        "cumulative_reward"
     ],
     "frozen_emissions": {
         "1": {

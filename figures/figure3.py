@@ -204,7 +204,7 @@ def _(ROOT, plt, sns):
         "stim": "Stim.",
         "stim_param": "Stim.",
         "stim_vals": "Stimulus",
-        "stim_x_delay_param": "Delay",
+        "stim_x_delay_param": "Stim.",
         "choice_lag_param": "A",
         "choice_lag_param_correct": "A",
         "prev_choice": "Prev. choice",
@@ -353,21 +353,43 @@ def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
         return "*"
 
 
+    def _whisker_bounds(values, whis=1.5):
+        # Matches matplotlib's default boxplot whisker calc, so the bound
+        # reflects what showfliers=False actually draws (not hidden outliers).
+        q1, q3 = np.percentile(values, [25, 75])
+        iqr = q3 - q1
+        low, high = q1 - whis * iqr, q3 + whis * iqr
+        within = values[(values >= low) & (values <= high)]
+        if within.size == 0:
+            return float(values.min()), float(values.max())
+        return float(within.min()), float(within.max())
+
     def add_one_sample_zero_annotations(ax, df, *, x, y, order):
         if df is None or df.empty or not {x, y}.issubset(df.columns):
             return
-        y_values = pd.to_numeric(df[y], errors="coerce")
-        finite = y_values[np.isfinite(y_values)]
-        if finite.empty:
+
+        group_values = {}
+        whisker_lows = []
+        whisker_highs = []
+        for x_value in order:
+            values = pd.to_numeric(df.loc[df[x] == x_value, y], errors="coerce").dropna()
+            group_values[x_value] = values
+            if values.empty:
+                continue
+            low, high = _whisker_bounds(values.to_numpy(dtype=float))
+            whisker_lows.append(low)
+            whisker_highs.append(high)
+
+        if not whisker_highs:
             return
-        y_min = float(finite.min())
-        y_max = float(finite.max())
+        y_min = min(whisker_lows)
+        y_max = max(whisker_highs)
         pad = max((y_max - y_min) * 0.08, 0.05)
         text_y = y_max + pad
         ax.set_ylim(top=text_y + pad)
 
         for x_idx, x_value in enumerate(order):
-            values = pd.to_numeric(df.loc[df[x] == x_value, y], errors="coerce").dropna()
+            values = group_values.get(x_value, pd.Series(dtype=float))
             if len(values) < 2:
                 continue
             pvalue = float(ttest_1samp(values.to_numpy(dtype=float), popmean=0.0).pvalue)
@@ -1016,18 +1038,29 @@ def _(
         return list(dict.fromkeys(df[column]))
 
 
-    def ordered_feature_values(df, column):
+    def ordered_feature_values(df, column, task=None):
         values = ordered_values(df, column)
 
-        def feature_priority(value):
-            label = str(value).lower()
-            if label == "bias":
-                return 0
-            if "stim" in label:
-                return 1
-            if label == "a":
-                return 2
-            return 3
+        task_orders = {
+            "2AFC": ["Stim.", "A", "Bias"],
+            "2AFC_delay": ["Stim.", "A", "Bias"],
+        }
+        order = task_orders.get(task)
+
+        if order is not None:
+            def feature_priority(value):
+                label = str(value)
+                return order.index(label) if label in order else len(order)
+        else:
+            def feature_priority(value):
+                label = str(value).lower()
+                if label == "bias":
+                    return 0
+                if "stim" in label:
+                    return 1
+                if label == "a":
+                    return 2
+                return 3
 
         return sorted(values, key=feature_priority)
 
@@ -1039,7 +1072,7 @@ def _(
         return ordered
 
 
-    emission_orders = {task: ordered_feature_values(emission_plot_dfs[task], "feature_label") for task in task_names}
+    emission_orders = {task: ordered_feature_values(emission_plot_dfs[task], "feature_label", task) for task in task_names}
     emission_hue_orders = {task: ordered_states(emission_plot_dfs[task]) for task in task_names}
 
     transition_orders = {}
@@ -1542,10 +1575,12 @@ def _(
     emission_weights_2ADC.tick_params(axis="x")
     # emission_weights_2ADC.legend(frameon=False, title="")
     emission_weights_2ADC.legend_.remove()
+    two_adc_ew_ylim = plt.gca().get_ylim()
+    print(two_adc_ew_ylim)
     if not mount_figure:
         emission_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_emission_weights").with_suffix(f".{format}"))
     emission_weights_2ADC
-    return
+    return (two_adc_ew_ylim,)
 
 
 @app.cell(hide_code=True)
@@ -1571,6 +1606,7 @@ def _(
     plt,
     sns,
     state_palette,
+    two_adc_ew_ylim,
 ):
     plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     emission_weights_2AFC = plt.gca() if not mount_figure else axd.get("emission_weights_2AFC", plt.gca())
@@ -1596,6 +1632,9 @@ def _(
     emission_weights_2AFC.tick_params(axis="x")
     # emission_weights_2AFC.legend(frameon=False, title="")
     emission_weights_2AFC.legend_.remove()
+    two_afc_ew_ylim = plt.gca().get_ylim()
+    print(two_afc_ew_ylim)
+    plt.ylim(two_adc_ew_ylim)
     if not mount_figure:
         emission_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_emission_weights").with_suffix(f".{format}"))
     emission_weights_2AFC
@@ -1889,6 +1928,7 @@ def _(
         palette=state_palette,
         legend=False,
         ax=psychometric_by_state_2ADC,
+        ms=3
     )
     psychometric_by_state_2ADC.set_xticks(range(len(delay_order)))
     psychometric_by_state_2ADC.set_xticklabels([f"{value:g}" for value in delay_order])
@@ -1955,12 +1995,12 @@ def _(
         estimator="mean",
         errorbar="se",
         markers="o",
-        ms = 5,
         linestyles="none",
         native_scale=True,
         palette=state_palette,
         legend=False,
         ax=psychometric_by_state_2AFC,
+        ms=3
     )
     xticks = sorted(psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
     xticks = [float(tick) for tick in xticks]
@@ -2111,6 +2151,7 @@ def _(
         palette=state_palette,
         legend=False,
         ax=psychometric_by_action_trace_2ADC,
+        ms=3
     )
     # _xticks = sorted(choice_lag_psychometric_dfs["2AFC_delay"]["x_numeric"].dropna().unique())
     # _xticks = [float(tick) for tick in _xticks]
@@ -2184,6 +2225,7 @@ def _(
         palette=state_palette,
         legend=False,
         ax=psychometric_by_action_trace_2AFC,
+        ms=3
     )
     # _xticks = sorted(choice_lag_psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
     # _xticks = [float(tick) for tick in _xticks]
@@ -3402,7 +3444,6 @@ def _(
     plot_dfs,
     plt,
     state_palette,
-    task_labels,
 ):
     _subject = "C37"
     _session = "35"
@@ -3482,7 +3523,7 @@ def _(
     single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
     single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
     single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
-    single_session_2ADC.set_title(task_labels["2AFC_delay"])
+    # single_session_2ADC.set_title(task_labels["2AFC_delay"])
     single_session_2ADC.set_xlabel("Trial")
     single_session_2ADC.set_ylabel("Running fraction")
     single_session_2ADC.set_ylim(0, 1)
