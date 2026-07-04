@@ -458,10 +458,10 @@ def _(MODEL_BY_TASK, get_adapter, pl):
 
 
 @app.cell
-def _(MODEL_BY_TASK, adapters, dfs, json, paths):
+def _(MODEL_BY_TASK, adapters, dfs, json, model_type, paths):
     model_configs = {}
     for _task_name, _model_id in MODEL_BY_TASK.items():
-        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmm" / _model_id
+        _model_dir = paths.RESULTS / "fits" / _task_name / model_type / _model_id
         _config_path = _model_dir / "config.json"
         if _config_path.exists():
             _cfg = json.loads(_config_path.read_text())
@@ -1388,6 +1388,8 @@ def _(
     autocorrelograms_2AFC_outcome.set_xlabel("Lag")
     autocorrelograms_2AFC_outcome.set_ylabel("Autocorrelation")
     autocorrelograms_2AFC_outcome.legend(frameon=False)
+
+    plt.xlim(None, 20)
 
     if not mount_figure:
         autocorrelograms_2AFC_outcome.figure.savefig((path_panels / "2AFC_autocorrelogram_outcome").with_suffix(f".{format}"))
@@ -3422,11 +3424,38 @@ def _(
     return
 
 
+@app.cell
+def _(plot_dfs):
+    plot_dfs["2AFC_delay"]
+    return
+
+
+@app.cell
+def _(plot_dfs):
+    _task_df = plot_dfs["2AFC_delay"]
+    _drug_sessions = (
+        _task_df.filter((_task_df["subject"] == "C37") & (_task_df["drug"] == '1'))["session"]
+        .unique()
+        .to_list()
+    )
+    for _s in sorted(_drug_sessions):
+        print(_s)
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## Single Sessions
     """)
+    return
+
+
+@app.cell
+def _(plot_dfs):
+    _task_df = plot_dfs["2AFC_delay"]
+    for _s in sorted(_task_df.filter(_task_df["subject"] == "C37")["session"].unique().to_list()):
+        print(_s)
     return
 
 
@@ -3445,8 +3474,8 @@ def _(
     plt,
     state_palette,
 ):
-    _subject = "C37"
-    _session = "35"
+    _subject = "N25"
+    _session = "N25_StageTraining_4B_V1_20201026-123528"
     _task_df = plot_dfs["2AFC_delay"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (
@@ -3464,7 +3493,7 @@ def _(
         adapter=adapters["2AFC_delay"],
         window=20,
     )
-    plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     single_session_2ADC = plt.gca() if not mount_figure else axd.get("single_session_2ADC", plt.gca())
     single_session_2ADC.clear()
     _trial_col = "trial_idx" if "trial_idx" in _task_df.columns else "trial"
@@ -3504,7 +3533,7 @@ def _(
         0,
         _p_engaged,
         color=state_palette.get("Engaged", "tab:green"),
-        alpha=0.25,
+        alpha=0.5,
         linewidth=0,
         label="Engaged",
         zorder=0,
@@ -3514,21 +3543,21 @@ def _(
         _p_engaged,
         _p_disengaged + _p_engaged,
         color=state_palette.get("Disengaged", "tab:gray"),
-        alpha=0.20,
+        alpha=0.5,
         linewidth=0,
         label="Disengaged",
         zorder=0,
     )
 
-    single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
-    single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
-    single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
+    #single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
+    #single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
+    single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2ADC, zorder=2, alpha = 1)
     # single_session_2ADC.set_title(task_labels["2AFC_delay"])
     single_session_2ADC.set_xlabel("Trial")
     single_session_2ADC.set_ylabel("Running fraction")
     single_session_2ADC.set_ylim(0, 1)
     single_session_2ADC.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
-    single_session_2ADC.legend(frameon=False, loc="upper right")
+    single_session_2ADC.legend(frameon=False, loc="lower right")
     single_session_2ADC.set_yticks([0,0.5,1],[0,0.5,1])
     if not mount_figure:
         single_session_2ADC.figure.savefig((path_panels / "2AFC_delay_single_session").with_suffix(f".{format}"))
@@ -3550,10 +3579,9 @@ def _(
     plot_dfs,
     plt,
     state_palette,
-    task_labels,
 ):
-    _subject = "335"
-    _session = "335_stage_training_v2_20220329-111341"
+    _subject = "337"
+    _session = "337_stage_training_v2_20220704-105124" 
     _task_df = plot_dfs["2AFC"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (
@@ -3571,7 +3599,7 @@ def _(
         adapter=adapters["2AFC"],
         window=20,
     )
-    plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     single_session_2AFC = plt.gca() if not mount_figure else axd.get("single_session_2AFC", plt.gca())
     single_session_2AFC.clear()
     _trial_col = "trial_idx" if "trial_idx" in _task_df.columns else "trial"
@@ -3610,7 +3638,7 @@ def _(
         0,
         _p_engaged,
         color=state_palette.get("Engaged", "tab:green"),
-        alpha=0.25,
+        alpha=0.5,
         linewidth=0,
         label="Engaged",
         zorder=0,
@@ -3620,17 +3648,17 @@ def _(
         _p_engaged,
         _p_disengaged + _p_engaged,
         color=state_palette.get("Disengaged", "tab:gray"),
-        alpha=0.20,
+        alpha=0.5,
         linewidth=0,
         label="Disengaged",
         zorder=0,
     )
 
-    single_session_2AFC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
-    single_session_2AFC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
+    #single_session_2AFC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
+    #single_session_2AFC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
     if "accuracy_window_fraction" in session_repetition_data_2AFC:
-        single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1.5, label="Accuracy", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
-    single_session_2AFC.set_title(task_labels["2AFC"])
+        single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2AFC, zorder=2, alpha = 1)
+    #single_session_2AFC.set_title(task_labels["2AFC"])
     single_session_2AFC.set_xlabel("Trial")
     single_session_2AFC.set_ylabel("Running fraction")
     single_session_2AFC.set_ylim(0, 1)
@@ -4007,7 +4035,7 @@ def _(
     roc_curve_df_2AFC,
     sns,
 ):
-    lick_roc_2AFC = plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    lick_roc_2AFC = plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     lick_roc_2AFC.clear()
     lick_roc_2AFC_ax = lick_roc_2AFC.gca()
     lick_roc_summary_2AFC = (
@@ -4026,7 +4054,7 @@ def _(
         lick_roc_summary_2AFC["mean_tpr"],
         color=cmap.colors[0],
         lw=2,
-        label=f"AUC={lick_auc_mean_2AFC:.3f} +/- {lick_auc_sem_2AFC:.3f}",
+        #label=f"AUC={lick_auc_mean_2AFC:.3f} +/- {lick_auc_sem_2AFC:.3f}",
     )
     lick_roc_2AFC_ax.fill_between(
         lick_roc_summary_2AFC["fpr"],
@@ -4036,12 +4064,13 @@ def _(
         alpha=0.2,
         linewidth=0,
     )
-    lick_roc_2AFC_ax.plot([0, 1], [0, 1], color="0.5", lw=1, ls="--")
-    lick_roc_2AFC_ax.set_title("2AFC nLicks")
-    lick_roc_2AFC_ax.set_xlabel("False positive rate")
-    lick_roc_2AFC_ax.set_ylabel("True positive rate")
+    lick_roc_2AFC_ax.plot([0, 1], [0, 1], color="0.5", ls="--")
+    lick_roc_2AFC_ax.set_title("nLicks")
+    lick_roc_2AFC_ax.set_xlabel("False positive")
+    lick_roc_2AFC_ax.set_ylabel("True positive")
     lick_roc_2AFC_ax.set_xlim(0, 1)
     lick_roc_2AFC_ax.set_ylim(0, 1)
+    lick_roc_2AFC_ax.set_xticks([0, 0.5, 1])
     lick_roc_2AFC_ax.legend(frameon=False, loc="lower right")
     sns.despine(ax=lick_roc_2AFC_ax)
     lick_roc_2AFC.savefig((path_panels / "2AFC_nlicks_state_roc").with_suffix(f".{format}"))
@@ -4060,7 +4089,7 @@ def _(
     roc_curve_df_2AFC,
     sns,
 ):
-    ili_roc_2AFC = plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    ili_roc_2AFC = plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     ili_roc_2AFC.clear()
     ili_roc_2AFC_ax = ili_roc_2AFC.gca()
     ili_roc_summary_2AFC = (
@@ -4079,7 +4108,7 @@ def _(
         ili_roc_summary_2AFC["mean_tpr"],
         color=cmap.colors[1],
         lw=2,
-        label=f"AUC={ili_auc_mean_2AFC:.3f} +/- {ili_auc_sem_2AFC:.3f}",
+        # label=f"AUC={ili_auc_mean_2AFC:.3f} +/- {ili_auc_sem_2AFC:.3f}",
     )
     ili_roc_2AFC_ax.fill_between(
         ili_roc_summary_2AFC["fpr"],
@@ -4089,12 +4118,13 @@ def _(
         alpha=0.2,
         linewidth=0,
     )
-    ili_roc_2AFC_ax.plot([0, 1], [0, 1], color="0.5", lw=1, ls="--")
-    ili_roc_2AFC_ax.set_title(f"2AFC $-ILI$")
-    ili_roc_2AFC_ax.set_xlabel("False positive rate")
-    ili_roc_2AFC_ax.set_ylabel("True positive rate")
+    ili_roc_2AFC_ax.plot([0, 1], [0, 1], color="0.5", ls="--")
+    ili_roc_2AFC_ax.set_title("ILI")
+    ili_roc_2AFC_ax.set_xlabel("False positive")
+    ili_roc_2AFC_ax.set_ylabel("True positive")
     ili_roc_2AFC_ax.set_xlim(0, 1)
     ili_roc_2AFC_ax.set_ylim(0, 1)
+    ili_roc_2AFC_ax.set_xticks([0, 0.5, 1])
     ili_roc_2AFC_ax.legend(frameon=False, loc="lower right")
     sns.despine(ax=ili_roc_2AFC_ax)
     ili_roc_2AFC.savefig((path_panels / "2AFC_ili_state_roc").with_suffix(f".{format}"))
@@ -4113,7 +4143,7 @@ def _(
     roc_curve_df_2AFC,
     sns,
 ):
-    rt_roc_2AFC = plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    rt_roc_2AFC = plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
     rt_roc_2AFC.clear()
     rt_roc_2AFC_ax = rt_roc_2AFC.gca()
     rt_roc_summary_2AFC = (
@@ -4132,7 +4162,7 @@ def _(
         rt_roc_summary_2AFC["mean_tpr"],
         color=cmap.colors[2],
         lw=2,
-        label=f"AUC={rt_auc_mean_2AFC:.3f} +/- {rt_auc_sem_2AFC:.3f}",
+        # label=f"AUC={rt_auc_mean_2AFC:.3f} +/- {rt_auc_sem_2AFC:.3f}",
     )
     rt_roc_2AFC_ax.fill_between(
         rt_roc_summary_2AFC["fpr"],
@@ -4142,12 +4172,13 @@ def _(
         alpha=0.2,
         linewidth=0,
     )
-    rt_roc_2AFC_ax.plot([0, 1], [0, 1], color="0.5", lw=1, ls="--")
-    rt_roc_2AFC_ax.set_title(f"2AFC $-RT$")
-    rt_roc_2AFC_ax.set_xlabel("False positive rate")
-    rt_roc_2AFC_ax.set_ylabel("True positive rate")
+    rt_roc_2AFC_ax.plot([0, 1], [0, 1], color="0.5", ls="--")
+    rt_roc_2AFC_ax.set_title("RT")
+    rt_roc_2AFC_ax.set_xlabel("False positive")
+    rt_roc_2AFC_ax.set_ylabel("True positive")
     rt_roc_2AFC_ax.set_xlim(0, 1)
     rt_roc_2AFC_ax.set_ylim(0, 1)
+    rt_roc_2AFC_ax.set_xticks([0, 0.5, 1])
     rt_roc_2AFC_ax.legend(frameon=False, loc="lower right")
     sns.despine(ax=rt_roc_2AFC_ax)
     rt_roc_2AFC.savefig((path_panels / "2AFC_rt_state_roc").with_suffix(f".{format}"))

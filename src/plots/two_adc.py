@@ -841,7 +841,7 @@ def _plot_delay_accuracy_panel(
     ax.set_yticks([0, 0.5, 1.0])
     if meta.get("xticks"):
         ax.set_xticks(meta["xticks"], labels=meta["x_tick_labels"])
-    ax.legend(frameon=False, fontsize=8)
+    ax.legend(frameon=False)
 
 
 def _signed_delay_psych_summary(
@@ -1003,7 +1003,7 @@ def _plot_signed_delay_psych_panel(
     ax.set_xlabel("Signed delay")
     ax.set_ylabel(r"$P(\mathrm{right})$")
     if legend:
-        ax.legend(frameon=False, fontsize=8)
+        ax.legend(frameon=False)
 
 
 def plot_categorical_performance_all(
@@ -1477,7 +1477,7 @@ def plot_regressor_psychometric_by_state(
             )
         _ax_overlay.set_xlabel(xlabel)
         _ax_overlay.set_ylabel(r"$p(\mathrm{right})$")
-        _ax_overlay.legend(frameon=False, fontsize=8)
+        _ax_overlay.legend(frameon=False)
 
     if not overlay_only:
         for k, ax in enumerate(axes[int(_include_overlay) :]):
@@ -1824,6 +1824,7 @@ def plot_binned_accuracy_figure(
 ):
     style = dict(plot_kwargs)
     axes_arg = style.pop("axes", None)
+    figsize_arg = figsize
     figsize_arg = style.pop("figsize", None)
     if ax is not None:
         axes_arg = [ax]
@@ -1878,11 +1879,6 @@ def plot_binned_accuracy_figure(
         if figsize_arg is not None
         else (figsize if figsize is not None else (4 * (len(panels) + extra_fit_axes), 4))
     )
-    if extra_fit_axes and (figsize_arg is not None or figsize is not None) and len(panels) > 0:
-        resolved_figsize = (
-            resolved_figsize[0] * (len(panels) + extra_fit_axes) / len(panels),
-            resolved_figsize[1],
-        )
     n_axes = len(panels) + extra_fit_axes
     if ax is not None and n_axes != 1:
         raise ValueError("ax can only be used when plot_binned_accuracy_figure resolves to one axis.")
@@ -1984,7 +1980,8 @@ def plot_binned_accuracy_figure(
         legend_ax=legend_ax,
         legend=legend,
     )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0 if legend_ax is not None else 0.92, 1.0))
+    _reserve_legend_space = legend and legend_ax is None
+    # fig.tight_layout(rect=(0.0, 0.0, 0.92 if _reserve_legend_space else 1.0, 1.0))
     for ax in panel_axes:
         apply_axis_style(ax, **style)
     return fig, axes[: len(panels) + extra_fit_axes]

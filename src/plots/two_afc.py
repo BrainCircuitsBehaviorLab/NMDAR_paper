@@ -1640,11 +1640,6 @@ def plot_binned_accuracy_figure(
         if figsize_arg is not None
         else (figsize if figsize is not None else (4 * (len(panels) + extra_fit_axes), 4))
     )
-    if extra_fit_axes and (figsize_arg is not None or figsize is not None) and len(panels) > 0:
-        resolved_figsize = (
-            resolved_figsize[0] * (len(panels) + extra_fit_axes) / len(panels),
-            resolved_figsize[1],
-        )
     n_axes = len(panels) + extra_fit_axes
     if ax is not None and n_axes != 1:
         raise ValueError("ax can only be used when plot_binned_accuracy_figure resolves to one axis.")
@@ -1747,7 +1742,8 @@ def plot_binned_accuracy_figure(
         legend_ax=legend_ax,
         legend=legend,
     )
-    fig.tight_layout(rect=(0.0, 0.0, 1.0 if legend_ax is not None else 0.92, 1.0))
+    _reserve_legend_space = legend and legend_ax is None
+    # fig.tight_layout(rect=(0.0, 0.0, 0.92 if _reserve_legend_space else 1.0, 1.0))
     for ax in panel_axes:
         apply_axis_style(ax, **style)
     return fig, axes[: len(panels) + extra_fit_axes]

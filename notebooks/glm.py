@@ -79,7 +79,7 @@ def _():
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     sns.set_style("ticks")
-    sns.set_context("paper")
+    sns.set_context("notebook")
 
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
 
@@ -292,12 +292,6 @@ def _(
         save_plot.save_all_widget(label="Save all model plots"),
         mo.md(f"**Current params hash:** `{current_hash}`"),
     ])
-    return
-
-
-@app.cell
-def _():
-    #trial_df.group_by(["batch", "subject", "drug"]).len()
     return
 
 
@@ -934,13 +928,11 @@ def _(
     plt,
     save_plot,
     selected,
-    sns,
     task_name,
     ui_mcdr_one_hot_mode,
     views_sel,
     weights_df,
 ):
-    sns.set_context("paper")
     _weights_df_sel = weights_df.filter(pl.col("subject").is_in(selected))
     _mcdr_mode = ui_mcdr_one_hot_mode.value if task_name == "MCDR" else "folded"
 
@@ -1101,9 +1093,6 @@ def _(
 @app.cell
 def _(fig_size, mo, np, pd, pl, plt, save_plot, selected, sns, weights_df):
     from scipy.stats import ttest_1samp as _ttest_1samp
-
-    sns.set_context("paper")
-
     def significance_stars(pvalue: float) -> str:
         if not np.isfinite(pvalue):
             return ""
@@ -1185,9 +1174,6 @@ def _():
 @app.cell
 def _(fig_size, mo, np, pd, pl, plt, save_plot, selected, sns, weights_df):
     from scipy.stats import ttest_1samp as _ttest_1samp
-
-    sns.set_context("paper")
-
     def _significance_stars(pvalue: float) -> str:
         if not np.isfinite(pvalue):
             return ""
@@ -2129,7 +2115,7 @@ def _(fig_size, mo, np, pd, plot_df_all, plt, save_plot, views_sel):
         _ax.legend(title=legend_title, frameon=False, fontsize=8)
         return True
 
-    _fig_conditional, (_ax_stim_by_a, _ax_a_by_stim) = plt.subplots(1, 2, figsize=fig_size(4, 1), layout="constrained")
+    _fig_conditional, (_ax_stim_by_a, _ax_a_by_stim) = plt.subplots(1, 2, figsize=fig_size(2), layout="constrained")
     _drawn_1 = _plot(
         _ax_stim_by_a,
         _summary(plot_df_all, x_col=_stim_col, line_col="choice_lag_param", line_quantile=True),
@@ -2186,7 +2172,10 @@ def _(
         return plots.display_regressor_name(_regressor)
 
     _selected_regressor_label = _display_action_regressor_label(ui_accuracy_regressor.value)
-    _panel_size = fig_size(2, 1)
+    _panel_size = fig_size(4, 1)
+
+    #_fig_binned_base, _ax_binned= plt.subplots(figsize=_panel_size)
+    _fig_binned_base, (_ax_binned, _ax_binned_legend) = plt.subplots(1, 2, figsize=_panel_size)
 
     _fig_binned = plots.plot_binned_accuracy_figure(
         plot_df_all,
@@ -2200,43 +2189,54 @@ def _(
         share_lapse_logistic_core=bool(ui_share_lapse_logistic_core.value),
         show_lapses_in_legend=bool(ui_show_lapses_in_legend.value),
         print_lapse_fits=not bool(ui_show_lapses_in_legend.value),
-        figsize=_panel_size,
+        ax=_ax_binned,
+        legend_ax=_ax_binned_legend,
+        legend=True
     )
+
     mo.stop(_fig_binned is None, mo.md(f"No binned accuracy plot available for {_selected_regressor_label}."))
-    _fig_binned_base = _fig_binned[0] if isinstance(_fig_binned, tuple) else _fig_binned
+    """
     for _legend in _fig_binned_base.legends:
         _legend.set_title(_selected_regressor_label)
     for _ax in _fig_binned_base.axes:
         _legend = _ax.get_legend()
         if _legend is not None:
-            _legend.set_title(_selected_regressor_label)
-    _right_figsize = tuple(float(_size) for _size in _fig_binned_base.get_size_inches())
+            _legend.set_title(_selected_regressor_label)"""
 
     _plot_df_cols = set(getattr(plot_df_all, "columns", []))
     _secondary_regressor = "choice_lag_glm_weighted_sum" if "choice_lag_glm_weighted_sum" in _plot_df_cols else None
     mo.stop(_secondary_regressor is None, mo.md("No GLM-weighted choice-history regressor available."))
 
     _secondary_regressor_label = _display_action_regressor_label(_secondary_regressor)
-    _fig_secondary_right_base, (_ax_secondary_right, _ax_secondary_right_legend) = plt.subplots(
-        1,
-        2,
-        figsize=_right_figsize,
-        gridspec_kw={"width_ratios": [1.0, 0.1], "wspace": 0.02},
-    )
+    _fig_secondary_right_base, _ax_secondary_right = plt.subplots(figsize=_panel_size)
     _fig_secondary_right = plots.plot_right_by_regressor(
         plot_df_all,
         regressor_col=_secondary_regressor,
         title=None,
         n_bins=9,
         ax=_ax_secondary_right,
-        legend_ax=_ax_secondary_right_legend,
+        legend=False
     )
 
     mo.stop(_fig_secondary_right is None, mo.md(f"No p(right) plot available for {_secondary_regressor_label}."))
     _ax_secondary_right.set_xlabel(_secondary_regressor_label)
-    _secondary_legend = _ax_secondary_right_legend.get_legend()
-    if _secondary_legend is not None:
-        _secondary_legend.set_title(_secondary_regressor_label)
+    if _ax_secondary_right.legend_ is not None:
+        _ax_secondary_right.legend_.remove()
+    _secondary_handles, _secondary_labels = _ax_secondary_right.get_legend_handles_labels()
+    if _secondary_handles:
+        _fig_secondary_right_base.legend(
+            _secondary_handles,
+            _secondary_labels,
+            title=_secondary_regressor_label,
+            loc="center left",
+            bbox_to_anchor=(0.94, 0.5),
+            frameon=False,
+            fontsize=8,
+            title_fontsize=9,
+            labelspacing=0.35,
+            handlelength=2.0,
+        )
+        _fig_secondary_right_base.tight_layout(rect=(0.0, 0.0, 0.92, 1.0))
 
     mo.vstack(
         [
@@ -2255,9 +2255,9 @@ def _(
                 [
                     mo.vstack(
                         [
-                            _fig_binned,
+                            _fig_binned_base,
                             save_plot(
-                                _fig_binned[0],
+                                _fig_binned_base,
                                 f"binned accuracy {_selected_regressor_label}",
                                 stem=f"accuracy_binned_{ui_accuracy_regressor.value}",
                             ),
@@ -2279,6 +2279,50 @@ def _(
             ),
         ],
         align="center"
+    )
+    return
+
+
+@app.cell
+def _(
+    choice_history_regressor,
+    choice_history_regressor_label,
+    fig_size,
+    mo,
+    plot_df_all,
+    plots,
+    plt,
+    save_plot,
+):
+    mo.stop(
+        choice_history_regressor is None,
+        mo.md("No choice-history regressor available for p(right) by regressor."),
+    )
+
+    _fig_right, _ax_right = plt.subplots(figsize=fig_size(2, 1))
+    _ax_right_regressor = plots.plot_right_by_regressor(
+        plot_df_all,
+        regressor_col=choice_history_regressor,
+        title=None,
+        ax=_ax_right,
+    )
+    if _ax_right_regressor is not None:
+        _ax_right_regressor.set_xlabel(choice_history_regressor_label)
+    mo.stop(
+        _ax_right_regressor is None,
+        mo.md("No p(right) by choice-history regressor plot available."),
+    )
+
+    mo.vstack(
+        [
+            _fig_right,
+            save_plot(
+                _fig_right,
+                "p(right) by choice history",
+                stem=f"right_by_{choice_history_regressor}",
+            ),
+        ],
+        align="center",
     )
     return
 
@@ -3092,9 +3136,6 @@ def _(
     weights_df,
 ):
     from scipy.stats import ttest_1samp as _ttest_1samp
-
-    sns.set_context("paper")
-
     def _significance_stars(pvalue: float) -> str:
         if not np.isfinite(pvalue):
             return ""
