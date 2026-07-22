@@ -125,22 +125,19 @@ def _(load_app_config, process_mcdr, process_two_adc, process_two_afc):
     return (prepare_predictions_df,)
 
 
-<<<<<<< HEAD
-=======
 @app.cell
 def _():
     boxplot_STYLE = dict(
         fill=False,
         boxprops={"color": "0.5"},
         whiskerprops={"color": "0.5"},
-        medianprops={"linewidth": 4},
+        medianprops={"linewidth": 3},
         showfliers=False,
         showcaps=False,
     )
     return (boxplot_STYLE,)
 
 
->>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -151,11 +148,6 @@ def _(mo):
 
 @app.cell
 def _():
-<<<<<<< HEAD
-    mount_figure = False
-    format = "svg"
-    return format, mount_figure
-=======
     mount_figure = True
     return (mount_figure,)
 
@@ -164,7 +156,6 @@ def _():
 def _():
     format = "pdf"
     return (format,)
->>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
 
 
 @app.cell(hide_code=True)
@@ -445,7 +436,7 @@ def _(
             yerr=_data_sub.get("autocorr_sem"),
             fmt="o",
             capsize=0,
-            # ms = 3,
+            ms = 3,
             color=_colors["data"],
             ecolor=_colors["data"],
             label="Data",
@@ -536,7 +527,7 @@ def _(
             yerr=_data_sub.get("autocorr_sem"),
             fmt="o",
             capsize=0,
-            # ms=3,
+            ms=3,
             color=_colors["data"],
             ecolor=_colors["data"],
             label="Data",
@@ -1893,11 +1884,7 @@ def _(
     plt,
     session_repetition_data_2ADC,
 ):
-<<<<<<< HEAD
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
-=======
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
->>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     single_session_2ADC_repetition = plt.gca() if not mount_figure else axd["a"]
     single_session_2ADC_repetition.clear()
 
@@ -2015,6 +2002,11 @@ def _(
             (path_panels / "2ADC_single_session_accuracy").with_suffix(f".{format}")
         )
     single_session_2ADC_accuracy
+    return
+
+
+@app.cell
+def _():
     return
 
 
@@ -3811,6 +3803,13 @@ def _(mo):
 
 
 @app.cell
+def _():
+    8.27 - 6.26771653543307
+    11.69 
+    return
+
+
+@app.cell
 def _(fig_size):
     fig_size(1)
     return
@@ -3859,8 +3858,8 @@ def _(axd, fig, format, mount_figure, project_path):
 
         # axd["single_sess_acc_2AFC"].set_xlabel("Trial")
 
-        axd["hist_correct_2ADC"].set_xlabel("Corr. Streak length")
-        axd["hist_correct_2ADC"].set_ylabel("Count")
+        # axd["hist_correct_2ADC"].set_xlabel("Corr. Streak length")
+        # axd["hist_correct_2ADC"].set_ylabel("Count")
 
         # axd["hist_repeat_2ADC"].set_ylabel("Count")
         axd["hist_repeat_2ADC"].set_xlabel("Rep. Streak length")
@@ -3880,7 +3879,7 @@ def _(axd, fig, format, mount_figure, project_path):
 
         axd["hist_repeat_2AFC"].set_xlabel("Rep. Streak length")
 
-        axd["hist_correct_2AFC"].set_xlabel("Corr. Streak length")
+        # axd["hist_correct_2AFC"].set_xlabel("Corr. Streak length")
 
         axd["e"].set_ylabel("Weight")
         axd["e"].set_xlabel("Delay")

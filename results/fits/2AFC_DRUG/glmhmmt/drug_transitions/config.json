@@ -31,6 +31,6 @@
         2
     ],
     "model_id": "drug_transitions",
-    "cv_mode": "none",
+    "cv_mode": "balanced_session_holdout",
     "cv_repeats": 0
 }
