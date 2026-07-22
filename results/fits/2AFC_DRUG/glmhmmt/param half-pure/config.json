@@ -13,13 +13,14 @@
         "25"
     ],
     "emission_cols": [
-        "choice_lag_param",
         "bias",
+        "choice_lag_param",
+        "stim_0",
         "stim_param"
     ],
     "transition_cols": [
         "Drug",
-        "cumulative_reward"
+        "filtered_reward"
     ],
     "frozen_emissions": {
         "1": {

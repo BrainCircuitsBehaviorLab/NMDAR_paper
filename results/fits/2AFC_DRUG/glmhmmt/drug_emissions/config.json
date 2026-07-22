@@ -22,10 +22,14 @@
         "Drug"
     ],
     "transition_cols": [
-        "trial_index",
-        "filtered_reward"
+        "cumulative_reward"
     ],
-    "frozen_emissions": {},
+    "frozen_emissions": {
+        "1": {
+            "drug_x_stim_param": 0.0,
+            "stim_param": 0.0
+        }
+    },
     "baseline_class_idx": 0,
     "K_list": [
         2

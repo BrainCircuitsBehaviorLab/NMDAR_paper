@@ -19,8 +19,9 @@
         "choice_lag_param"
     ],
     "transition_cols": [
-        "cumulative_reward",
-        "drug_code"
+        "drug_code",
+        "filtered_reward",
+        "drug_x_filtered_reward"
     ],
     "frozen_emissions": {
         "1": {

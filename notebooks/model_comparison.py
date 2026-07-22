@@ -6,30 +6,35 @@ app = marimo.App(width="full")
 
 @app.cell
 def _():
+    import itertools
     import marimo as mo
-    import numpy as np
-    import polars as pl
     import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    import polars as pl
     import seaborn as sns
-    from glmhmmt.runtime import get_runtime_paths
+    from matplotlib.colors import to_hex, to_rgb
+    from matplotlib.lines import Line2D
+    from scipy.stats import ttest_1samp, ttest_ind, ttest_rel
+    from statannotations.Annotator import Annotator
 
-    paths = get_runtime_paths()
     from glmhmmt.notebook_support.analysis_common import (
         load_fit_bundle as load_fit_bundle_raw,
         load_metrics_dir as load_metrics_dir_raw,
         model_aliases_for_kind,
     )
-    from glmhmmt.tasks import get_adapter, get_task_options
-    from glmhmmt.postprocess import build_emission_weights_df, build_trial_df
-    from glmhmmt.views import build_views
-    from matplotlib.lines import Line2D
     from glmhmmt.plots_common import custom_boxplot
+    from glmhmmt.postprocess import build_emission_weights_df, build_trial_df
+    from glmhmmt.runtime import get_runtime_paths
+    from glmhmmt.tasks import get_adapter, get_task_options
+    from glmhmmt.views import build_views
     from plot_saver import make_plot_saver
-    from src.process.common import adapter_behavioral_column
     from src.plots.common import fig_size
-    sns.set_style("white")
-    sns.set_context("paper")
+    from src.process.common import adapter_behavioral_column
+
+    paths = get_runtime_paths()
     return (
+        Annotator,
         Line2D,
         adapter_behavioral_column,
         build_emission_weights_df,
@@ -39,6 +44,7 @@ def _():
         fig_size,
         get_adapter,
         get_task_options,
+        itertools,
         load_fit_bundle_raw,
         load_metrics_dir_raw,
         make_plot_saver,
@@ -46,15 +52,86 @@ def _():
         model_aliases_for_kind,
         np,
         paths,
+        pd,
         pl,
         plt,
         sns,
+        to_hex,
+        to_rgb,
+        ttest_1samp,
+        ttest_ind,
+        ttest_rel,
     )
+
+
+@app.cell
+def _(np, plt, sns, to_hex, to_rgb):
+    sns.set_theme(style="ticks", context="paper")
+    plt.rcParams["svg.fonttype"] = "none"
+    plt.rcParams["savefig.bbox"] = "standard"
+
+    MODEL_LABELS = {
+        "glm": "GLM",
+        "glmhmm": "GLMHMM",
+        "glmhmmt": "GLMHMMT",
+    }
+    MODEL_ORDER = ["glm", "glmhmmt", "glmhmm"]
+    MODEL_STYLES = {
+        "glm": {"label": "GLM", "marker": "s", "color": "#4C78A8"},
+        "glmhmmt": {"label": "GLMHMM-T", "marker": "^", "color": "#54A24B"},
+        "glmhmm": {"label": "GLMHMM", "marker": "o", "color": "#F58518"},
+    }
+    PAIRWISE_PRETTY_NAMES = {
+        "one hot2 lapses": "lapse model",
+        "param frozen": "pure GLM-HMM",
+        "one hot": "GLM",
+        "param2": "GLM-HMM",
+        "mohammadi at 2states dif": "GLM-HMM-T",
+        "mohammadi at 2states dif frozen": "pure GLM-HMM-T",
+        "2afc_bias-stimD0-choice-lag-paramE0": "Both fixed",
+        "2afc_bias-stimD0-choice-lag-param_free": "Stim fixed",
+        "param": "Carles",
+    }
+    ROC_PALETTE = {"A": "tab:blue", "B": "tab:orange"}
+    BOXPLOT_STYLE = {
+        "fill": False,
+        "boxprops": {"color": "0.5"},
+        "whiskerprops": {"color": "0.5"},
+        "medianprops": {"linewidth": 2},
+        "showfliers": False,
+        "showcaps": False,
+    }
+
+    def darken(color, factor=0.75):
+        """Scale an RGB color by ``factor`` and return a hex color."""
+        return to_hex(np.clip(np.array(to_rgb(color)) * factor, 0, 1))
+
+    return (
+        BOXPLOT_STYLE,
+        MODEL_LABELS,
+        MODEL_ORDER,
+        MODEL_STYLES,
+        PAIRWISE_PRETTY_NAMES,
+        ROC_PALETTE,
+        darken,
+    )
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    # Model comparison
+
+    Compare cross-validated model fit, latent-state structure, and the behavioral
+    meaning of states for two selected fits.
+    """)
+    return
 
 
 @app.cell
 def _(mo, save_plot):
     def panel(title, fig=None, stem=None, description=None):
+        """Display a titled figure and its plot-saver controls."""
         content = [mo.md(f"#### {title}")]
 
         if fig is not None:
@@ -64,58 +141,57 @@ def _(mo, save_plot):
 
         return mo.vstack(content, align="center")
 
-    BOXPLOT_STYLE = dict(
-        fill=False,
-        boxprops={"color": "0.5"},
-        whiskerprops={"color": "0.5"},
-        medianprops={"linewidth": 2},
-        showfliers=False,
-        showcaps=False,
-    )
-    return BOXPLOT_STYLE, panel
+    return (panel,)
 
 
 @app.cell
 def _(get_task_options, mo):
-    _task_options = get_task_options()
     ui_task = mo.ui.dropdown(
-        options={opt["label"]: opt["value"] for opt in _task_options},
+        options={option["label"]: option["value"] for option in get_task_options()},
         value="MCDR",
         label="Task",
     )
     return (ui_task,)
 
 
-@app.cell
-def _(load_metrics_dir_raw, model_aliases_for_kind, paths, pl):
-    _MODEL_LABELS = {
-        "glm": "GLM",
-        "glmhmm": "GLMHMM",
-        "glmhmmt": "GLMHMMT",
-    }
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Select fits
+    """)
+    return
 
+
+@app.cell
+def _(MODEL_LABELS, load_metrics_dir_raw, model_aliases_for_kind, paths, pl):
     def model_aliases(task: str, kind: str) -> list[str]:
+        """Return available fitted-model aliases for one task and model family."""
         return model_aliases_for_kind(
             task_name=task,
             model_kind=kind,
             local_root=paths.RESULTS / "fits" / task / kind,
         )
 
-    def load_metrics_dir_for_notebook(task_name: str, folder_name: str | None, expected_model_kind: str):
-        df = load_metrics_dir_raw(
+    def load_metrics_dir(task_name: str, folder_name: str | None, expected_model_kind: str):
+        """Load one fit's subject metrics as a consistent Polars dataframe."""
+        metrics_df = load_metrics_dir_raw(
             task_name=task_name,
             model_kind=expected_model_kind,
             alias=folder_name,
             local_root=paths.RESULTS / "fits" / task_name / expected_model_kind,
-            label_map=_MODEL_LABELS,
+            label_map=MODEL_LABELS,
         )
-        if df is None:
+        if metrics_df is None:
             return None
-        if "test_ll_per_trial_mean" not in df.columns:
-            df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias("test_ll_per_trial_mean"))
-        df = df.with_columns(pl.col("test_ll_per_trial_mean").alias("test_ll_per_trial"))
-        df = df.with_columns(pl.lit(expected_model_kind).alias("model_kind"))
-        keep = [
+        if "test_ll_per_trial_mean" not in metrics_df.columns:
+            metrics_df = metrics_df.with_columns(
+                pl.lit(None, dtype=pl.Float64).alias("test_ll_per_trial_mean")
+            )
+        metrics_df = metrics_df.with_columns(
+            pl.col("test_ll_per_trial_mean").alias("test_ll_per_trial"),
+            pl.lit(expected_model_kind).alias("model_kind"),
+        )
+        metric_columns = [
             "subject",
             "K",
             "model_kind",
@@ -128,20 +204,10 @@ def _(load_metrics_dir_raw, model_aliases_for_kind, paths, pl):
             "acc",
             "n_trials",
         ]
-        return df.select([c for c in keep if c in df.columns])
-
-    def model_k_options(task: str, kind: str, alias: str | None) -> list[int]:
-        df = load_metrics_dir_for_notebook(task, alias, kind)
-        if df is None or df.is_empty():
-            return []
-        return sorted(
-            {
-                int(k)
-                for k in df["K"].drop_nulls().to_list()
-            }
+        return metrics_df.select(
+            [column for column in metric_columns if column in metrics_df.columns]
         )
 
-    load_metrics_dir = load_metrics_dir_for_notebook
     return load_metrics_dir, model_aliases
 
 
@@ -152,14 +218,15 @@ def _(make_plot_saver, mo, paths, ui_task):
         results_dir=paths.RESULTS,
         config_path=paths.CONFIG,
         task_name=ui_task.value,
-        model_id=f"model_comparison",
+        model_id="model_comparison",
     )
     return (save_plot,)
 
 
 @app.cell
 def _(build_views, get_adapter, load_fit_bundle_raw, paths):
-    def load_fit_bundle_for_notebook(task_name, model_kind, alias, K, subjects, scoring_key=None):
+    def load_fit_bundle(task_name, model_kind, alias, K, subjects, scoring_key=None):
+        """Load cached arrays and semantic state views for one fitted model."""
         return load_fit_bundle_raw(
             task_name=task_name,
             model_kind=model_kind,
@@ -172,7 +239,6 @@ def _(build_views, get_adapter, load_fit_bundle_raw, paths):
             local_root=paths.RESULTS / "fits" / task_name / model_kind,
         )
 
-    load_fit_bundle = load_fit_bundle_for_notebook
     return (load_fit_bundle,)
 
 
@@ -212,11 +278,11 @@ def _(get_adapter, mo, model_aliases, ui_task):
 def _(adapter, mo):
     df_all = adapter.read_dataset()
     df_all = adapter.subject_filter(df_all)
-    _all_subjects = df_all["subject"].unique().sort().to_list()
+    all_subjects = df_all["subject"].unique().sort().to_list()
 
     ui_subjects = mo.ui.multiselect(
-        options=_all_subjects,
-        value=_all_subjects,
+        options=all_subjects,
+        value=all_subjects,
         label="Subjects",
     )
     ui_K_range = mo.ui.range_slider(
@@ -241,19 +307,20 @@ def _(
     ui_glmhmmt_dir,
     ui_task,
 ):
-    _parts = []
-    for _names, _kind in [
+    selected_aliases_by_kind = [
         (ui_glm_dir.value, "glm"),
         (ui_glmhmm_dir.value, "glmhmm"),
         (ui_glmhmmt_dir.value, "glmhmmt"),
-    ]:
-        for _name in _names:
-            _p = load_metrics_dir(ui_task.value, _name, _kind)
-            if _p is not None:
-                _parts.append(_p)
+    ]
+    metric_frames = [
+        metrics_df
+        for aliases, model_kind in selected_aliases_by_kind
+        for alias in aliases
+        if (metrics_df := load_metrics_dir(ui_task.value, alias, model_kind)) is not None
+    ]
 
-    if _parts:
-        results_long = pl.concat(_parts, how="diagonal")
+    if metric_frames:
+        results_long = pl.concat(metric_frames, how="diagonal")
     else:
         results_long = pl.DataFrame(
             schema={
@@ -270,81 +337,82 @@ def _(
     )
     mo.md(
         f"Loaded **{results_long.height}** fit rows from "
-        f"**{len(_parts)}** model folder(s)."
+        f"**{len(metric_frames)}** model folder(s)."
     )
     return (results_long,)
 
 
 @app.cell
-def _(mo, pl, results_long):
-    _MODEL_ORDER = [
-        ("glm", "GLM"),
-        ("glmhmmt", "GLMHMMT"),
-        ("glmhmm", "GLMHMM"),
-    ]
-    _elements = {}
-    _metadata = {}
+def _(MODEL_LABELS, MODEL_ORDER, mo, pl, results_long):
+    model_pick_elements = {}
+    model_pick_metadata = {}
 
-    for _kind, _kind_label in _MODEL_ORDER:
-        _kind_df = results_long.filter(pl.col("model_kind") == _kind)
-        for _K in _kind_df["K"].drop_nulls().unique().sort().to_list():
-            _aliases = (
-                _kind_df
-                .filter(pl.col("K") == _K)
+    for pick_model_kind in MODEL_ORDER:
+        model_kind_df = results_long.filter(pl.col("model_kind") == pick_model_kind)
+        for pick_state_count in model_kind_df["K"].drop_nulls().unique().sort().to_list():
+            model_aliases_at_k = (
+                model_kind_df
+                .filter(pl.col("K") == pick_state_count)
                 .select("model_alias")
                 .unique()
                 .sort("model_alias")
                 .get_column("model_alias")
                 .to_list()
             )
-            if not _aliases:
+            if not model_aliases_at_k:
                 continue
-            _key = f"{_kind}:{int(_K)}"
-            _metadata[_key] = {
-                "model_kind": _kind,
-                "model_kind_label": _kind_label,
-                "K": int(_K),
+            pick_model_key = f"{pick_model_kind}:{int(pick_state_count)}"
+            model_pick_metadata[pick_model_key] = {
+                "model_kind": pick_model_kind,
+                "model_kind_label": MODEL_LABELS[pick_model_kind],
+                "K": int(pick_state_count),
             }
-            _elements[_key] = mo.ui.dropdown(
-                options={"Skip": "__skip__", **{_alias: _alias for _alias in _aliases}},
-                value=_aliases[0],
-                label=f"{_kind_label} K={int(_K)}",
+            model_pick_elements[pick_model_key] = mo.ui.dropdown(
+                options={
+                    "Skip": "__skip__",
+                    **{alias: alias for alias in model_aliases_at_k},
+                },
+                value=model_aliases_at_k[0],
+                label=f"{MODEL_LABELS[pick_model_kind]} K={int(pick_state_count)}",
             )
 
-    ui_model_picks = mo.ui.dictionary(_elements, label="Model picks")
-    _rows = [
+    ui_model_picks = mo.ui.dictionary(model_pick_elements, label="Model picks")
+    model_pick_rows = [
         mo.hstack([
-            mo.md(f"**{_metadata[_key]['model_kind_label']} K={_metadata[_key]['K']}**"),
-            ui_model_picks[_key],
+            mo.md(
+                f"**{model_pick_metadata[pick_row_key]['model_kind_label']} "
+                f"K={model_pick_metadata[pick_row_key]['K']}**"
+            ),
+            ui_model_picks[pick_row_key],
         ])
-        for _key in _elements
+        for pick_row_key in model_pick_elements
     ]
 
     mo.vstack([
         mo.md("### One model per family and state count"),
         mo.md("Pick at most one alias for each model family and `K`. Use `Skip` to omit a point."),
-        *(_rows if _rows else [mo.md("No model/K combinations available for the selected aliases.")]),
+        *(model_pick_rows if model_pick_rows else [mo.md("No model/K combinations available for the selected aliases.")]),
     ])
     return (ui_model_picks,)
 
 
 @app.cell
 def _(pl, ui_model_picks):
-    _selected = []
-    for _key, _alias in ui_model_picks.value.items():
-        if _alias == "__skip__":
+    selected_model_rows = []
+    for selected_model_key, selected_model_alias in ui_model_picks.value.items():
+        if selected_model_alias == "__skip__":
             continue
-        _kind, _K = _key.split(":", 1)
-        _selected.append(
+        selected_model_kind, selected_state_count = selected_model_key.split(":", 1)
+        selected_model_rows.append(
             {
-                "model_kind": _kind,
-                "K": int(_K),
-                "model_alias": _alias,
+                "model_kind": selected_model_kind,
+                "K": int(selected_state_count),
+                "model_alias": selected_model_alias,
             }
         )
 
     selected_model_specs = pl.DataFrame(
-        _selected,
+        selected_model_rows,
         schema={
             "model_kind": pl.Utf8,
             "K": pl.Int64,
@@ -373,9 +441,9 @@ def _(pl, results_long, selected_model_specs, ui_K_range, ui_subjects):
 
 @app.cell
 def _(adapter, df_all, mo, pl):
-    _enum_dtype = getattr(pl, "Enum", None)
+    enum_dtype = getattr(pl, "Enum", None)
     if getattr(adapter, "num_classes", None) == 3:
-        _preferred = [
+        preferred_condition_columns = [
             "stimd_n",
             "stimd_c",
             "ttype_n",
@@ -385,9 +453,9 @@ def _(adapter, df_all, mo, pl):
             "Experiment",
             adapter.session_col,
         ]
-        _default_candidates = ["stimd_n", "stimd_c", "ttype_n", "ttype_c"]
+        default_condition_candidates = ["stimd_n", "stimd_c", "ttype_n", "ttype_c"]
     else:
-        _preferred = [
+        preferred_condition_columns = [
             "ILD",
             "ild",
             "stim_vals",
@@ -398,29 +466,40 @@ def _(adapter, df_all, mo, pl):
             "Experiment",
             adapter.session_col,
         ]
-        _default_candidates = ["ILD", "ild", "stim_vals", "stim_d", "stim_strength"]
-    _seen = set()
-    _options = []
-    for _col in _preferred:
-        if _col in df_all.columns and _col not in _seen:
-            _options.append(_col)
-            _seen.add(_col)
-    for _col, _dtype in df_all.schema.items():
-        if _col in _seen or _col == "subject":
+        default_condition_candidates = ["ILD", "ild", "stim_vals", "stim_d", "stim_strength"]
+    seen_condition_columns = set()
+    condition_columns = []
+    for column in preferred_condition_columns:
+        if column in df_all.columns and column not in seen_condition_columns:
+            condition_columns.append(column)
+            seen_condition_columns.add(column)
+    for column, dtype in df_all.schema.items():
+        if column in seen_condition_columns or column == "subject":
             continue
-        if _dtype in tuple(
-            _dt for _dt in (pl.Utf8, pl.Categorical, _enum_dtype, pl.Boolean, pl.Int8, pl.Int16, pl.Int32, pl.Int64)
-            if _dt is not None
+        if dtype in tuple(
+            candidate_dtype
+            for candidate_dtype in (
+                pl.Utf8, pl.Categorical, enum_dtype, pl.Boolean,
+                pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+            )
+            if candidate_dtype is not None
         ):
-            _options.append(_col)
-            _seen.add(_col)
+            condition_columns.append(column)
+            seen_condition_columns.add(column)
 
-    _default = next((_col for _col in _default_candidates if _col in _options), None)
-    if _default is None:
-        _default = "condition" if "condition" in _options else (_options[0] if _options else None)
+    default_condition = next(
+        (column for column in default_condition_candidates if column in condition_columns),
+        None,
+    )
+    if default_condition is None:
+        default_condition = (
+            "condition"
+            if "condition" in condition_columns
+            else (condition_columns[0] if condition_columns else None)
+        )
     ui_ce_condition = mo.ui.dropdown(
-        options=_options,
-        value=_default,
+        options=condition_columns,
+        value=default_condition,
         label="Cross-entropy grouping",
     )
     mo.hstack([ui_ce_condition])
@@ -429,11 +508,11 @@ def _(adapter, df_all, mo, pl):
 
 @app.cell
 def _(mo, results_filtered):
-    _baseline_options = results_filtered["model_label"].unique().sort().to_list()
-    _baseline_value = _baseline_options[0] if _baseline_options else None
+    bic_baseline_options = results_filtered["model_label"].unique().sort().to_list()
+    bic_baseline_default = bic_baseline_options[0] if bic_baseline_options else None
     ui_bic_baseline = mo.ui.dropdown(
-        options=_baseline_options,
-        value=_baseline_value,
+        options=bic_baseline_options,
+        value=bic_baseline_default,
         label="BIC baseline model",
     )
     mo.hstack([ui_bic_baseline])
@@ -443,11 +522,14 @@ def _(mo, results_filtered):
 @app.cell
 def _(pl, results_filtered, ui_bic_baseline):
     if results_filtered.is_empty() or ui_bic_baseline.value is None:
+        bic_baseline_by_subject = pl.DataFrame(
+            schema={"subject": pl.Utf8, "bic_baseline": pl.Float64}
+        )
         results_plot = results_filtered.with_columns(
             pl.lit(None, dtype=pl.Float64).alias("bic_delta")
         )
     else:
-        _baseline_bic = (
+        bic_baseline_by_subject = (
             results_filtered
             .filter(pl.col("model_label") == ui_bic_baseline.value)
             .group_by("subject")
@@ -455,17 +537,23 @@ def _(pl, results_filtered, ui_bic_baseline):
         )
         results_plot = (
             results_filtered
-            .join(_baseline_bic, on="subject", how="left")
-            .with_columns(((pl.col("bic") - pl.col("bic_baseline"))/pl.col("bic_baseline")).alias("bic_delta"))
+            .join(bic_baseline_by_subject, on="subject", how="left")
+            .with_columns(
+                ((pl.col("bic") - pl.col("bic_baseline")) / pl.col("bic_baseline"))
+                .alias("bic_delta")
+            )
         )
     return (results_plot,)
 
 
 @app.cell
 def _(mo, results_filtered):
-    _highlight_options = results_filtered["subject"].unique().sort().to_list()
+    highlight_subject_options = results_filtered["subject"].unique().sort().to_list()
     ui_highlight_subject = mo.ui.dropdown(
-        options={"None": "__none__", **{_subject: _subject for _subject in _highlight_options}},
+        options={
+            "None": "__none__",
+            **{subject: subject for subject in highlight_subject_options},
+        },
         value="None",
         label="Dashed subject",
     )
@@ -474,53 +562,8 @@ def _(mo, results_filtered):
 
 
 @app.cell
-def _(np):
-    def observed_choice_index(adapter, trial_df):
-        _resp = np.asarray(trial_df["response"]).astype(object)
-        _out = np.full(len(_resp), -1, dtype=int)
-
-        if adapter.num_classes == 2:
-            for _i, _val in enumerate(_resp):
-                if _val is None:
-                    continue
-                try:
-                    _f = float(_val)
-                    if _f in (0.0, 1.0):
-                        _out[_i] = int(_f)
-                    elif _f in (-1.0, 1.0):
-                        _out[_i] = 1 if _f > 0 else 0
-                except (TypeError, ValueError):
-                    _s = str(_val).strip().upper()
-                    if _s in {"L", "LEFT"}:
-                        _out[_i] = 0
-                    elif _s in {"R", "RIGHT"}:
-                        _out[_i] = 1
-        else:
-            for _i, _val in enumerate(_resp):
-                if _val is None:
-                    continue
-                try:
-                    _f = float(_val)
-                    if _f in (0.0, 1.0, 2.0):
-                        _out[_i] = int(_f)
-                    elif _f in (1.0, 2.0, 3.0):
-                        _out[_i] = int(_f) - 1
-                except (TypeError, ValueError):
-                    _s = str(_val).strip().upper()
-                    if _s in {"L", "LEFT"}:
-                        _out[_i] = 0
-                    elif _s in {"C", "CENTER", "CENTRE"}:
-                        _out[_i] = 1
-                    elif _s in {"R", "RIGHT"}:
-                        _out[_i] = 2
-        return _out
-
-    return
-
-
-@app.cell
 def _(pl, results_filtered):
-    agg = (
+    model_metric_summary = (
         results_filtered.group_by(["model_kind", "model_alias", "model_label", "K"])
         .agg([
             pl.len().alias("n_subjects"),
@@ -538,22 +581,23 @@ def _(pl, results_filtered):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Compare all selected models
+    """)
+    return
+
+
 @app.cell
-def _(Line2D, mo, np, pl, plt, results_filtered, sns, ui_highlight_subject):
+def _(mo, np, pl, results_filtered):
     mo.stop(results_filtered.is_empty(), mo.md("No selected model metrics to plot."))
     mo.stop(
         results_filtered.filter(pl.col("model_kind") == "glm").is_empty(),
         mo.md("Select a GLM model to use as the LL increment baseline."),
     )
 
-    _MODEL_STYLES = {
-        "glm": {"label": "GLM", "marker": "s", "color": "#4C78A8"},
-        "glmhmmt": {"label": "GLMHMMT", "marker": "^", "color": "#54A24B"},
-        "glmhmm": {"label": "GLMHMM", "marker": "o", "color": "#F58518"},
-    }
-    _model_order = ["glm", "glmhmmt", "glmhmm"]
-    _highlight = ui_highlight_subject.value
-    _glm_baseline = (
+    glm_ll_by_subject = (
         results_filtered
         .filter(pl.col("model_kind") == "glm")
         .sort(["subject", "K", "model_alias"])
@@ -561,87 +605,107 @@ def _(Line2D, mo, np, pl, plt, results_filtered, sns, ui_highlight_subject):
         .agg(pl.first("test_ll_per_trial").alias("glm_test_ll_per_trial"))
     )
 
-    _plot_df = (
+    ll_increment_df = (
         results_filtered
-        .join(_glm_baseline, on="subject", how="inner")
+        .join(glm_ll_by_subject, on="subject", how="inner")
         .with_columns(
             ((pl.col("test_ll_per_trial") - pl.col("glm_test_ll_per_trial")) / np.log(2)).alias("test_ll_increment_bits")
         )
         .sort(["model_kind", "subject", "K"])
         .to_pandas()
     )
+    ll_state_counts = sorted(ll_increment_df["K"].dropna().unique())
+    return ll_increment_df, ll_state_counts
 
-    _fig_ll_bits, _ax_ll_bits = plt.subplots(figsize=(7.2, 4.6))
 
-    for _kind in _model_order:
-        _sub = _plot_df[_plot_df["model_kind"] == _kind]
-        if _sub.empty:
+@app.cell
+def _(
+    Line2D,
+    MODEL_ORDER,
+    MODEL_STYLES,
+    ll_increment_df,
+    ll_state_counts,
+    plt,
+    sns,
+    ui_highlight_subject,
+):
+    highlighted_subject = ui_highlight_subject.value
+    fig_ll_bits, ax_ll_bits = plt.subplots(figsize=(7.2, 4.6))
+
+    for ll_model_kind in MODEL_ORDER:
+        model_df = ll_increment_df[ll_increment_df["model_kind"] == ll_model_kind]
+        if model_df.empty:
             continue
-        _style = _MODEL_STYLES[_kind]
-        for _subject, _subject_df in _sub.groupby("subject"):
-            _subject_df = _subject_df.sort_values("K")
-            _is_highlight = _highlight != "__none__" and _subject == _highlight
-            _ax_ll_bits.plot(
-                _subject_df["K"],
-                _subject_df["test_ll_increment_bits"],
-                color=_style["color"],
-                linestyle="--" if _is_highlight else "-",
-                linewidth=2.0 if _is_highlight else 0.8,
-                alpha=0.9 if _is_highlight else 0.16,
-                marker=_style["marker"] if _is_highlight else None,
+        model_style = MODEL_STYLES[ll_model_kind]
+        for subject, subject_df in model_df.groupby("subject"):
+            subject_df = subject_df.sort_values("K")
+            is_highlighted = (
+                highlighted_subject != "__none__" and subject == highlighted_subject
+            )
+            ax_ll_bits.plot(
+                subject_df["K"],
+                subject_df["test_ll_increment_bits"],
+                color=model_style["color"],
+                linestyle="--" if is_highlighted else "-",
+                linewidth=2.0 if is_highlighted else 0.8,
+                alpha=0.9 if is_highlighted else 0.16,
+                marker=model_style["marker"] if is_highlighted else None,
                 markersize=4,
-                zorder=3 if _is_highlight else 1,
+                zorder=3 if is_highlighted else 1,
             )
 
-        _mean_df = (
-            _sub
+        model_mean_df = (
+            model_df
             .groupby("K", as_index=False)["test_ll_increment_bits"]
             .mean()
             .sort_values("K")
         )
-        _ax_ll_bits.plot(
-            _mean_df["K"],
-            _mean_df["test_ll_increment_bits"],
-            color=_style["color"],
-            marker=_style["marker"],
+        ax_ll_bits.plot(
+            model_mean_df["K"],
+            model_mean_df["test_ll_increment_bits"],
+            color=model_style["color"],
+            marker=model_style["marker"],
             linewidth=2.6,
             markersize=5,
-            label=f"{_style['label']} mean",
+            label=f"{model_style['label']} mean",
             zorder=4,
         )
 
-    _ax_ll_bits.axhline(0, color="0.35", linewidth=0.9, linestyle="--", alpha=0.6)
-    _ax_ll_bits.set_xlabel("Number of states K")
-    _ax_ll_bits.set_ylabel("Test LL increment vs GLM (bits / trial)")
-    _ax_ll_bits.set_title("Per-animal and mean test LL increment vs GLM")
-    _K_values = sorted(_plot_df["K"].dropna().unique())
-    if _K_values:
-        _ax_ll_bits.set_xticks(_K_values)
+    ax_ll_bits.axhline(0, color="0.35", linewidth=0.9, linestyle="--", alpha=0.6)
+    ax_ll_bits.set(
+        xlabel="Number of states K",
+        ylabel="Test LL increment vs GLM (bits / trial)",
+        title="Per-animal and mean test LL increment vs GLM",
+        xticks=ll_state_counts,
+    )
 
-    _handles, _labels = _ax_ll_bits.get_legend_handles_labels()
-    if _highlight != "__none__":
-        _handles.append(Line2D([0], [0], color="0.2", linestyle="--", linewidth=2, label=f"{_highlight}"))
-        _labels.append(f"{_highlight} dashed")
-    _ax_ll_bits.legend(_handles, _labels, frameon=False, loc="best")
-    sns.despine(ax=_ax_ll_bits)
-    _fig_ll_bits.tight_layout()
-    _fig_ll_bits
+    ll_legend_handles, ll_legend_labels = ax_ll_bits.get_legend_handles_labels()
+    if highlighted_subject != "__none__":
+        ll_legend_handles.append(
+            Line2D([0], [0], color="0.2", linestyle="--", linewidth=2)
+        )
+        ll_legend_labels.append(f"{highlighted_subject} dashed")
+    ax_ll_bits.legend(ll_legend_handles, ll_legend_labels, frameon=False)
+    sns.despine(ax=ax_ll_bits)
+    fig_ll_bits.tight_layout()
+    fig_ll_bits
     return
 
 
 @app.cell
-def _():
-    import itertools
-    import pandas as pd
-    from scipy.stats import ttest_1samp, ttest_rel, ttest_ind
-
-    def _sig_label(p):
-        if p < 0.001: return "***"
-        if p < 0.01:  return "**"
-        if p < 0.05:  return "*"
+def _(itertools, pd, ttest_ind, ttest_rel):
+    def significance_label(p_value):
+        """Convert a p-value to the paper's significance-star notation."""
+        if p_value < 0.001:
+            return "***"
+        if p_value < 0.01:
+            return "**"
+        if p_value < 0.05:
+            return "*"
         return "ns"
 
     def add_sig_bars(ax, df, *, x_col, y_col, hue_col, order, hue_order, pair_col=None):
+        """Annotate significant hue-level comparisons within each x level."""
         n_hue = max(1, len(hue_order))
         hue_width = 0.8 / n_hue
         y_range = df[y_col].max() - df[y_col].min()
@@ -677,7 +741,7 @@ def _():
                         continue
                     _, pval = ttest_ind(v1, v2, equal_var=False)
 
-                star = _sig_label(pval)
+                star = significance_label(pval)
                 if star == "ns":
                     continue
 
@@ -688,70 +752,75 @@ def _():
                 ax.text((x1 + x2) / 2, current_y + h, star, ha="center", va="bottom", color="k")
                 current_y += y_range * 0.075
 
+    return (add_sig_bars,)
 
-    return add_sig_bars, pd, ttest_1samp, ttest_rel
+
+@app.cell
+def _(darken, results_plot, sns, to_hex):
+    comparison_df = results_plot.to_pandas()
+    comparison_hue_order = (
+        comparison_df[["model_kind", "model_label"]]
+        .drop_duplicates()["model_label"]
+        .tolist()
+    )
+    comparison_base_colors = sns.color_palette(
+        "tab20", n_colors=max(1, len(comparison_hue_order))
+    )
+    comparison_palette = {
+        label: to_hex(comparison_base_colors[index])
+        for index, label in enumerate(comparison_hue_order)
+    }
+    comparison_strip_palette = {
+        label: darken(comparison_palette[label], 0.70)
+        for label in comparison_hue_order
+    }
+    comparison_K_order = sorted(comparison_df["K"].unique())
+    return (
+        comparison_K_order,
+        comparison_df,
+        comparison_hue_order,
+        comparison_palette,
+        comparison_strip_palette,
+    )
 
 
 @app.cell
 def _(
     Line2D,
     add_sig_bars,
+    comparison_K_order,
+    comparison_df,
+    comparison_hue_order,
+    comparison_palette,
+    comparison_strip_palette,
     custom_boxplot,
-    np,
     plt,
-    results_plot,
     sns,
     ui_bic_baseline,
 ):
-    from matplotlib.colors import to_rgb, to_hex
-
-    _MODEL_STYLES = {
-        "glm": {"marker": "s", "label": "GLM"},
-        "glmhmm": {"marker": "o", "label": "GLMHMM"},
-        "glmhmmt": {"marker": "^", "label": "GLMHMM-T"},
-    }
-
-    def darken(color, factor=0.75):
-        rgb = np.array(to_rgb(color))
-        return to_hex(np.clip(rgb * factor, 0, 1))
-
-    raw = results_plot.to_pandas()
-
-    _label_df = raw[["model_kind", "model_label"]].drop_duplicates()
-    hue_order = _label_df["model_label"].tolist()
-    _base_colors = sns.color_palette("tab20", n_colors=max(1, len(hue_order)))
-    palette = {
-        _label: to_hex(_base_colors[_i])
-        for _i, _label in enumerate(hue_order)
-    }
-    strip_palette = {
-        _label: darken(palette[_label], 0.70)
-        for _label in hue_order
-    }
-    K_order = sorted(raw["K"].unique())
-
     fig_cmp, (ax_ll, ax_bic) = plt.subplots(1, 2, figsize=(8, 4.8), constrained_layout=False)
 
-    def _grouped_custom_boxplot(ax, ycol: str) -> None:
-        if not hue_order or not K_order:
-            return
-
-        hue_width = 0.8 / len(hue_order)
+    def grouped_custom_boxplot(ax, y_column):
+        """Draw grouped boxes using the project's custom boxplot helper."""
+        hue_width = 0.8 / len(comparison_hue_order)
         grouped_values = []
         positions = []
         median_colors = []
 
-        for x_idx, k_val in enumerate(K_order):
-            for hue_idx, hue_label in enumerate(hue_order):
-                vals = raw[
-                    (raw["K"] == k_val)
-                    & (raw["model_label"] == hue_label)
-                ][ycol].dropna().to_numpy(dtype=float)
-                if len(vals) == 0:
+        for K_index, K_value in enumerate(comparison_K_order):
+            for hue_index, hue_label in enumerate(comparison_hue_order):
+                values = comparison_df[
+                    (comparison_df["K"] == K_value)
+                    & (comparison_df["model_label"] == hue_label)
+                ][y_column].dropna().to_numpy(dtype=float)
+                if len(values) == 0:
                     continue
-                positions.append(x_idx + (hue_idx - (len(hue_order) - 1) / 2) * hue_width)
-                grouped_values.append(vals)
-                median_colors.append(palette[hue_label])
+                positions.append(
+                    K_index
+                    + (hue_index - (len(comparison_hue_order) - 1) / 2) * hue_width
+                )
+                grouped_values.append(values)
+                median_colors.append(comparison_palette[hue_label])
 
         if grouped_values:
             custom_boxplot(
@@ -765,35 +834,35 @@ def _(
                 zorder=1,
             )
 
-    for ax, ycol in [(ax_ll, "test_ll_per_trial"), (ax_bic, "bic_delta")]:
-        _grouped_custom_boxplot(ax, ycol)
+    for comparison_axis, y_column in [(ax_ll, "test_ll_per_trial"), (ax_bic, "bic_delta")]:
+        grouped_custom_boxplot(comparison_axis, y_column)
 
         sns.stripplot(
-            data=raw,
+            data=comparison_df,
             x="K",
-            y=ycol,
+            y=y_column,
             hue="model_label",
-            order=K_order,
-            hue_order=hue_order,
-            palette=strip_palette,
+            order=comparison_K_order,
+            hue_order=comparison_hue_order,
+            palette=comparison_strip_palette,
             dodge=True,
             jitter=0.18,
             alpha=0.85,
             size=4,
-            ax=ax,
+            ax=comparison_axis,
             legend=False,
         )
 
     add_sig_bars(
-        ax_ll, raw,
+        ax_ll, comparison_df,
         x_col="K", y_col="test_ll_per_trial", hue_col="model_label",
-        order=K_order, hue_order=hue_order, pair_col="subject",
+        order=comparison_K_order, hue_order=comparison_hue_order, pair_col="subject",
     )
 
     add_sig_bars(
-        ax_bic, raw,
+        ax_bic, comparison_df,
         x_col="K", y_col="bic_delta", hue_col="model_label",
-        order=K_order, hue_order=hue_order, pair_col="subject",
+        order=comparison_K_order, hue_order=comparison_hue_order, pair_col="subject",
     )
 
     ax_ll.set_ylabel("CV test log-likelihood / trial")
@@ -803,22 +872,24 @@ def _(
     ax_bic.set_ylabel("ΔBIC vs baseline")
     ax_bic.set_title(f"ΔBIC vs {ui_bic_baseline.value} (lower = better)")
 
-    _legend_handles = [
-        Line2D([0], [0], marker="o", linestyle="", color=strip_palette[_label], label=_label, markersize=6)
-        for _label in hue_order
+    comparison_legend_handles = [
+        Line2D(
+            [0], [0], marker="o", linestyle="",
+            color=comparison_strip_palette[label], label=label, markersize=6,
+        )
+        for label in comparison_hue_order
     ]
-    _legend_labels = list(hue_order)
     if ax_ll.get_legend() is not None:
         ax_ll.get_legend().remove()
     if ax_bic.get_legend() is not None:
         ax_bic.get_legend().remove()
     fig_cmp.legend(
-        _legend_handles,
-        _legend_labels,
+        comparison_legend_handles,
+        comparison_hue_order,
         title="Model",
         loc="lower center",
         bbox_to_anchor=(0.5, -0.02),
-        ncol=min(3, max(1, len(_legend_labels))),
+        ncol=min(3, max(1, len(comparison_hue_order))),
         frameon=False,
     )
 
@@ -829,53 +900,77 @@ def _(
 
 
 @app.cell
-def _(plt, results_plot, sns, ui_bic_baseline):
-    def _cov_group(label):
-        _label = str(label).lower()
-        if "3 cov" in _label or  "3cov" in _label:
+def _(results_plot, sns):
+    def covariate_group(label):
+        """Map model labels to the GLM, two-, or three-covariate family."""
+        normalized_label = str(label).lower()
+        if "3 cov" in normalized_label or "3cov" in normalized_label:
             return "3 covs"
-        if "2 cov" in _label:
+        if "2 cov" in normalized_label:
             return "2 covs"
-        if "base_lapses" in _label:
+        if "base_lapses" in normalized_label:
             return "GLM"
         return None
 
-    _raw = results_plot.to_pandas()
-    _cov_mean = (
-        _raw.assign(cov_group=_raw["model_label"].map(_cov_group))
+    covariate_comparison_df = results_plot.to_pandas()
+    covariate_mean_df = (
+        covariate_comparison_df.assign(
+            cov_group=covariate_comparison_df["model_label"].map(covariate_group)
+        )
         .dropna(subset=["cov_group"])
         .groupby(["cov_group", "K"], as_index=False)[["test_ll_per_trial", "bic_delta"]]
         .mean()
         .sort_values(["cov_group", "K"])
     )
 
-    _cov_order = [grp for grp in ["GLM", "2 covs", "3 covs"] if grp in _cov_mean["cov_group"].unique()]
-    _palette = {
-        _group: _color
-        for _group, _color in zip(_cov_order, sns.color_palette("tab10", n_colors=max(1, len(_cov_order))))
+    covariate_order = [
+        group
+        for group in ["GLM", "2 covs", "3 covs"]
+        if group in covariate_mean_df["cov_group"].unique()
+    ]
+    covariate_palette = {
+        group: color
+        for group, color in zip(
+            covariate_order,
+            sns.color_palette("tab10", n_colors=max(1, len(covariate_order))),
+        )
     }
+    return covariate_mean_df, covariate_order, covariate_palette
+
+
+@app.cell
+def _(
+    covariate_mean_df,
+    covariate_order,
+    covariate_palette,
+    plt,
+    sns,
+    ui_bic_baseline,
+):
 
     fig_cov_mean, (ax_cov_ll, ax_cov_bic) = plt.subplots(
         1, 2, figsize=(8, 4.2), constrained_layout=False
     )
 
-    for _group in _cov_order:
-        _group_df = _cov_mean[_cov_mean["cov_group"] == _group]
+    for covariate_group_name in covariate_order:
+        covariate_group_df = covariate_mean_df[
+            covariate_mean_df["cov_group"] == covariate_group_name
+        ]
         ax_cov_ll.plot(
-            _group_df["K"],
-            _group_df["test_ll_per_trial"],
+            covariate_group_df["K"],
+            covariate_group_df["test_ll_per_trial"],
             marker="o",
             linewidth=2,
-            color=_palette[_group],
-            label=_group,
+            color=covariate_palette[covariate_group_name],
+            label=covariate_group_name,
         )
         ax_cov_bic.plot(
-            _group_df["K"],
-            _group_df["bic_delta"],
+            covariate_group_df["K"],
+            covariate_group_df["bic_delta"],
             marker="o",
             linewidth=2,
-            color=_palette[_group],
-            label=_group,
+            color=covariate_palette[covariate_group_name],
+            label=covariate_group_name,
         )
 
     ax_cov_ll.set_xlabel("Number of states K")
@@ -887,11 +982,11 @@ def _(plt, results_plot, sns, ui_bic_baseline):
     ax_cov_bic.set_ylabel("Mean ΔBIC vs baseline")
     ax_cov_bic.set_title(f"Mean ΔBIC vs {ui_bic_baseline.value}")
 
-    if _cov_order:
+    if covariate_order:
         fig_cov_mean.legend(
             loc="lower center",
             bbox_to_anchor=(0.5, -0.02),
-            ncol=len(_cov_order),
+            ncol=len(covariate_order),
             frameon=False,
             title="Grouped models",
         )
@@ -902,51 +997,64 @@ def _(plt, results_plot, sns, ui_bic_baseline):
     return
 
 
-@app.cell
-def _(mo, results_long):
-    _MODEL_KIND_LABELS = {
-        "glm": "GLM",
-        "glmhmm": "GLMHMM",
-        "glmhmmt": "GLMHMM-T",
-    }
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Compare two models
+    """)
+    return
 
-    def _pairwise_model_key(kind: str, K: int, alias: str) -> str:
+
+@app.cell
+def _(MODEL_LABELS, mo, results_long):
+    def pairwise_model_key(kind: str, K: int, alias: str) -> str:
+        """Encode a model family, state count, and alias for a dropdown value."""
         return f"{kind}\t{int(K)}\t{alias}"
 
     def parse_pairwise_model_key(key: str) -> tuple[str, int, str]:
-        _kind, _K, _alias = key.split("\t", 2)
-        return _kind, int(_K), _alias
+        """Decode a pairwise model dropdown value."""
+        kind, state_count, alias = key.split("\t", 2)
+        return kind, int(state_count), alias
 
-    _spec_rows = (
+    pairwise_model_specs = list(
         results_long
         .select(["model_kind", "model_alias", "model_label", "K"])
         .unique()
         .sort(["model_kind", "model_alias", "K"])
         .iter_rows(named=True)
     )
-    _pair_options = {}
-    for _row in _spec_rows:
-        _kind = _row["model_kind"]
-        if _kind != "glm":
-            _K = int(_row["K"])
-        else:
-            _K = 1
-        _alias = _row["model_alias"]
-        _kind_label = _MODEL_KIND_LABELS.get(_kind, str(_kind).upper())
-        _label = f"{_kind_label} K={_K}: {_alias}"
-        _pair_options[_label] = _pairwise_model_key(_kind, _K, _alias)
+    pairwise_model_options = {}
+    for pairwise_model_spec in pairwise_model_specs:
+        pairwise_option_kind = pairwise_model_spec["model_kind"]
+        pairwise_option_K = (
+            int(pairwise_model_spec["K"])
+            if pairwise_option_kind != "glm"
+            else 1
+        )
+        pairwise_option_alias = pairwise_model_spec["model_alias"]
+        option_label = (
+            f"{MODEL_LABELS[pairwise_option_kind]} K={pairwise_option_K}: "
+            f"{pairwise_option_alias}"
+        )
+        pairwise_model_options[option_label] = pairwise_model_key(
+            pairwise_option_kind, pairwise_option_K, pairwise_option_alias
+        )
 
-    _labels = list(_pair_options.keys())
-    _default_a = _labels[0] if _labels else None
-    _default_b = _labels[1] if len(_labels) > 1 else _default_a
+    pairwise_model_labels = list(pairwise_model_options)
+    pairwise_default_a = pairwise_model_labels[0] if pairwise_model_labels else None
+    pairwise_default_b = (
+        pairwise_model_labels[1]
+        if len(pairwise_model_labels) > 1
+        else pairwise_default_a
+    )
     ui_pairwise_model_a = mo.ui.dropdown(
-        options=_pair_options,
-        value=_default_a,
+        options=pairwise_model_options,
+        value=pairwise_default_a,
         label="Model A",
     )
     ui_pairwise_model_b = mo.ui.dropdown(
-        options=_pair_options,
-        value=_default_b,
+        options=pairwise_model_options,
+        value=pairwise_default_b,
         label="Model B",
     )
     mo.vstack(
@@ -967,19 +1075,27 @@ def _(mo, results_long):
 
 @app.cell
 def _(adapter, mo):
-    _opts = list(adapter._SCORING_OPTIONS.keys()) if hasattr(adapter, "_SCORING_OPTIONS") else ["default"]
-    _default_key = getattr(adapter, "scoring_key", _opts[0]) if _opts else None
-    if _opts and _default_key not in _opts:
-        _default_key = _opts[0]
+    pairwise_scoring_options = (
+        list(adapter._SCORING_OPTIONS)
+        if hasattr(adapter, "_SCORING_OPTIONS")
+        else ["default"]
+    )
+    pairwise_default_scoring = getattr(
+        adapter,
+        "scoring_key",
+        pairwise_scoring_options[0],
+    )
+    if pairwise_default_scoring not in pairwise_scoring_options:
+        pairwise_default_scoring = pairwise_scoring_options[0]
 
     ui_pairwise_scoring_key_a = mo.ui.dropdown(
-        options=_opts,
-        value=_default_key,
+        options=pairwise_scoring_options,
+        value=pairwise_default_scoring,
         label="Model A state scoring regressor",
     )
     ui_pairwise_scoring_key_b = mo.ui.dropdown(
-        options=_opts,
-        value=_default_key,
+        options=pairwise_scoring_options,
+        value=pairwise_default_scoring,
         label="Model B state scoring regressor",
     )
     mo.hstack([ui_pairwise_scoring_key_a, ui_pairwise_scoring_key_b])
@@ -1013,35 +1129,24 @@ def _(
     pairwise_kind_b, pairwise_K_b, pairwise_alias_b = parse_pairwise_model_key(ui_pairwise_model_b.value)
     requested_subjects = list(ui_subjects.value)
 
-    pairwise_fit_error_a = None
-    pairwise_fit_error_b = None
-    try:
-        pairwise_adapter_a, pairwise_arrays_a, pairwise_names_a, pairwise_views_a = load_fit_bundle(
-            ui_task.value,
-            pairwise_kind_a,
-            pairwise_alias_a,
-            pairwise_K_a,
-            requested_subjects,
-            scoring_key=ui_pairwise_scoring_key_a.value,
-        )
-    except Exception as _e:
-        pairwise_fit_error_a = str(_e)
-        pairwise_adapter_a, pairwise_arrays_a, pairwise_names_a, pairwise_views_a = None, {}, {}, {}
+    pairwise_adapter_a, pairwise_arrays_a, pairwise_names_a, pairwise_views_a = load_fit_bundle(
+        ui_task.value,
+        pairwise_kind_a,
+        pairwise_alias_a,
+        pairwise_K_a,
+        requested_subjects,
+        scoring_key=ui_pairwise_scoring_key_a.value,
+    )
+    pairwise_adapter_b, pairwise_arrays_b, pairwise_names_b, pairwise_views_b = load_fit_bundle(
+        ui_task.value,
+        pairwise_kind_b,
+        pairwise_alias_b,
+        pairwise_K_b,
+        requested_subjects,
+        scoring_key=ui_pairwise_scoring_key_b.value,
+    )
 
-    try:
-        pairwise_adapter_b, pairwise_arrays_b, pairwise_names_b, pairwise_views_b = load_fit_bundle(
-            ui_task.value,
-            pairwise_kind_b,
-            pairwise_alias_b,
-            pairwise_K_b,
-            requested_subjects,
-            scoring_key=ui_pairwise_scoring_key_b.value,
-        )
-    except Exception as _e:
-        pairwise_fit_error_b = str(_e)
-        pairwise_adapter_b, pairwise_arrays_b, pairwise_names_b, pairwise_views_b = None, {}, {}, {}
-
-    _metric_schema = {
+    pairwise_metric_schema = {
         "subject": pl.Utf8,
         "K": pl.Int64,
         "model_kind": pl.Utf8,
@@ -1053,30 +1158,41 @@ def _(
         "acc": pl.Float64,
     }
 
-    def _pair_metrics(kind: str, alias: str, K: int):
-        _df = load_metrics_dir(ui_task.value, alias, kind)
-        if _df is None:
-            return pl.DataFrame(schema=_metric_schema)
-        return _df.filter(
+    pairwise_metrics_a = load_metrics_dir(
+        ui_task.value, pairwise_alias_a, pairwise_kind_a
+    )
+    pairwise_metrics_b = load_metrics_dir(
+        ui_task.value, pairwise_alias_b, pairwise_kind_b
+    )
+    pairwise_metrics_a = (
+        pl.DataFrame(schema=pairwise_metric_schema)
+        if pairwise_metrics_a is None
+        else pairwise_metrics_a.filter(
             pl.col("subject").is_in(requested_subjects)
-            & (pl.col("K") == K)
+            & (pl.col("K") == pairwise_K_a)
         )
-
-    pairwise_metrics_a = _pair_metrics(pairwise_kind_a, pairwise_alias_a, pairwise_K_a)
-    pairwise_metrics_b = _pair_metrics(pairwise_kind_b, pairwise_alias_b, pairwise_K_b)
-    _metric_subjects_a = set(pairwise_metrics_a["subject"].to_list()) if not pairwise_metrics_a.is_empty() else set()
-    _metric_subjects_b = set(pairwise_metrics_b["subject"].to_list()) if not pairwise_metrics_b.is_empty() else set()
-    _cached_subjects_a = set(pairwise_views_a)
-    _cached_subjects_b = set(pairwise_views_b)
+    )
+    pairwise_metrics_b = (
+        pl.DataFrame(schema=pairwise_metric_schema)
+        if pairwise_metrics_b is None
+        else pairwise_metrics_b.filter(
+            pl.col("subject").is_in(requested_subjects)
+            & (pl.col("K") == pairwise_K_b)
+        )
+    )
+    metric_subjects_a = set(pairwise_metrics_a["subject"].to_list())
+    metric_subjects_b = set(pairwise_metrics_b["subject"].to_list())
+    cached_subjects_a = set(pairwise_views_a)
+    cached_subjects_b = set(pairwise_views_b)
     pairwise_common_subjects = [
-        _subject
-        for _subject in requested_subjects
-        if _subject in _metric_subjects_a and _subject in _metric_subjects_b
+        subject
+        for subject in requested_subjects
+        if subject in metric_subjects_a and subject in metric_subjects_b
     ]
     pairwise_cached_common_subjects = [
-        _subject
-        for _subject in requested_subjects
-        if _subject in _cached_subjects_a and _subject in _cached_subjects_b
+        subject
+        for subject in requested_subjects
+        if subject in cached_subjects_a and subject in cached_subjects_b
     ]
     if pairwise_common_subjects:
         pairwise_metrics_a = pairwise_metrics_a.filter(pl.col("subject").is_in(pairwise_common_subjects))
@@ -1101,26 +1217,16 @@ def _(
         pairwise_arrays_b,
         pairwise_cached_common_subjects,
         pairwise_common_subjects,
-        pairwise_fit_error_a,
-        pairwise_fit_error_b,
         pairwise_kind_a,
         pairwise_kind_b,
         pairwise_metrics_a,
         pairwise_metrics_b,
         pairwise_missing_a,
         pairwise_missing_b,
-        pairwise_names_a,
-        pairwise_names_b,
         pairwise_views_a,
         pairwise_views_b,
         requested_subjects,
     )
-
-
-@app.cell
-def _(pairwise_metrics_b):
-    pairwise_metrics_b
-    return
 
 
 @app.cell
@@ -1132,8 +1238,6 @@ def _(
     pairwise_alias_b,
     pairwise_cached_common_subjects,
     pairwise_common_subjects,
-    pairwise_fit_error_a,
-    pairwise_fit_error_b,
     pairwise_kind_a,
     pairwise_kind_b,
     pairwise_missing_a,
@@ -1142,7 +1246,7 @@ def _(
     ui_pairwise_scoring_key_a,
     ui_pairwise_scoring_key_b,
 ):
-    _notes = [
+    pairwise_notes = [
         f"- Comparing A `{pairwise_kind_a}` / `{pairwise_alias_a}` / `K={pairwise_K_a}` vs B `{pairwise_kind_b}` / `{pairwise_alias_b}` / `K={pairwise_K_b}`.",
         f"- Common metric subjects: **{len(pairwise_common_subjects)} / {len(requested_subjects)}**.",
         f"- Common cached fit subjects for state-level plots: **{len(pairwise_cached_common_subjects)} / {len(requested_subjects)}**.",
@@ -1151,26 +1255,16 @@ def _(
         "- Transition deltas are aligned by semantic state label.",
     ]
     if pairwise_missing_a:
-        _notes.append(
+        pairwise_notes.append(
             f"- Missing in `{pairwise_alias_a}`: {', '.join(map(str, pairwise_missing_a[:8]))}"
             + (" ..." if len(pairwise_missing_a) > 8 else "")
         )
     if pairwise_missing_b:
-        _notes.append(
+        pairwise_notes.append(
             f"- Missing in `{pairwise_alias_b}`: {', '.join(map(str, pairwise_missing_b[:8]))}"
             + (" ..." if len(pairwise_missing_b) > 8 else "")
         )
-    if pairwise_fit_error_a:
-        _notes.append(f"- State-level cache for A could not be loaded: `{pairwise_fit_error_a}`")
-    if pairwise_fit_error_b:
-        _notes.append(f"- State-level cache for B could not be loaded: `{pairwise_fit_error_b}`")
-    mo.md("\n".join(_notes))
-    return
-
-
-@app.cell
-def _(pairwise_metrics_b):
-    pairwise_metrics_b
+    mo.md("\n".join(pairwise_notes))
     return
 
 
@@ -1186,18 +1280,18 @@ def _(
     pairwise_metrics_b,
     pl,
 ):
-    _frames = []
+    pairwise_metric_frames = []
     if not pairwise_metrics_a.is_empty():
-        _frames.append(
+        pairwise_metric_frames.append(
             pairwise_metrics_a.with_columns(pl.lit("A").alias("model_slot"))
         )
     if not pairwise_metrics_b.is_empty():
-        _frames.append(
+        pairwise_metric_frames.append(
             pairwise_metrics_b.with_columns(pl.lit("B").alias("model_slot"))
         )
 
-    if _frames:
-        pairwise_metrics = pl.concat(_frames, how="diagonal")
+    if pairwise_metric_frames:
+        pairwise_metrics = pl.concat(pairwise_metric_frames, how="diagonal")
     else:
         pairwise_metrics = pl.DataFrame(
             schema={
@@ -1295,6 +1389,7 @@ def _(
 
 @app.cell
 def _(
+    PAIRWISE_PRETTY_NAMES,
     fig_size,
     mo,
     pairwise_alias_a,
@@ -1302,7 +1397,6 @@ def _(
     pairwise_metric_deltas,
     panel,
     plt,
-    pretty_names,
     sns,
 ):
     mo.stop(
@@ -1336,8 +1430,12 @@ def _(
     ax_pairwise_ll.set_xlim(pairwise_ll_min, pairwise_ll_max)
     ax_pairwise_ll.set_ylim(pairwise_ll_min, pairwise_ll_max)
     ax_pairwise_ll.set_aspect("equal", adjustable="box")
-    ax_pairwise_ll.set_xlabel(f"Model A: {pretty_names[pairwise_alias_a]}")
-    ax_pairwise_ll.set_ylabel(f"Model B: {pretty_names[pairwise_alias_b]}")
+    ax_pairwise_ll.set_xlabel(
+        f"Model A: {PAIRWISE_PRETTY_NAMES.get(pairwise_alias_a, pairwise_alias_a)}"
+    )
+    ax_pairwise_ll.set_ylabel(
+        f"Model B: {PAIRWISE_PRETTY_NAMES.get(pairwise_alias_b, pairwise_alias_b)}"
+    )
     sns.despine(ax=ax_pairwise_ll)
 
     panel(
@@ -1352,6 +1450,7 @@ def _(
 @app.cell
 def _(
     BOXPLOT_STYLE,
+    PAIRWISE_PRETTY_NAMES,
     fig_size,
     mo,
     np,
@@ -1368,111 +1467,127 @@ def _(
         mo.md("No common subject metrics were found for the selected model fits."),
     )
 
-    pretty_names = {
-        "one hot2 lapses":  "lapse model",
-        "param frozen": "pure GLM-HMM",
-        "one hot": "GLM",
-        "param2": "GLM-HMM",
-        "mohammadi at 2states dif" : "GLM-HMMt",
-        "mohammadi at 2states dif frozen" : "GLM-HMMt pure",
-        "2afc_bias-stimD0-choice-lag-paramE0": "Both fixed",
-        "2afc_bias-stimD0-choice-lag-param_free": "Stim fixed",
-        "param": "Carles"
-    }
-
-    _pd = pairwise_metric_deltas.to_pandas()
-    _panels = [
+    pairwise_delta_df = pairwise_metric_deltas.to_pandas()
+    pairwise_delta_panels = [
         ("delta_ll_per_trial", "Δ test LL / trial", (-0.05, 0.05)),
         ("delta_bic", "Δ BIC", (-800, 800)),
     ]
 
-    def p_label(_values):
-        _values = _values[np.isfinite(_values)]
-        if len(_values) < 2:
+    def one_sample_p_label(values):
+        """Test a finite subject-level delta against zero and return stars."""
+        values = values[np.isfinite(values)]
+        if len(values) < 2:
             return ""
-        if np.allclose(_values, 0):
+        if np.allclose(values, 0):
             return "ns"
-        _, _pval = ttest_1samp(_values, popmean=0.0, nan_policy="omit")
-        if not np.isfinite(_pval):
+        p_value = ttest_1samp(values, popmean=0.0, nan_policy="omit").pvalue
+        if not np.isfinite(p_value):
             return ""
-        if _pval < 0.0001:
+        if p_value < 0.0001:
             return "****"
-        if _pval < 0.001:
+        if p_value < 0.001:
             return "***"
-        if _pval < 0.01:
+        if p_value < 0.01:
             return "**"
-        if _pval < 0.05:
+        if p_value < 0.05:
             return "*"
         return "ns"
 
-    _fig_pair_metrics, _axd = plt.subplot_mosaic(
+    fig_pair_metrics, pairwise_metric_axes = plt.subplot_mosaic(
         [["ll", "bic"]],
         figsize=fig_size(1,2),
         constrained_layout=True,
     )
-    _axes = [_axd["ll"], _axd["bic"]]
-    for _ax, (_delta_col, _ylabel, _ylim) in zip(_axes, _panels, strict=False):
-        _delta = _pd[_delta_col].to_numpy(dtype=float)
-        _finite = _delta[np.isfinite(_delta)]
-        _ax.axhline(0, color="0.35", linewidth=1.0, linestyle="--", alpha=0.75, zorder=0)
-        if len(_finite) > 0:
+    pairwise_metric_plot_axes = [
+        pairwise_metric_axes["ll"],
+        pairwise_metric_axes["bic"],
+    ]
+    for pairwise_metric_axis, (delta_column, ylabel, pairwise_metric_ylim) in zip(
+        pairwise_metric_plot_axes, pairwise_delta_panels, strict=False
+    ):
+        finite_deltas = pairwise_delta_df[delta_column].to_numpy(dtype=float)
+        finite_deltas = finite_deltas[np.isfinite(finite_deltas)]
+        pairwise_metric_axis.axhline(
+            0, color="0.35", linewidth=1.0, linestyle="--", alpha=0.75
+        )
+        if len(finite_deltas) > 0:
             sns.boxplot(
-                y=_finite,
-                ax=_ax,
-                color = "tab:red",
-                # width=.5,
-                **BOXPLOT_STYLE
+                y=finite_deltas,
+                ax=pairwise_metric_axis,
+                color="tab:red",
+                **BOXPLOT_STYLE,
             )
-        _p_txt = p_label(_finite)
-        # _ax.set_ylim(*_ylim)
-        if _p_txt:
-            _ax.text(0.5, 0.88, _p_txt, ha="center", va="bottom", transform=_ax.transAxes)
-        _ax.set_xticks([0])
-        _ax.set_xticklabels([
-            f"{pretty_names.get(pairwise_alias_b, pairwise_alias_b)} $-$ {pretty_names.get(pairwise_alias_a, pairwise_alias_a)}"
+        p_text = one_sample_p_label(finite_deltas)
+        if p_text:
+            pairwise_metric_axis.text(
+                0.5, 0.88, p_text, ha="center", transform=pairwise_metric_axis.transAxes
+            )
+        pairwise_metric_axis.set_xticks([0])
+        pairwise_metric_axis.set_xticklabels([
+            f"{PAIRWISE_PRETTY_NAMES.get(pairwise_alias_b, pairwise_alias_b)} $-$ "
+            f"{PAIRWISE_PRETTY_NAMES.get(pairwise_alias_a, pairwise_alias_a)}"
         ])
-        _ax.set_ylabel(_ylabel)
-        # _ax.set_xlim(-0.45, 0.45)
-        sns.despine(ax=_ax)
+        pairwise_metric_axis.set_ylabel(ylabel)
+        sns.despine(ax=pairwise_metric_axis)
 
-    mo.vstack([_fig_pair_metrics, save_plot(_fig_pair_metrics, "Metric comparisom", stem=f"metric_comparison_{pairwise_alias_a}_{pairwise_alias_b}"),])
-    return (pretty_names,)
+    mo.vstack([
+        fig_pair_metrics,
+        save_plot(
+            fig_pair_metrics,
+            "Metric comparison",
+            stem=f"metric_comparison_{pairwise_alias_a}_{pairwise_alias_b}",
+        ),
+    ])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Latent-state parameters
+    """)
+    return
 
 
 @app.cell
 def _(np, plt, sns):
-    def _resolve_transition_matrix(arrays: dict) -> np.ndarray | None:
+    def resolve_transition_matrix(arrays: dict) -> np.ndarray | None:
+        """Return a fitted K x K transition matrix, converting logits if needed."""
         if "transition_matrix" in arrays:
             return np.asarray(arrays["transition_matrix"], dtype=float)
         if "transition_bias" in arrays:
-            _bias = np.asarray(arrays["transition_bias"], dtype=float)
-            _exp = np.exp(_bias - _bias.max(axis=-1, keepdims=True))
-            return _exp / _exp.sum(axis=-1, keepdims=True)
+            transition_bias = np.asarray(arrays["transition_bias"], dtype=float)
+            transition_exp = np.exp(
+                transition_bias - transition_bias.max(axis=-1, keepdims=True)
+            )
+            return transition_exp / transition_exp.sum(axis=-1, keepdims=True)
         return None
 
-    def _reindex_transition_matrix(
+    def reindex_transition_matrix(
         matrix: np.ndarray,
         source_labels: list[str],
         target_labels: list[str],
     ) -> np.ndarray:
-        _source_index = {label: idx for idx, label in enumerate(source_labels)}
-        _aligned = np.full((len(target_labels), len(target_labels)), np.nan, dtype=float)
-        for _row_idx, _row_label in enumerate(target_labels):
-            _src_row = _source_index.get(_row_label)
-            if _src_row is None:
+        """Map a K x K matrix from ``source_labels`` into an L x L target order."""
+        source_index = {label: index for index, label in enumerate(source_labels)}
+        aligned = np.full((len(target_labels), len(target_labels)), np.nan)
+        for row_index, row_label in enumerate(target_labels):
+            source_row = source_index.get(row_label)
+            if source_row is None:
                 continue
-            for _col_idx, _col_label in enumerate(target_labels):
-                _src_col = _source_index.get(_col_label)
-                if _src_col is None:
+            for column_index, column_label in enumerate(target_labels):
+                source_column = source_index.get(column_label)
+                if source_column is None:
                     continue
-                _aligned[_row_idx, _col_idx] = matrix[_src_row, _src_col]
-        return _aligned
+                aligned[row_index, column_index] = matrix[source_row, source_column]
+        return aligned
 
-    def _finite_max_abs(matrix: np.ndarray) -> float:
-        _finite = matrix[np.isfinite(matrix)]
-        if _finite.size == 0:
+    def finite_max_abs(matrix: np.ndarray) -> float:
+        """Return a non-zero color limit from the finite entries of a 2D matrix."""
+        finite_values = matrix[np.isfinite(matrix)]
+        if finite_values.size == 0:
             return 1e-12
-        return max(float(np.max(np.abs(_finite))), 1e-12)
+        return max(float(np.max(np.abs(finite_values))), 1e-12)
 
     def plot_pairwise_transition_matrices(
         *,
@@ -1484,90 +1599,90 @@ def _(np, plt, sns):
         alias_a: str,
         alias_b: str,
     ) -> plt.Figure:
-        def _mean_transition(arrays_store: dict, views: dict):
-            _subject_entries = []
-            _labels = []
-            for _subject in subjects:
-                if _subject not in views:
+        """Plot two mean K x K transition matrices and their semantic-state delta."""
+        def mean_transition(arrays_store: dict, views: dict):
+            subject_entries = []
+            state_labels = []
+            for subject in subjects:
+                if subject not in views:
                     continue
-                _mat = _resolve_transition_matrix(arrays_store.get(_subject, {}))
-                if _mat is None:
+                transition_matrix = resolve_transition_matrix(
+                    arrays_store.get(subject, {})
+                )
+                if transition_matrix is None:
                     continue
-                _order = [int(k) for k in views[_subject].state_idx_order]
-                _subject_labels = [
-                    views[_subject].state_name_by_idx.get(int(k), f"State {k}")
-                    for k in _order
+                state_order = [int(k) for k in views[subject].state_idx_order]
+                subject_labels = [
+                    views[subject].state_name_by_idx.get(int(k), f"State {k}")
+                    for k in state_order
                 ]
-                for _label in _subject_labels:
-                    if _label not in _labels:
-                        _labels.append(_label)
-                _subject_entries.append(
+                for state_label in subject_labels:
+                    if state_label not in state_labels:
+                        state_labels.append(state_label)
+                subject_entries.append(
                     (
-                        _mat[np.ix_(_order, _order)],
-                        _subject_labels,
+                        transition_matrix[np.ix_(state_order, state_order)],
+                        subject_labels,
                     )
                 )
-            if not _subject_entries:
+            if not subject_entries:
                 return None, []
-            _aligned_mats = [
-                _reindex_transition_matrix(_mat, _subject_labels, _labels)
-                for _mat, _subject_labels in _subject_entries
+            aligned_matrices = [
+                reindex_transition_matrix(matrix, subject_labels, state_labels)
+                for matrix, subject_labels in subject_entries
             ]
-            return np.nanmean(np.stack(_aligned_mats, axis=0), axis=0), _labels
+            return np.nanmean(np.stack(aligned_matrices), axis=0), state_labels
 
-        _mat_a, _labels_a = _mean_transition(arrays_a, views_a)
-        _mat_b, _labels_b = _mean_transition(arrays_b, views_b)
-        if _mat_a is None or _mat_b is None:
+        matrix_a, labels_a = mean_transition(arrays_a, views_a)
+        matrix_b, labels_b = mean_transition(arrays_b, views_b)
+        if matrix_a is None or matrix_b is None:
             raise ValueError("No transition matrices were available for the common subject set.")
 
-        _labels = []
-        for _label in _labels_a + _labels_b:
-            if _label not in _labels:
-                _labels.append(_label)
-        _mat_a = _reindex_transition_matrix(_mat_a, _labels_a, _labels)
-        _mat_b = _reindex_transition_matrix(_mat_b, _labels_b, _labels)
+        state_labels = list(dict.fromkeys(labels_a + labels_b))
+        matrix_a = reindex_transition_matrix(matrix_a, labels_a, state_labels)
+        matrix_b = reindex_transition_matrix(matrix_b, labels_b, state_labels)
 
-        _vmax = max(_finite_max_abs(_mat_a), _finite_max_abs(_mat_b))
-        _delta = _mat_b - _mat_a
-        _dmax = _finite_max_abs(_delta)
+        matrix_max = max(finite_max_abs(matrix_a), finite_max_abs(matrix_b))
+        matrix_delta = matrix_b - matrix_a
+        delta_max = finite_max_abs(matrix_delta)
 
         fig, axes = plt.subplots(1, 3, figsize=(13, 4), constrained_layout=False)
-        for _ax, _mat, _title in [
-            (axes[0], _mat_a, alias_a),
-            (axes[1], _mat_b, alias_b),
+        for axis, matrix, title in [
+            (axes[0], matrix_a, alias_a),
+            (axes[1], matrix_b, alias_b),
         ]:
             sns.heatmap(
-                _mat,
-                ax=_ax,
+                matrix,
+                ax=axis,
                 cmap="Blues",
                 vmin=0,
-                vmax=_vmax,
+                vmax=matrix_max,
                 annot=True,
                 fmt=".2f",
                 square=True,
                 cbar=False,
             )
-            _ax.set_title(_title)
-            _ax.set_xticklabels(_labels, rotation=25, ha="right")
-            _ax.set_yticklabels(_labels, rotation=0)
-            _ax.set_xlabel("To state")
-            _ax.set_ylabel("From state")
+            axis.set_title(title)
+            axis.set_xticklabels(state_labels, rotation=25, ha="right")
+            axis.set_yticklabels(state_labels, rotation=0)
+            axis.set_xlabel("To state")
+            axis.set_ylabel("From state")
 
         sns.heatmap(
-            _delta,
+            matrix_delta,
             ax=axes[2],
             cmap="RdBu_r",
             center=0,
-            vmin=-_dmax,
-            vmax=_dmax,
+            vmin=-delta_max,
+            vmax=delta_max,
             annot=True,
             fmt=".2f",
             square=True,
             cbar=False,
         )
         axes[2].set_title(f"{alias_b} - {alias_a}")
-        axes[2].set_xticklabels(_labels, rotation=25, ha="right")
-        axes[2].set_yticklabels(_labels, rotation=0)
+        axes[2].set_xticklabels(state_labels, rotation=25, ha="right")
+        axes[2].set_yticklabels(state_labels, rotation=0)
         axes[2].set_xlabel("To state")
         axes[2].set_ylabel("From state")
         fig.suptitle(
@@ -1591,20 +1706,16 @@ def _(
     pairwise_views_b,
     plot_pairwise_transition_matrices,
 ):
-    try:
-        _fig_transition_pair = plot_pairwise_transition_matrices(
-            arrays_a=pairwise_arrays_a,
-            arrays_b=pairwise_arrays_b,
-            views_a=pairwise_views_a,
-            views_b=pairwise_views_b,
-            subjects=pairwise_cached_common_subjects,
-            alias_a=pairwise_alias_a,
-            alias_b=pairwise_alias_b,
-        )
-        _transition_output = mo.vstack([mo.md("#### Transition matrices"), _fig_transition_pair])
-    except Exception as _e:
-        _transition_output = mo.md(f"#### Transition matrices\n\nCould not render the pairwise transition comparison: `{_e}`")
-    _transition_output
+    fig_transition_pair = plot_pairwise_transition_matrices(
+        arrays_a=pairwise_arrays_a,
+        arrays_b=pairwise_arrays_b,
+        views_a=pairwise_views_a,
+        views_b=pairwise_views_b,
+        subjects=pairwise_cached_common_subjects,
+        alias_a=pairwise_alias_a,
+        alias_b=pairwise_alias_b,
+    )
+    mo.vstack([mo.md("#### Transition matrices"), fig_transition_pair])
     return
 
 
@@ -1618,58 +1729,41 @@ def _(
     pairwise_adapter_b,
     pairwise_alias_a,
     pairwise_alias_b,
-    pairwise_arrays_a,
-    pairwise_arrays_b,
-    pairwise_names_a,
-    pairwise_names_b,
     pairwise_views_a,
     pairwise_views_b,
 ):
-    def _emission_summary(_adapter, _views, _arrays_store, _names, _K):
-        if _adapter is None:
-            raise ValueError("fit bundle was not loaded")
-        _plots = _adapter.get_plots()
-        return _plots.plot_emission_weights_summary(
-            build_emission_weights_df(_views),
-            K=_K,
-        )
+    emission_weights_a = build_emission_weights_df(pairwise_views_a)
+    emission_weights_b = build_emission_weights_df(pairwise_views_b)
+    fig_emission_a = pairwise_adapter_a.get_plots().plot_emission_weights_summary(
+        emission_weights_a,
+        K=pairwise_K_a,
+    )
+    fig_emission_b = pairwise_adapter_b.get_plots().plot_emission_weights_summary(
+        emission_weights_b,
+        K=pairwise_K_b,
+    )
+    mo.vstack([
+        mo.md("#### Emission weights"),
+        mo.hstack([
+            mo.vstack([mo.md(f"**A** — `{pairwise_alias_a}`"), fig_emission_a]),
+            mo.vstack([mo.md(f"**B** — `{pairwise_alias_b}`"), fig_emission_b]),
+        ], widths="equal"),
+    ])
+    return
 
-    try:
-        _fig_emission_a = _emission_summary(
-            pairwise_adapter_a,
-            pairwise_views_a,
-            pairwise_arrays_a,
-            pairwise_names_a,
-            pairwise_K_a,
-        )
-        _fig_emission_b = _emission_summary(
-            pairwise_adapter_b,
-            pairwise_views_b,
-            pairwise_arrays_b,
-            pairwise_names_b,
-            pairwise_K_b,
-        )
-        _emission_output = mo.vstack(
-            [
-                mo.md("#### Emission weights"),
-                mo.hstack(
-                    [
-                        mo.vstack([mo.md(f"**A** — `{pairwise_alias_a}`"), _fig_emission_a]),
-                        mo.vstack([mo.md(f"**B** — `{pairwise_alias_b}`"), _fig_emission_b]),
-                    ],
-                    widths="equal",
-                ),
-            ]
-        )
-    except Exception as _e:
-        _emission_output = mo.md(f"#### Emission weights\n\nCould not render the pairwise emission summaries: `{_e}`")
-    _emission_output
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Behavioral interpretation of states
+    """)
     return
 
 
 @app.cell
 def _(pl):
     def subject_behavior_df(df_all, *, subject, sort_col, session_col):
+        """Return one subject's chronologically sorted trials from valid sessions."""
         df_sub = df_all.filter(pl.col("subject") == subject).sort(sort_col)
         if session_col in df_sub.columns:
             df_sub = df_sub.filter(
@@ -1693,6 +1787,7 @@ def _(adapter_behavioral_column, df_all, pd):
     BEHAVIOR_METRIC_CANDIDATES = ("nLicks", *RT_METRIC_CANDIDATES)
 
     def augment_behavior_metrics(trial_df, adapter):
+        """Join behavioral columns onto an N-trial model dataframe by trial identity."""
         if trial_df.is_empty():
             return pd.DataFrame()
 
@@ -1733,38 +1828,32 @@ def _(
     pl,
     subject_behavior_df,
 ):
-    def _pairwise_trial_df(adapter, views):
-        if adapter is None:
-            return pl.DataFrame()
-        _frames = []
-        for _subject in pairwise_cached_common_subjects:
-            if _subject not in views:
+    def build_pairwise_trial_df(adapter, views):
+        """Concatenate N-trial state dataframes for subjects cached by one fit."""
+        trial_frames = []
+        for subject in pairwise_cached_common_subjects:
+            if subject not in views:
                 continue
-            _df_sub = subject_behavior_df(
+            subject_df = subject_behavior_df(
                 df_all,
-                subject=_subject,
+                subject=subject,
                 sort_col=adapter.sort_col,
                 session_col=adapter.session_col,
             )
-            if _df_sub.height != views[_subject].T:
+            if subject_df.height != views[subject].T:
                 continue
-            try:
-                _frames.append(
-                    build_trial_df(
-                        views[_subject],
-                        adapter,
-                        _df_sub,
-                        adapter.behavioral_cols,
-                    )
+            trial_frames.append(
+                build_trial_df(
+                    views[subject],
+                    adapter,
+                    subject_df,
+                    adapter.behavioral_cols,
                 )
-            except Exception:
-                pass
-        if not _frames:
-            return pl.DataFrame()
-        return pl.concat(_frames, how="diagonal")
+            )
+        return pl.concat(trial_frames, how="diagonal") if trial_frames else pl.DataFrame()
 
-    pairwise_trial_df_a = _pairwise_trial_df(pairwise_adapter_a, pairwise_views_a)
-    pairwise_trial_df_b = _pairwise_trial_df(pairwise_adapter_b, pairwise_views_b)
+    pairwise_trial_df_a = build_pairwise_trial_df(pairwise_adapter_a, pairwise_views_a)
+    pairwise_trial_df_b = build_pairwise_trial_df(pairwise_adapter_b, pairwise_views_b)
     return pairwise_trial_df_a, pairwise_trial_df_b
 
 
@@ -1782,58 +1871,56 @@ def _(
     pl,
     subject_behavior_df,
 ):
-    def _session_occupancy_records(*, alias: str, adapter, views: dict):
-        if adapter is None:
-            return []
-        _records = []
-        for _subject in pairwise_cached_common_subjects:
-            if _subject not in views:
+    def session_occupancy_records(*, alias: str, adapter, views: dict):
+        """Return one occupancy record per subject, session, and semantic state."""
+        records = []
+        for subject in pairwise_cached_common_subjects:
+            if subject not in views:
                 continue
-            _view = views[_subject]
-            _df_sub = subject_behavior_df(
+            view = views[subject]
+            subject_df = subject_behavior_df(
                 df_all,
-                subject=_subject,
+                subject=subject,
                 sort_col=adapter.sort_col,
                 session_col=adapter.session_col,
             )
-            if _df_sub.height != _view.T:
+            if subject_df.height != view.T:
                 continue
-            if adapter.session_col not in _df_sub.columns:
+            if adapter.session_col not in subject_df.columns:
                 continue
-            _session_col = adapter.session_col
-            _sessions = np.asarray(_df_sub[_session_col])
-            _probs = np.asarray(_view.smoothed_probs, dtype=float)
-            for _session in np.unique(_sessions):
-                _mask = _sessions == _session
-                if not np.any(_mask):
-                    continue
-                for _state_idx in _view.state_idx_order:
-                    _records.append(
+            sessions = np.asarray(subject_df[adapter.session_col])
+            state_probabilities = np.asarray(view.smoothed_probs, dtype=float)
+            for session in np.unique(sessions):
+                session_mask = sessions == session
+                for state_index in view.state_idx_order:
+                    records.append(
                         {
-                            "subject": str(_subject),
-                            "session": str(_session),
+                            "subject": str(subject),
+                            "session": str(session),
                             "model_alias": alias,
-                            "state_label": _view.state_name_by_idx.get(
-                                int(_state_idx), f"State {_state_idx}"
+                            "state_label": view.state_name_by_idx.get(
+                                int(state_index), f"State {state_index}"
                             ),
-                            "occupancy": float(np.mean(_probs[_mask, int(_state_idx)])),
+                            "occupancy": float(
+                                np.mean(state_probabilities[session_mask, int(state_index)])
+                            ),
                         }
                     )
-        return _records
+        return records
 
-    _records = _session_occupancy_records(
+    occupancy_records = session_occupancy_records(
         alias=pairwise_alias_a,
         adapter=pairwise_adapter_a,
         views=pairwise_views_a,
     )
-    _records += _session_occupancy_records(
+    occupancy_records += session_occupancy_records(
         alias=pairwise_alias_b,
         adapter=pairwise_adapter_b,
         views=pairwise_views_b,
     )
 
-    if _records:
-        pairwise_session_occupancy = pl.DataFrame(_records)
+    if occupancy_records:
+        pairwise_session_occupancy = pl.DataFrame(occupancy_records)
     else:
         pairwise_session_occupancy = pl.DataFrame(
             schema={
@@ -1872,108 +1959,144 @@ def _(
 
 @app.cell
 def _(
-    BOXPLOT_STLYE,
-    fig_size,
-    mo,
-    np,
-    pairwise_K_a,
-    pairwise_K_b,
-    pairwise_adapter_a,
     pairwise_alias_a,
     pairwise_alias_b,
-    pairwise_session_occupancy,
     pairwise_subject_occupancy,
     pairwise_trial_df_a,
     pairwise_trial_df_b,
     pl,
+):
+    def subject_accuracy(alias, trial_df):
+        """Return subject x semantic-state accuracy percentages from N trials."""
+        accuracy_df = trial_df
+        if "correct_bool" not in accuracy_df.columns:
+            accuracy_df = accuracy_df.with_columns(
+                pl.col("performance").cast(pl.Boolean).alias("correct_bool")
+            )
+        return (
+            accuracy_df.drop_nulls(["state_label", "correct_bool"])
+            .group_by("subject", "state_label")
+            .agg((pl.mean("correct_bool") * 100).alias("value"))
+            .with_columns(
+                pl.lit(alias).alias("model_alias"),
+                pl.lit("Accuracy (%)").alias("metric"),
+            )
+        )
+
+    pairwise_accuracy = pl.concat([
+        subject_accuracy(pairwise_alias_a, pairwise_trial_df_a),
+        subject_accuracy(pairwise_alias_b, pairwise_trial_df_b),
+    ], how="diagonal")
+    pairwise_occupancy = pairwise_subject_occupancy.rename(
+        {"occupancy": "value"}
+    ).with_columns(pl.lit("Occupancy").alias("metric"))
+    occupancy_accuracy_df = pl.concat(
+        [pairwise_occupancy, pairwise_accuracy], how="diagonal"
+    ).to_pandas()
+    pairwise_model_order = [pairwise_alias_a, pairwise_alias_b]
+    pairwise_model_palette = {
+        pairwise_alias_a: "#1B6CA8",
+        pairwise_alias_b: "#C76D3A",
+    }
+    return occupancy_accuracy_df, pairwise_model_order, pairwise_model_palette
+
+
+@app.cell
+def _(
+    BOXPLOT_STYLE,
+    fig_size,
+    mo,
+    np,
+    occupancy_accuracy_df,
+    pairwise_K_a,
+    pairwise_K_b,
+    pairwise_adapter_a,
+    pairwise_model_order,
+    pairwise_model_palette,
+    pairwise_session_occupancy,
     plt,
     sns,
     ttest_rel,
 ):
     mo.stop(pairwise_session_occupancy.is_empty(), mo.md("#### No session occupancy for current subset."))
-
-    def subject_accuracy(alias, df):
-        if df.is_empty() or "state_label" not in df.columns:
-            return pl.DataFrame()
-        if "correct_bool" not in df.columns:
-            df = df.with_columns(pl.col("performance").cast(pl.Boolean).alias("correct_bool"))
-        return (
-            df.drop_nulls(["state_label", "correct_bool"])
-            .group_by("subject", "state_label")
-            .agg((pl.mean("correct_bool") * 100).alias("value"))
-            .with_columns(pl.lit(alias).alias("model_alias"), pl.lit("Accuracy (%)").alias("metric"))
-        )
-
-    occ = pairwise_subject_occupancy.rename({"occupancy": "value"}).with_columns(
-        pl.lit("Occupancy").alias("metric")
+    fig_occupancy_accuracy, occupancy_accuracy_axes = plt.subplot_mosaic(
+        [["occ", "acc"]], figsize=fig_size(1, 2)
     )
-    acc = pl.concat([
-        subject_accuracy(pairwise_alias_a, pairwise_trial_df_a),
-        subject_accuracy(pairwise_alias_b, pairwise_trial_df_b),
-    ], how="diagonal")
 
-    plot_df = pl.concat([occ, acc], how="diagonal").to_pandas()
-
-    models = [pairwise_alias_a, pairwise_alias_b]
-    palette2 = {pairwise_alias_a: "#1B6CA8", pairwise_alias_b: "#C76D3A"}
-    fig, axs = plt.subplot_mosaic([["occ", "acc"]], figsize=fig_size(1, 2))
-
-    for key, metric, ylim, chance in [
+    for panel_key, metric_name, metric_ylim, chance_level in [
         ("occ", "Occupancy", (0, 1), 1 / pairwise_K_a if pairwise_K_a == pairwise_K_b else None),
         ("acc", "Accuracy (%)", (0, 100), 100 / pairwise_adapter_a.num_classes if pairwise_adapter_a else None),
     ]:
-        _ax = axs[key]
-        df = plot_df[plot_df["metric"].eq(metric)]
-        order = sorted(df["state_label"].dropna().unique())
+        occupancy_accuracy_axis = occupancy_accuracy_axes[panel_key]
+        panel_df = occupancy_accuracy_df[
+            occupancy_accuracy_df["metric"].eq(metric_name)
+        ]
+        state_order = sorted(panel_df["state_label"].dropna().unique())
 
-        if chance is not None:
-            _ax.axhline(chance, ls="--", lw=1, c="gray")
+        if chance_level is not None:
+            occupancy_accuracy_axis.axhline(chance_level, ls="--", lw=1, c="gray")
 
         sns.boxplot(
-            data=df, x="state_label", y="value", hue="model_alias",
-            order=order, hue_order=models, palette=palette2,
-            width=.55, ax=_ax, **BOXPLOT_STLYE
+            data=panel_df, x="state_label", y="value", hue="model_alias",
+            order=state_order, hue_order=pairwise_model_order,
+            palette=pairwise_model_palette, width=.55,
+            ax=occupancy_accuracy_axis, **BOXPLOT_STYLE,
         )
 
-        for i, state in enumerate(order):
-            wide = (
-                df[df["state_label"].eq(state)]
+        for state_index, state_label in enumerate(state_order):
+            paired_state_df = (
+                panel_df[panel_df["state_label"].eq(state_label)]
                 .pivot(index="subject", columns="model_alias", values="value")
                 .dropna()
             )
-            for _, row in wide.iterrows():
-                _ax.plot([i - .2, i + .2], [row[models[0]], row[models[1]]], alpha = 0.15, color = "tab:gray")
+            for _, subject_values in paired_state_df.iterrows():
+                occupancy_accuracy_axis.plot(
+                    [state_index - .2, state_index + .2],
+                    [subject_values[pairwise_model_order[0]], subject_values[pairwise_model_order[1]]],
+                    alpha=0.15,
+                    color="tab:gray",
+                )
 
-            if len(wide) >= 2 and not np.allclose(wide[models[0]], wide[models[1]]):
-                p = ttest_rel(wide[models[0]], wide[models[1]], nan_policy="omit").pvalue
-                stars = "***" if p < .001 else "**" if p < .01 else "*" if p < .05 else "ns"
-                if stars:
-                    y = wide.max().max() + .05 * (ylim[1] - ylim[0])
-                    _ax.plot([i - .2, i + .2], [y, y], c="k", lw=1)
-                    _ax.text(i, y, stars, ha="center", va="bottom")
+            if len(paired_state_df) >= 2 and not np.allclose(
+                paired_state_df[pairwise_model_order[0]],
+                paired_state_df[pairwise_model_order[1]],
+            ):
+                p_value = ttest_rel(
+                    paired_state_df[pairwise_model_order[0]],
+                    paired_state_df[pairwise_model_order[1]],
+                    nan_policy="omit",
+                ).pvalue
+                stars = "***" if p_value < .001 else "**" if p_value < .01 else "*" if p_value < .05 else "ns"
+                annotation_y = paired_state_df.max().max() + .05 * (metric_ylim[1] - metric_ylim[0])
+                occupancy_accuracy_axis.plot(
+                    [state_index - .2, state_index + .2],
+                    [annotation_y, annotation_y], c="k", lw=1,
+                )
+                occupancy_accuracy_axis.text(
+                    state_index, annotation_y, stars, ha="center", va="bottom"
+                )
 
-        _ax.set(xlabel="", ylabel=metric, ylim=ylim)
-        _ax.tick_params(axis="x")
-        sns.despine(ax=_ax)
+        occupancy_accuracy_axis.set(xlabel="", ylabel=metric_name, ylim=metric_ylim)
+        sns.despine(ax=occupancy_accuracy_axis)
 
-    handles, labels = axs["occ"].get_legend_handles_labels()
-    for _ax in axs.values():
-        _ax.legend_.remove()
-    fig.legend(handles[:2], labels[:2], title="Model", loc="lower center", ncol=2, frameon=False)
-    fig.tight_layout(rect=(0, .12, 1, 1))
-
-    fig
+    occupancy_handles, occupancy_labels = occupancy_accuracy_axes["occ"].get_legend_handles_labels()
+    for panel_axis in occupancy_accuracy_axes.values():
+        panel_axis.legend_.remove()
+    fig_occupancy_accuracy.legend(
+        occupancy_handles[:2], occupancy_labels[:2], title="Model",
+        loc="lower center", ncol=2, frameon=False,
+    )
+    fig_occupancy_accuracy.tight_layout(rect=(0, .12, 1, 1))
+    fig_occupancy_accuracy
     return
 
 
 @app.cell
 def _(
+    PAIRWISE_PRETTY_NAMES,
     RT_METRIC_CANDIDATES,
     augment_behavior_metrics,
-    fig_size,
     mo,
-    n_shuffles,
-    np,
     pairwise_adapter_a,
     pairwise_adapter_b,
     pairwise_alias_a,
@@ -1981,204 +2104,279 @@ def _(
     pairwise_trial_df_a,
     pairwise_trial_df_b,
     pd,
+):
+    roc_trials_a = augment_behavior_metrics(pairwise_trial_df_a, pairwise_adapter_a)
+    roc_trials_b = augment_behavior_metrics(pairwise_trial_df_b, pairwise_adapter_b)
+    if not roc_trials_a.empty:
+        roc_trials_a = roc_trials_a.assign(
+            model_slot="A",
+            model_name=PAIRWISE_PRETTY_NAMES.get(pairwise_alias_a, pairwise_alias_a),
+        )
+    if not roc_trials_b.empty:
+        roc_trials_b = roc_trials_b.assign(
+            model_slot="B",
+            model_name=PAIRWISE_PRETTY_NAMES.get(pairwise_alias_b, pairwise_alias_b),
+        )
+    roc_trial_frames = [
+        trial_df for trial_df in [roc_trials_a, roc_trials_b] if not trial_df.empty
+    ]
+    mo.stop(
+        not roc_trial_frames,
+        mo.md("No pairwise trial data were available for behavioral ROC curves."),
+    )
+    roc_df = pd.concat(roc_trial_frames, ignore_index=True)
+
+    roc_state_column = next(
+        (
+            column
+            for column in ["state_label", "state_label_pred"]
+            if column in roc_df.columns
+        ),
+        None,
+    )
+    mo.stop(
+        roc_state_column is None,
+        mo.md("State labels are not available for pairwise behavioral ROC curves."),
+    )
+
+    roc_rt_column = next(
+        (column for column in RT_METRIC_CANDIDATES if column in roc_df.columns),
+        None,
+    )
+    roc_metric_specs = [
+        ("nLicks", "Licking (correct trials)", "Higher lick count")
+    ]
+    if roc_rt_column is not None:
+        roc_metric_specs.append((roc_rt_column, "RT", "Faster RT"))
+    roc_metric_specs.append(("ILI", "ILI", "Faster ILI"))
+    roc_metric_specs = [
+        metric_spec
+        for metric_spec in roc_metric_specs
+        if metric_spec[0] in roc_df.columns
+    ]
+    mo.stop(
+        not roc_metric_specs,
+        mo.md("No lick, RT, or ILI column was found for behavioral ROC curves."),
+    )
+    return roc_df, roc_metric_specs, roc_state_column
+
+
+@app.cell
+def _(np, pd):
+    def correct_trial_mask(trial_df):
+        """Return a mask selecting trials with a correct behavioral response."""
+        correct_column = next(
+            (
+                column
+                for column in ["correct_bool", "performance"]
+                if column in trial_df.columns
+            ),
+            None,
+        )
+        if correct_column is None:
+            raise ValueError(
+                "Lick ROC curves require a `correct_bool` or `performance` column."
+            )
+        return (
+            pd.to_numeric(trial_df[correct_column], errors="coerce")
+            .eq(1)
+            .fillna(False)
+            .to_numpy(bool)
+        )
+
+    def binary_engaged_target(labels):
+        """Return two length-N masks: Engaged targets and valid binary-state rows."""
+        label_text = pd.Series(labels, copy=False).astype(str).str.strip().str.lower()
+        positive = label_text.eq("engaged") | label_text.str.startswith("engaged ")
+        negative = label_text.eq("disengaged") | label_text.str.startswith("disengaged ")
+        return positive.to_numpy(bool), (positive | negative).to_numpy(bool)
+
+    def roc_curve(target, score):
+        """Return FPR, TPR, and AUC from two length-N target and score arrays."""
+        target = np.asarray(target, dtype=bool)
+        score = np.asarray(score, dtype=float)
+        finite_score = np.isfinite(score)
+        target = target[finite_score]
+        score = score[finite_score]
+        n_positive = int(target.sum())
+        n_negative = int((~target).sum())
+        if target.size == 0 or n_positive == 0 or n_negative == 0:
+            return None
+
+        score_order = np.argsort(-score, kind="mergesort")
+        sorted_target = target[score_order]
+        sorted_score = score[score_order]
+        threshold_indices = np.r_[
+            np.where(np.diff(sorted_score))[0],
+            sorted_target.size - 1,
+        ]
+        true_positives = np.cumsum(sorted_target)[threshold_indices]
+        false_positives = 1 + threshold_indices - true_positives
+        true_positive_rate = np.r_[0.0, true_positives / n_positive]
+        false_positive_rate = np.r_[0.0, false_positives / n_negative]
+        auc = float(
+            np.sum(
+                np.diff(false_positive_rate)
+                * (true_positive_rate[:-1] + true_positive_rate[1:])
+                / 2
+            )
+        )
+        return false_positive_rate, true_positive_rate, auc
+
+    return binary_engaged_target, correct_trial_mask, roc_curve
+
+
+@app.cell
+def _(
+    ROC_PALETTE,
+    binary_engaged_target,
+    correct_trial_mask,
+    mo,
+    pd,
     plt,
-    pretty_names,
+    roc_curve,
+    roc_df,
+    roc_metric_specs,
+    roc_state_column,
     save_plot,
     sns,
 ):
-    _df_a = augment_behavior_metrics(pairwise_trial_df_a, pairwise_adapter_a)
-    _df_b = augment_behavior_metrics(pairwise_trial_df_b, pairwise_adapter_b)
-    if not _df_a.empty:
-        _df_a = _df_a.assign(
-            model_slot="A", 
-            model_name=f"{pretty_names.get(pairwise_alias_a,pairwise_alias_a)}",
-        )
-    if not _df_b.empty:
-        _df_b = _df_b.assign(
-            model_slot="B",
-            model_name=f"{pretty_names.get(pairwise_alias_b,pairwise_alias_b)}",
-        )
-    _frames = [_df for _df in [_df_a, _df_b] if not _df.empty]
-    mo.stop(not _frames, mo.md("No pairwise trial data were available for behavioral ROC curves."))
-    roc_df = pd.concat(_frames, ignore_index=True)
-
-    state_col = next(
-        (_col for _col in ["state_label", "state_label_pred"] if _col in roc_df.columns),
-        None,
-    )
-    mo.stop(state_col is None, mo.md("State labels are not available for pairwise behavioral ROC curves."))
-
-    _rt_col = next(
-        (_col for _col in RT_METRIC_CANDIDATES if _col in roc_df.columns),
-        None,
-    )
-    metric_specs = [("nLicks", "Licking", "Higher lick count")]
-    if _rt_col is not None:
-        metric_specs.append((_rt_col, "RT", "Faster RT"))
-    metric_specs.append(("ILI", "ILI", "Faster ILI"))
-    metric_specs = [_spec for _spec in metric_specs if _spec[0] in roc_df.columns]
-    mo.stop(not metric_specs, mo.md("No `nLicks` or RT column was found for pairwise behavioral ROC curves."))
-
-    def binary_engaged_target(_labels):
-        _label_text = pd.Series(_labels, copy=False).astype(str).str.strip().str.lower()
-        _positive = _label_text.eq("engaged") | _label_text.str.startswith("engaged ")
-        _negative = _label_text.eq("disengaged") | _label_text.str.startswith("disengaged ")
-        return _positive.to_numpy(dtype=bool), (_positive | _negative).to_numpy(dtype=bool)
-
-    def roc_curve(_target, _score):
-        _target = np.asarray(_target, dtype=bool)
-        _score = np.asarray(_score, dtype=float)
-        _valid = np.isfinite(_score)
-        _target = _target[_valid]
-        _score = _score[_valid]
-        _n_pos = int(_target.sum())
-        _n_neg = int((~_target).sum())
-        if _target.size == 0 or _n_pos == 0 or _n_neg == 0:
-            return None
-        _order = np.argsort(-_score, kind="mergesort")
-        _target_sorted = _target[_order]
-        _score_sorted = _score[_order]
-        _threshold_idxs = np.r_[np.where(np.diff(_score_sorted))[0], _target_sorted.size - 1]
-        _tps = np.cumsum(_target_sorted)[_threshold_idxs]
-        _fps = (1 + _threshold_idxs) - _tps
-        _tpr = np.r_[0.0, _tps / _n_pos]
-        _fpr = np.r_[0.0, _fps / _n_neg]
-        _auc = float(np.sum(np.diff(_fpr) * (_tpr[:-1] + _tpr[1:]) / 2.0))
-        return _fpr, _tpr, _auc
-
-    # def _shuffled_auc(_target, _score, _rng, n_shuffles=200):
-        _aucs = []
-        for _ in range(n_shuffles):
-            _result = roc_curve(_rng.permutation(_target), _score)
-            if _result is not None:
-                _aucs.append(_result[2])
-        return float(np.mean(_aucs)) if _aucs else np.nan
-
-    _palette = {
-        "A": "tab:blue",
-        "B": "tab:orange",
-    }
-    _rng = np.random.default_rng(0)
-    _fig_roc, _axes = plt.subplots(
+    fig_pooled_roc, pooled_roc_axes = plt.subplots(
         1,
-        len(metric_specs),
-        figsize=fig_size(1,2),
-
+        len(roc_metric_specs),
+        # figsize=fig_size(1, len(roc_metric_specs)),
+        figsize = (9,3),
+        squeeze=False,
     )
-    _plotted = False
-    for _ax, (_metric_col, _title, _direction_label) in zip(_axes.ravel(), metric_specs, strict=False):
-        for _slot, _slot_df in roc_df.groupby("model_slot", sort=True):
-            _target, _valid_labels = binary_engaged_target(_slot_df[state_col])
-            _score = pd.to_numeric(_slot_df[_metric_col], errors="coerce").to_numpy(dtype=float)
-            if _metric_col != "nLicks":
-                _score = -_score
-            _target = _target[_valid_labels]
-            _score = _score[_valid_labels]
-            _result = roc_curve(_target, _score)
-            if _result is None:
-                continue
-            _fpr, _tpr, _auc = _result
-            _name = str(_slot_df["model_name"].iloc[0])
-            _ax.plot(
-                _fpr,
-                _tpr,
-                color=_palette.get(_slot, "tab:gray"),
-                lw=2,
-                label=f"{_name} (AUC={_auc:.3f})",
+    pooled_roc_plotted = False
+    for pooled_roc_axis, (roc_metric, roc_title, roc_direction) in zip(
+        pooled_roc_axes.ravel(), roc_metric_specs, strict=False
+    ):
+        for roc_model_slot, roc_slot_df in roc_df.groupby("model_slot", sort=True):
+            roc_target, valid_state_labels = binary_engaged_target(
+                roc_slot_df[roc_state_column]
             )
-            _plotted = True
-        _ax.plot([0, 1], [0, 1], color="tab:gray", lw=1, ls="--")
-        _ax.set_title(_title)
-        _ax.set_xlabel("False positive rate")
-        _ax.set_ylabel("True positive rate")
-        _ax.set_xlim(0, 1)
-        _ax.set_ylim(0, 1)
-        _ax.legend(frameon=False, loc="lower right")
-        sns.despine(ax=_ax)
+            roc_score = pd.to_numeric(
+                roc_slot_df[roc_metric], errors="coerce"
+            ).to_numpy(float)
+            valid_roc_trials = valid_state_labels.copy()
+            if roc_metric == "nLicks":
+                valid_roc_trials &= correct_trial_mask(roc_slot_df)
+            if roc_metric != "nLicks":
+                roc_score = -roc_score
+            roc_result = roc_curve(
+                roc_target[valid_roc_trials], roc_score[valid_roc_trials]
+            )
+            if roc_result is None:
+                continue
+            false_positive_rate, true_positive_rate, pooled_auc = roc_result
+            roc_model_name = str(roc_slot_df["model_name"].iloc[0])
+            pooled_roc_axis.plot(
+                false_positive_rate,
+                true_positive_rate,
+                color=ROC_PALETTE[roc_model_slot],
+                lw=2,
+                label=f"{roc_model_name} (AUC={pooled_auc:.3f})",
+            )
+            pooled_roc_plotted = True
 
-    mo.stop(not _plotted, mo.md("Pairwise behavioral ROC curves require Engaged and Disengaged trials."))
-    mo.vstack(
-        [
-            mo.md("#### Pairwise behavioral ROC by state"),
-            _fig_roc,
-            save_plot(
-                _fig_roc,
-                "pairwise behavioral ROC by state",
-                stem="pairwise_state_behavioral_roc",
-            ),
-        ],
-        align="center",
+        pooled_roc_axis.plot([0, 1], [0, 1], color="tab:gray", lw=1, ls="--")
+        pooled_roc_axis.set(
+            title=roc_title,
+            xlabel="False positive rate",
+            ylabel="True positive rate",
+            xlim=(0, 1),
+            ylim=(0, 1),
+        )
+        pooled_roc_axis.legend(frameon=False, loc="lower right")
+        sns.despine(ax=pooled_roc_axis)
+
+    mo.stop(
+        not pooled_roc_plotted,
+        mo.md("Behavioral ROC curves require Engaged and Disengaged trials."),
     )
-    return binary_engaged_target, metric_specs, roc_curve, roc_df, state_col
+    mo.vstack([
+        mo.md("#### Pairwise behavioral ROC by state"),
+        fig_pooled_roc,
+        save_plot(
+            fig_pooled_roc,
+            "pairwise behavioral ROC by state",
+            stem="pairwise_state_behavioral_roc",
+        ),
+    ], align="center")
+    return
 
 
 @app.cell
 def _(
     binary_engaged_target,
-    metric_specs,
+    correct_trial_mask,
     mo,
     np,
     pd,
     roc_curve,
     roc_df,
-    state_col,
+    roc_metric_specs,
+    roc_state_column,
 ):
-    _subject_col = "subject"
-    mo.stop(_subject_col not in roc_df.columns, mo.md("No subject column was found."))
+    roc_fpr_grid = np.linspace(0, 1, 101)
+    subject_roc_curve_rows = []
+    subject_auc_rows = []
 
-    _fpr_grid = np.linspace(0, 1, 101)
+    for (subject_roc_slot, roc_subject), subject_roc_df in roc_df.groupby(
+        ["model_slot", "subject"], sort=True
+    ):
+        for subject_roc_metric, subject_roc_title, subject_roc_direction in roc_metric_specs:
+            subject_target, valid_subject_labels = binary_engaged_target(
+                subject_roc_df[roc_state_column]
+            )
+            subject_score = pd.to_numeric(
+                subject_roc_df[subject_roc_metric], errors="coerce"
+            ).to_numpy(float)
+            valid_subject_trials = valid_subject_labels.copy()
+            if subject_roc_metric == "nLicks":
+                valid_subject_trials &= correct_trial_mask(subject_roc_df)
+            if subject_roc_metric != "nLicks":
+                subject_score = -subject_score
 
-    _curve_rows = []
-    _auc_rows = []
-
-    for (_slot, _subject), _subj_df in roc_df.groupby(["model_slot", _subject_col], sort=True):
-        for _metric_col, _title, _direction_label in metric_specs:
-            _target, _valid_labels = binary_engaged_target(_subj_df[state_col])
-            _score = pd.to_numeric(_subj_df[_metric_col], errors="coerce").to_numpy(dtype=float)
-
-            if _metric_col != "nLicks":
-                _score = -_score
-
-            _target = _target[_valid_labels]
-            _score = _score[_valid_labels]
-
-            _result = roc_curve(_target, _score)
-            if _result is None:
+            subject_roc_result = roc_curve(
+                subject_target[valid_subject_trials],
+                subject_score[valid_subject_trials],
+            )
+            if subject_roc_result is None:
                 continue
 
-            _fpr, _tpr, _auc = _result
-            _interp_tpr = np.interp(_fpr_grid, _fpr, _tpr)
-            _interp_tpr[0] = 0.0
-            _interp_tpr[-1] = 1.0
+            subject_fpr, subject_tpr, subject_auc = subject_roc_result
+            interpolated_tpr = np.interp(roc_fpr_grid, subject_fpr, subject_tpr)
+            interpolated_tpr[[0, -1]] = [0.0, 1.0]
+            subject_model_name = str(subject_roc_df["model_name"].iloc[0])
 
-            _name = str(_subj_df["model_name"].iloc[0])
-
-            _auc_rows.append(
+            subject_auc_rows.append(
                 {
-                    "model_slot": _slot,
-                    "model_name": _name,
-                    "subject": _subject,
-                    "metric": _metric_col,
-                    "metric_label": _title,
-                    "auc": _auc,
+                    "model_slot": subject_roc_slot,
+                    "model_name": subject_model_name,
+                    "subject": roc_subject,
+                    "metric": subject_roc_metric,
+                    "metric_label": subject_roc_title,
+                    "auc": subject_auc,
                 }
             )
 
-            for _fpr_value, _tpr_value in zip(_fpr_grid, _interp_tpr):
-                _curve_rows.append(
+            for fpr_value, tpr_value in zip(roc_fpr_grid, interpolated_tpr):
+                subject_roc_curve_rows.append(
                     {
-                        "model_slot": _slot,
-                        "model_name": _name,
-                        "subject": _subject,
-                        "metric": _metric_col,
-                        "metric_label": _title,
-                        "fpr": _fpr_value,
-                        "tpr": _tpr_value,
+                        "model_slot": subject_roc_slot,
+                        "model_name": subject_model_name,
+                        "subject": roc_subject,
+                        "metric": subject_roc_metric,
+                        "metric_label": subject_roc_title,
+                        "fpr": fpr_value,
+                        "tpr": tpr_value,
                     }
                 )
 
-    auc_df = pd.DataFrame(_auc_rows)
-    curve_df = pd.DataFrame(_curve_rows)
+    auc_df = pd.DataFrame(subject_auc_rows)
+    curve_df = pd.DataFrame(subject_roc_curve_rows)
 
     mo.stop(
         auc_df.empty or curve_df.empty,
@@ -2189,39 +2387,36 @@ def _(
 
 @app.cell
 def _(
+    Annotator,
     BOXPLOT_STYLE,
+    ROC_PALETTE,
     auc_df,
     curve_df,
     fig_size,
-    metric_specs,
     mo,
     pairwise_alias_a,
     pairwise_alias_b,
     plt,
+    roc_metric_specs,
     save_plot,
     sns,
 ):
-    from statannotations.Annotator import Annotator
-    _fig_roc, _axes_roc = plt.subplots(
+    fig_subject_roc, subject_roc_axes = plt.subplots(
         1,
-        len(metric_specs),
-        figsize=fig_size(1, len(metric_specs)),
+        len(roc_metric_specs),
+        figsize=fig_size(1, len(roc_metric_specs)),
         squeeze=False,
         layout="constrained",
     )
-    _palette = {
-        "A": "tab:blue",
-        "B": "tab:orange",
-    }
-    for _ax, (_metric_col, _title, _direction_label) in zip(
-        _axes_roc.ravel(), metric_specs, strict=False
+    for subject_roc_axis, (subject_plot_metric, subject_plot_title, subject_plot_direction) in zip(
+        subject_roc_axes.ravel(), roc_metric_specs, strict=False
     ):
-        _metric_curve_df = curve_df[curve_df["metric"].eq(_metric_col)]
-        _metric_auc_df = auc_df[auc_df["metric"].eq(_metric_col)]
+        metric_curve_df = curve_df[curve_df["metric"].eq(subject_plot_metric)]
+        metric_auc_df = auc_df[auc_df["metric"].eq(subject_plot_metric)]
 
-        for _slot, _slot_curve_df in _metric_curve_df.groupby("model_slot", sort=True):
-            _summary_df = (
-                _slot_curve_df
+        for subject_plot_slot, slot_curve_df in metric_curve_df.groupby("model_slot", sort=True):
+            roc_summary_df = (
+                slot_curve_df
                 .groupby("fpr", as_index=False)
                 .agg(
                     mean_tpr=("tpr", "mean"),
@@ -2229,89 +2424,92 @@ def _(
                 )
             )
 
-            _slot_auc_df = _metric_auc_df[_metric_auc_df["model_slot"].eq(_slot)]
-            _name = str(_slot_auc_df["model_name"].iloc[0])
-            _mean_auc = _slot_auc_df["auc"].mean()
-            _sem_auc = _slot_auc_df["auc"].sem()
+            slot_auc_df = metric_auc_df[metric_auc_df["model_slot"].eq(subject_plot_slot)]
+            subject_plot_model_name = str(slot_auc_df["model_name"].iloc[0])
+            mean_auc = slot_auc_df["auc"].mean()
+            sem_auc = slot_auc_df["auc"].sem()
 
-            _color = _palette.get(_slot, "tab:gray")
+            subject_plot_color = ROC_PALETTE.get(subject_plot_slot, "tab:gray")
 
-            _ax.plot(
-                _summary_df["fpr"],
-                _summary_df["mean_tpr"],
-                color=_color,
+            subject_roc_axis.plot(
+                roc_summary_df["fpr"],
+                roc_summary_df["mean_tpr"],
+                color=subject_plot_color,
                 lw=2,
-                label=f"{_name} AUC={_mean_auc:.3f} ± {_sem_auc:.3f}",
+                label=f"{subject_plot_model_name} AUC={mean_auc:.3f} ± {sem_auc:.3f}",
             )
 
-            _ax.fill_between(
-                _summary_df["fpr"],
-                _summary_df["mean_tpr"] - _summary_df["sem_tpr"].fillna(0),
-                _summary_df["mean_tpr"] + _summary_df["sem_tpr"].fillna(0),
-                color=_color,
+            subject_roc_axis.fill_between(
+                roc_summary_df["fpr"],
+                roc_summary_df["mean_tpr"] - roc_summary_df["sem_tpr"].fillna(0),
+                roc_summary_df["mean_tpr"] + roc_summary_df["sem_tpr"].fillna(0),
+                color=subject_plot_color,
                 alpha=0.2,
                 linewidth=0,
             )
 
-        _ax.plot([0, 1], [0, 1], color="tab:gray", lw=1, ls="--")
-        _ax.set_title(_title)
-        _ax.set_xlabel("False positive rate")
-        _ax.set_ylabel("True positive rate")
-        _ax.set_xlim(0, 1)
-        _ax.set_ylim(0, 1)
-        _ax.legend(frameon=False, loc="lower right")
-        sns.despine(ax=_ax)
+        subject_roc_axis.plot([0, 1], [0, 1], color="tab:gray", lw=1, ls="--")
+        subject_roc_axis.set(
+            title=subject_plot_title,
+            xlabel="False positive rate",
+            ylabel="True positive rate",
+            xlim=(0, 1),
+            ylim=(0, 1),
+        )
+        subject_roc_axis.legend(frameon=False, loc="lower right")
+        sns.despine(ax=subject_roc_axis)
 
-    _fig_auc, _axes_auc = plt.subplots(
+    fig_subject_auc, subject_auc_axes = plt.subplots(
         1,
-        len(metric_specs),
-        figsize=fig_size(1, len(metric_specs)),
+        len(roc_metric_specs),
+        figsize=fig_size(1, len(roc_metric_specs)),
         squeeze=False,
         layout="constrained",
     )
 
-    for _ax, (_metric_col, _title, _direction_label) in zip(
-        _axes_auc.ravel(), metric_specs, strict=False
+    for subject_auc_axis, (auc_metric, auc_title, auc_direction) in zip(
+        subject_auc_axes.ravel(), roc_metric_specs, strict=False
     ):
-        _metric_auc_df = auc_df[auc_df["metric"].eq(_metric_col)].copy()
+        auc_metric_df = auc_df[auc_df["metric"].eq(auc_metric)].copy()
+        auc_model_name_a = auc_metric_df[
+            auc_metric_df["model_slot"].eq("A")
+        ]["model_name"].iloc[0]
+        auc_model_name_b = auc_metric_df[
+            auc_metric_df["model_slot"].eq("B")
+        ]["model_name"].iloc[0]
+        auc_model_order = [auc_model_name_a, auc_model_name_b]
 
         sns.boxplot(
-            data=_metric_auc_df,
+            data=auc_metric_df,
             x="model_name",
             y="auc",
             hue="model_slot",
-            order=[
-                auc_df[auc_df["model_slot"].eq("A")]["model_name"].iloc[0],
-                auc_df[auc_df["model_slot"].eq("B")]["model_name"].iloc[0],
-            ],
+            order=auc_model_order,
             hue_order=["A", "B"],
-            palette=_palette,
-            ax=_ax,
-            zorder = 1,
-            **BOXPLOT_STYLE
+            palette=ROC_PALETTE,
+            ax=subject_auc_axis,
+            zorder=1,
+            **BOXPLOT_STYLE,
         )
 
         sns.stripplot(
-            data=_metric_auc_df,
+            data=auc_metric_df,
             x="model_name",
             y="auc",
             hue="model_slot",
-            order=[
-                auc_df[auc_df["model_slot"].eq("A")]["model_name"].iloc[0],
-                auc_df[auc_df["model_slot"].eq("B")]["model_name"].iloc[0],
-            ],
+            order=auc_model_order,
             hue_order=["A", "B"],
-            palette=_palette,
-            ax=_ax,
+            palette=ROC_PALETTE,
+            ax=subject_auc_axis,
             dodge=False,
             alpha=0.2,
             size=0,
             legend=False,
-            zorder = 0
+            zorder=0,
         )
 
-        _paired_auc_df = (
-            _metric_auc_df
+        paired_auc_df = (
+            auc_metric_df
             .pivot_table(
                 index="subject",
                 columns="model_slot",
@@ -2321,27 +2519,22 @@ def _(
             .dropna(subset=["A", "B"])
         )
 
-        _model_name_a = _metric_auc_df[_metric_auc_df["model_slot"].eq("A")]["model_name"].iloc[0]
-        _model_name_b = _metric_auc_df[_metric_auc_df["model_slot"].eq("B")]["model_name"].iloc[0]
-
-        for _subject, _row in _paired_auc_df.iterrows():
-            _ax.plot(
-                [_model_name_a, _model_name_b],
-                [_row["A"], _row["B"]],
+        for auc_subject, auc_subject_values in paired_auc_df.iterrows():
+            subject_auc_axis.plot(
+                auc_model_order,
+                [auc_subject_values["A"], auc_subject_values["B"]],
                 color="0.75",
                 linewidth=0.5,
                 zorder=0,
             )
 
-        _pairs = [(_model_name_a, _model_name_b)]
-
         Annotator(
-            _ax,
-            _pairs,
-            data=_metric_auc_df,
+            subject_auc_axis,
+            [(auc_model_name_a, auc_model_name_b)],
+            data=auc_metric_df,
             x="model_name",
             y="auc",
-            order=[_model_name_a, _model_name_b],
+            order=auc_model_order,
         ).configure(
             test="t-test_paired",
             text_format="star",
@@ -2349,29 +2542,30 @@ def _(
             verbose=False,
         ).apply_and_annotate()
 
-        _ax.axhline(0.5, color="tab:gray", lw=1, ls="--")
-        _ax.set_title(f"{_title} AUC by subject")
-        _ax.set_xlabel("")
-        _ax.set_ylabel("AUC")
-        _ax.set_ylim(0, 1)
-        sns.despine(ax=_ax)
-        _handles, _labels = _ax.get_legend_handles_labels()
-        if _handles:
-            _ax.legend_.remove()
+        subject_auc_axis.axhline(0.5, color="tab:gray", lw=1, ls="--")
+        subject_auc_axis.set(
+            title=f"{auc_title} AUC by subject",
+            xlabel="",
+            ylabel="AUC",
+            ylim=(0, 1),
+        )
+        sns.despine(ax=subject_auc_axis)
+        if subject_auc_axis.get_legend() is not None:
+            subject_auc_axis.legend_.remove()
     mo.vstack(
         [
             mo.md("#### Pairwise behavioral ROC by state, per subject"),
-            _fig_roc,
+            fig_subject_roc,
             mo.md("#### Subject-level AUC distributions"),
-            _fig_auc,
+            fig_subject_auc,
             mo.ui.table(auc_df, pagination=True),
             save_plot(
-                _fig_roc,
+                fig_subject_roc,
                 "pairwise behavioral ROC by state per subject",
                 stem="pairwise_state_behavioral_roc_by_subject",
             ),
             save_plot(
-                _fig_auc,
+                fig_subject_auc,
                 "pairwise behavioral ROC AUC by subject",
                 stem="pairwise_state_behavioral_roc_auc_by_subject",
             ),
@@ -2379,12 +2573,14 @@ def _(
         align="center",
     )
 
-    mo.vstack([_fig_auc, save_plot(_fig_auc, "AUC comparisom", stem=f"auc_comparison_{pairwise_alias_a}_{pairwise_alias_b}"),])
-    return
-
-
-@app.cell
-def _():
+    mo.vstack([
+        fig_subject_auc,
+        save_plot(
+            fig_subject_auc,
+            "AUC comparison",
+            stem=f"auc_comparison_{pairwise_alias_a}_{pairwise_alias_b}",
+        ),
+    ])
     return
 
 

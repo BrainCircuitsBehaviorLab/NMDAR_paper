@@ -5588,6 +5588,83 @@ def add_fixed_accuracy_repetition_band(
     return out
 
 
+def add_stationary_accuracy_band(
+    session_data: pd.DataFrame,
+    *,
+    z: float = 1.96,
+    prefix: str = "stationary_accuracy",
+) -> pd.DataFrame:
+    """Add rolling stimulus-conditioned accuracy and its analytical CI.
+
+    Each trial receives the empirical ``P(correct)`` for its stimulus
+    condition.  When available, ``level`` is included with stimulus side so
+    different stimulus strengths retain different stationary accuracies.  The
+    trial probabilities are then averaged over the same window as observed
+    running accuracy.
+    """
+
+    out = session_data.copy()
+    if out.empty or not {"stimulus", "correct"}.issubset(out.columns):
+        return out
+
+    correct = pd.to_numeric(out["correct"], errors="coerce")
+    if not correct.notna().any():
+        return out
+
+    condition_cols = ["stimulus"]
+    if "level" in out.columns and out["level"].notna().any():
+        condition_cols.append("level")
+
+    condition_data = out[condition_cols].copy()
+    condition_data["_correct"] = correct
+    condition_summary = (
+        condition_data
+        .groupby(condition_cols, observed=True, dropna=False)["_correct"]
+        .agg(["mean", "count"])
+        .rename(columns={"mean": "_stationary_pc", "count": "_stationary_n"})
+        .reset_index()
+    )
+    condition_summary["_stationary_sem"] = np.sqrt(
+        condition_summary["_stationary_pc"]
+        * (1.0 - condition_summary["_stationary_pc"])
+        / condition_summary["_stationary_n"]
+    )
+
+    trial_summary = (
+        out[condition_cols]
+        .merge(condition_summary, on=condition_cols, how="left", sort=False)
+    )
+    trial_probability = trial_summary["_stationary_pc"].astype(float)
+    if "accuracy_window_n" in out.columns:
+        window = int(pd.to_numeric(out["accuracy_window_n"], errors="coerce").max())
+    elif "repeat_window_n" in out.columns:
+        window = int(pd.to_numeric(out["repeat_window_n"], errors="coerce").max())
+    else:
+        window = len(out)
+    window = max(1, window)
+
+    rolling_n = trial_probability.rolling(window, min_periods=1).count()
+    expected = trial_probability.rolling(window, min_periods=1).mean()
+    rolling_variance = (
+        trial_probability.mul(1.0 - trial_probability)
+        .rolling(window, min_periods=1)
+        .sum()
+    )
+    sem = np.sqrt(rolling_variance) / rolling_n
+
+    out[f"{prefix}_trial_fraction"] = trial_probability.to_numpy(dtype=float)
+    out[f"{prefix}_fraction"] = expected.to_numpy(dtype=float)
+    out[f"{prefix}_low"] = np.clip(
+        (expected - (float(z) * sem)).to_numpy(dtype=float), 0.0, 1.0
+    )
+    out[f"{prefix}_high"] = np.clip(
+        (expected + (float(z) * sem)).to_numpy(dtype=float), 0.0, 1.0
+    )
+    out[f"{prefix}_n"] = rolling_n.to_numpy(dtype=float)
+    out[f"{prefix}_condition_n"] = trial_summary["_stationary_n"].to_numpy(dtype=float)
+    return out
+
+
 def repeat_probability_for_transition_chunks(
     repeat_probabilities: pd.DataFrame,
     *,

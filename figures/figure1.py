@@ -26,6 +26,10 @@ def _():
     from glmhmmt.tasks import get_adapter
     from glmhmmt.runtime import configure_paths
     from glmhmmt.tasks.fitted_regressors import FittedWeightRegressorSpec, mean_feature_weights_from_fit
+<<<<<<< HEAD
+=======
+    from src.plots.common import fig_size
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     from src.process.common import attach_signed_delay_columns
     from src.plots.common import plot_mean_over_data, psychometric_repeat, fig_size
 
@@ -51,7 +55,7 @@ def _():
 @app.cell
 def _(Path, fig_size, plt, sns):
     # Set style
-    sns.set_theme(style='ticks', context='notebook')
+    sns.set_theme(style='ticks', context='poster')
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     figsize = fig_size(n_cols=3)
     plt.rcParams["svg.fonttype"] = 'none'
@@ -173,7 +177,7 @@ def _(mo):
 def _(
     attach_signed_delay_columns,
     df_2AFC_delay,
-    figsize,
+    fig_size,
     path_panels,
     plot_mean_over_data,
     plt,
@@ -185,7 +189,7 @@ def _(
     df_2AFC_delay_signed["_signed_delay_plot"] = df_2AFC_delay_signed["_signed_delay_cat"].astype(str)
     df_2AFC_delay_signed = df_2AFC_delay_signed[df_2AFC_delay_signed["_signed_delay_plot"].isin(signed_delay_order)].copy()
 
-    plt.figure(figsize=figsize, constrained_layout=True)
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     p_right_2ADC = plt.gca()
 
     plot_mean_over_data(
@@ -219,7 +223,7 @@ def _(
     )
 
     plt.savefig(f'{path_panels}/p_right_2ADC.svg')
-    plt.savefig(f'{path_panels}/p_right_2ADC.png')
+    plt.savefig(f'{path_panels}/p_right_2ADC.pdf', transparent=True,)
     p_right_2ADC
     return
 
@@ -233,15 +237,15 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC_delay, figsize, path_panels, pl, plt, two_afc_delay_plots):
-    plt.figure(figsize=figsize, constrained_layout=True)
+def _(df_2AFC_delay, fig_size, path_panels, pl, plt, two_afc_delay_plots):
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     rb_2ADC = plt.gca()
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "NR2B"), ax = rb_2ADC, title='', color = "tab:pink")
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Saline"), ax = rb_2ADC, title='', color = "tab:gray")
     # two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Rest"), ax = rb_2ADC, title='', color = "k")
     plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/rb_2ADC.svg')
-    plt.savefig(f'{path_panels}/rb_2ADC.png')
+    plt.savefig(f'{path_panels}/rb_2ADC.pdf', transparent=True,)
     rb_2ADC
     return
 
@@ -327,11 +331,11 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC, figsize, path_panels, plot_mean_over_data, plt):
+def _(df_2AFC, fig_size, path_panels, plot_mean_over_data, plt):
     df_2AFC_p_right = df_2AFC.to_pandas().copy()
     df_2AFC_p_right["p_right"] = df_2AFC_p_right["Choice"].astype(float)
 
-    plt.figure(figsize=figsize, constrained_layout=True)
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     p_right_2AFC = plt.gca()
 
     plot_mean_over_data(
@@ -366,7 +370,7 @@ def _(df_2AFC, figsize, path_panels, plot_mean_over_data, plt):
     )
 
     plt.savefig(f'{path_panels}/p_right_2AFC.svg')
-    plt.savefig(f'{path_panels}/p_right_2AFC.png')
+    plt.savefig(f'{path_panels}/p_right_2AFC.pdf', transparent=True,)
     p_right_2AFC
     return
 
@@ -380,14 +384,14 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC, figsize, path_panels, pl, plt, two_afc_plots):
-    plt.figure(figsize=figsize, constrained_layout=True)
+def _(df_2AFC, fig_size, path_panels, pl, plt, two_afc_plots):
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     rb_2AFC = plt.gca()
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 0), ax=rb_2AFC, title="", color="tab:gray")
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 1), ax=rb_2AFC, title="", color="tab:pink")
     plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/rb_2AFC.svg')
-    plt.savefig(f'{path_panels}/rb_2AFC.png')
+    plt.savefig(f'{path_panels}/rb_2AFC.pdf', transparent=True,)
     rb_2AFC
     return
 

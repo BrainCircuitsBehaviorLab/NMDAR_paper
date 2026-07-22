@@ -51,6 +51,7 @@ def _():
     from src.process.common import (
         add_choice_lag_summary_regressor,
         add_fixed_accuracy_repetition_band,
+        add_stationary_accuracy_band,
         build_outcome_streak_plot_data,
         build_repetition_chunk_plot_data,
         build_transition_chunk_drug_plot_data,
@@ -59,7 +60,7 @@ def _():
         prepare_corrected_behavior_autocorrelograms)
     from src.plots.common import (
         animal_chunk_histogram,
-        boxplot_STYLE,
+        # boxplot_STYLE,
         build_repetition_variance_by_drug_task,
         build_session_repetition_data,
         build_session_trial_outcomes_data,
@@ -71,13 +72,14 @@ def _():
         two_afc_session_repeat_alternate_accuracy as build_two_afc_session_repeat_alternate_accuracy,
         two_afc_transition_chunk_lengths as build_two_afc_transition_chunk_lengths)
 
+
     return (
         Annotator,
         Path,
         add_choice_lag_summary_regressor,
         add_fixed_accuracy_repetition_band,
+        add_stationary_accuracy_band,
         animal_chunk_histogram,
-        boxplot_STYLE,
         build_outcome_streak_plot_data,
         build_repetition_chunk_plot_data,
         build_repetition_variance_by_drug_task,
@@ -123,6 +125,22 @@ def _(load_app_config, process_mcdr, process_two_adc, process_two_afc):
     return (prepare_predictions_df,)
 
 
+<<<<<<< HEAD
+=======
+@app.cell
+def _():
+    boxplot_STYLE = dict(
+        fill=False,
+        boxprops={"color": "0.5"},
+        whiskerprops={"color": "0.5"},
+        medianprops={"linewidth": 4},
+        showfliers=False,
+        showcaps=False,
+    )
+    return (boxplot_STYLE,)
+
+
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -133,9 +151,20 @@ def _(mo):
 
 @app.cell
 def _():
+<<<<<<< HEAD
     mount_figure = False
     format = "svg"
     return format, mount_figure
+=======
+    mount_figure = True
+    return (mount_figure,)
+
+
+@app.cell
+def _():
+    format = "pdf"
+    return (format,)
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
 
 
 @app.cell(hide_code=True)
@@ -176,7 +205,7 @@ def _(mo):
 
 @app.cell
 def _(Path, plt, sns):
-    sns.set_theme(style='ticks', context='notebook')
+    sns.set_theme(style='ticks', context='paper')
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = 'none'
     plt.rcParams['savefig.bbox'] = 'standard'
@@ -274,14 +303,21 @@ def _(mo):
 
 
 @app.cell
+def _(plot_dfs):
+    plot_dfs["2AFC"]
+    return
+
+
+@app.cell
 def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
                 ["a", "a", "b", "b"],
-                # ["single_sess_acc_2ADC", "single_sess_acc_2ADC", "single_sess_acc_2AFC", "single_sess_acc_2AFC"],
+                ["single_sess_acc_2ADC", "single_sess_acc_2ADC", "single_sess_acc_2AFC", "single_sess_acc_2AFC"],
                 # ["_running_legend", "_running_legend", "_running_legend", "_running_legend"],
-                ["hist_correct_2ADC", "hist_repeat_2ADC", "hist_correct_2AFC", "hist_repeat_2AFC"],
+                # ["hist_correct_2ADC", "hist_repeat_2ADC", "hist_correct_2AFC", "hist_repeat_2AFC"], 
+                ["boxplot_band_2ADC", "hist_repeat_2ADC", "boxplot_band_2AFC", "hist_repeat_2AFC"],
                 # ["a", "a", "b", "b"],
                 ["e", "f", "g", "h"],
                 ["i", "k", "j", "l"]
@@ -290,7 +326,7 @@ def _(fig_size, mount_figure, plt):
             ],
             figsize=fig_size(1,0.8),
             constrained_layout=True,
-            gridspec_kw={"height_ratios": [1.1, 1, 1, 1]},
+            # gridspec_kw={"height_ratios": [1.1, 1, 1, 1]},
         )
         # fig.set_constrained_layout_pads(
         #         w_pad=0.01,
@@ -384,10 +420,10 @@ def _(
     path_panels,
     plt,
 ):
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd["i"]
     ax_autocorrelograms_2ADC_outcome.clear()
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure else axd["k"]
     ax_autocorrelograms_2ADC_repetition.clear()
 
@@ -409,7 +445,7 @@ def _(
             yerr=_data_sub.get("autocorr_sem"),
             fmt="o",
             capsize=0,
-            ms = 3,
+            # ms = 3,
             color=_colors["data"],
             ecolor=_colors["data"],
             label="Data",
@@ -428,7 +464,7 @@ def _(
         _ax.set_title("Outcomes" if _signal == "Outcome" else "Repetitions")
         _ax.set_xlabel("Lag")
         _ax.set_ylabel("Autocorrelation")
-        _ax.set_xlim(0,20)
+        _ax.set_xlim(0,20.5)
 
         _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
 
@@ -476,10 +512,10 @@ def _(
     path_panels,
     plt,
 ):
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd["j"]
     ax_autocorrelograms_2AFC_outcome.clear()
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure else axd["l"]
     ax_autocorrelograms_2AFC_repetition.clear()
 
@@ -500,7 +536,7 @@ def _(
             yerr=_data_sub.get("autocorr_sem"),
             fmt="o",
             capsize=0,
-            ms=3,
+            # ms=3,
             color=_colors["data"],
             ecolor=_colors["data"],
             label="Data",
@@ -518,7 +554,7 @@ def _(
         _ax.set_title("Outcomes" if _signal == "Outcome" else "Repetitions")
         _ax.set_xlabel("Lag")
         _ax.set_ylabel("Autocorrelation")
-        _ax.set_xlim(0,20)
+        _ax.set_xlim(0,20.5)
 
         _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
 
@@ -649,7 +685,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(3), constrained_layout=True)
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     prev_choices_2ADC = plt.gca() if not mount_figure else axd["f"]
     prev_choices_2ADC.clear()
 
@@ -667,6 +703,7 @@ def _(
     )
     prev_choices_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
     # prev_choices_2ADC.set_title("2ADC")
+    prev_choices_2ADC.set_title("Prev. Choices")
     prev_choices_2ADC.set_ylabel("Weight")
     prev_choices_2ADC.set_xlabel("Lag")
 
@@ -709,7 +746,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(3), constrained_layout=True)
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     stim_2ADC = plt.gca() if not mount_figure else axd["e"]
     stim_2ADC.clear()
 
@@ -733,6 +770,7 @@ def _(
     )
     stim_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
     stim_2ADC.set_xlabel("")
+    stim_2ADC.set_title("Stimulus")
     stim_2ADC.set_ylabel("Weight")
     stim_2ADC.set_xlabel("Delay")
     stim_2ADC.set_xticklabels([10 ,3,1, 0.1])
@@ -773,7 +811,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(3), constrained_layout=True)
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     prev_choices_2AFC = plt.gca() if not mount_figure else axd["h"]
     prev_choices_2AFC.clear()
 
@@ -797,6 +835,7 @@ def _(
     _major_pos = [i for i in range(len(_order)) if (i + 1) % 5 == 0 or (i + 1) == 1]
 
     _minor_pos = [i for i in range(len(_order)) if i not in _major_pos]
+    prev_choices_2AFC.set_title("Prev. Choices")
     prev_choices_2AFC.set_xticks(_major_pos)
     prev_choices_2AFC.set_xticklabels([str(i + 1) for i in _major_pos])
     prev_choices_2AFC.set_xticks(_minor_pos, minor=True)
@@ -830,7 +869,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(3), constrained_layout=True)
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     stim_2AFC = plt.gca() if not mount_figure else axd["g"]
     stim_2AFC.clear()
 
@@ -848,6 +887,7 @@ def _(
     )
     stim_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
     # stim_2AFC.set_title("2AFC")
+    stim_2AFC.set_title("Stimulus")
     stim_2AFC.set_ylabel("Weight")
     stim_2AFC.set_xlabel("ILD")
     stim_2AFC.set_xticklabels([2,4,8, 70])
@@ -886,7 +926,7 @@ def _(
     sns,
     weight_dfs,
 ):
-    plt.figure(figsize=fig_size(3), constrained_layout=True)
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     prev_choices_MCDR = plt.gca()
 
     # Filter to just have lagged choices
@@ -1042,6 +1082,558 @@ def _(fig_size, format, path_panels, plot_dfs, plots_by_task):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## P(right) by action trace and stimulus
+    """)
+    return
+
+
+@app.cell
+def _(pl, plot_dfs):
+    _action_col = "choice_lag_param" if "choice_lag_param" in plot_dfs["2AFC_delay"].columns else "choice_lag_one_hot_sum"
+    action_trace_order_2ADC = ["A Q1", "A Q2", "A Q3", "A Q4"]
+    _stim_side = pl.col("stimulus").cast(pl.Float64, strict=False)
+    _delay = pl.col("delay").cast(pl.Float64, strict=False)
+
+    binned_df_2ADC = (
+        plot_dfs["2AFC_delay"]
+        .with_columns(
+            pl.col(_action_col).cast(pl.Float64, strict=False).alias("_action_trace"),
+            pl.when(_stim_side == 0.0)
+            .then(-_delay)
+            .when(_stim_side == 1.0)
+            .then(_delay)
+            .when(_stim_side < 0.0)
+            .then(-_delay)
+            .when(_stim_side > 0.0)
+            .then(_delay)
+            .otherwise(None)
+            .alias("_stimulus"),
+            pl.when(pl.col("response").cast(pl.Float64, strict=False).is_in([-1.0, 1.0]))
+            .then((pl.col("response").cast(pl.Float64, strict=False) > 0.0).cast(pl.Float64))
+            .otherwise(pl.col("response").cast(pl.Float64, strict=False))
+            .alias("_data_p_right"),
+            pl.col("pR").cast(pl.Float64, strict=False).alias("_model_p_right"),
+        )
+        .filter(
+            pl.col("_action_trace").is_not_null(),
+            pl.col("_stimulus").is_not_null(),
+            pl.col("_data_p_right").is_not_null(),
+            pl.col("_model_p_right").is_not_null(),
+        )
+    )
+    stim_values_2ADC = sorted(binned_df_2ADC["_stimulus"].unique().to_list())
+    stim_order_2ADC = (
+        sorted([x for x in stim_values_2ADC if x < 0], key=lambda x: abs(x))
+        + sorted([x for x in stim_values_2ADC if x == 0])
+        + sorted([x for x in stim_values_2ADC if x > 0], key=lambda x: abs(x), reverse=True)
+    )
+    stim_pos_2ADC = {value: idx for idx, value in enumerate(stim_order_2ADC)}
+    stim_labels_2ADC = {value: f"{value:g}" for value in stim_order_2ADC}
+    stim_labels_map_2ADC = {float(k): v for k, v in stim_labels_2ADC.items()}
+    stim_pos_map_2ADC = {float(k): i for i, k in enumerate(stim_order_2ADC)}
+    return (
+        action_trace_order_2ADC,
+        binned_df_2ADC,
+        stim_labels_2ADC,
+        stim_labels_map_2ADC,
+        stim_order_2ADC,
+        stim_pos_map_2ADC,
+    )
+
+
+@app.cell
+def _(
+    action_trace_order_2ADC,
+    binned_df_2ADC,
+    fig_size,
+    format,
+    path_panels,
+    pl,
+    plt,
+    sns,
+    stim_labels_2ADC,
+    stim_labels_map_2ADC,
+    stim_order_2ADC,
+    stim_pos_map_2ADC,
+):
+    delay_categories = [stim_labels_2ADC[x] for x in stim_order_2ADC]
+
+    _stim_plot_df = (
+        binned_df_2ADC.with_columns(
+            pl.col("_action_trace").qcut(4, labels=action_trace_order_2ADC, allow_duplicates=True).alias("Action trace"),
+            pl.col("_stimulus").replace_strict(stim_pos_map_2ADC).alias("Delay position"),
+            pl.col("_stimulus").replace_strict(stim_labels_map_2ADC).cast(pl.Enum(delay_categories)).alias("Delay"),
+        )
+        .group_by(["subject", "_stimulus", "Delay position", "Delay", "Action trace"])
+        .agg(
+            pl.mean("_data_p_right").alias("Data"),
+            pl.mean("_model_p_right").alias("Model"),
+        )
+    )
+
+    _stim_model_mean = (
+        _stim_plot_df.group_by(["Delay position", "Delay", "Action trace"])
+        .agg(pl.mean("Model").alias("Model"))
+        .sort(["Delay position", "Action trace"])
+    )
+
+    _stim_data_mean = (
+        _stim_plot_df.group_by(["Delay position", "Delay", "Action trace"])
+        .agg(pl.mean("Data").alias("Data"))
+        .sort(["Delay position", "Action trace"])
+    )
+
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
+    pc_action_2ADC = plt.gca()
+    _at_palette = dict(zip(action_trace_order_2ADC, sns.color_palette("viridis", len(action_trace_order_2ADC)), strict=False))
+
+    sns.lineplot(
+        data=_stim_model_mean,
+        x="Delay position",
+        y="Model",
+        hue="Action trace",
+        hue_order=action_trace_order_2ADC,
+        palette=_at_palette,
+        errorbar=None,
+        ax=pc_action_2ADC,
+    )
+    sns.scatterplot(
+        data=_stim_data_mean,
+        x="Delay position",
+        y="Data",
+        hue="Action trace",
+        hue_order=action_trace_order_2ADC,
+        palette=_at_palette,
+        legend=False,
+        ax=pc_action_2ADC,
+    )
+    pc_action_2ADC.set_title("2ADC")
+    pc_action_2ADC.set_xlabel("Delay")
+    pc_action_2ADC.set_ylabel("P(right)")
+    pc_action_2ADC.set_xticks(range(len(stim_order_2ADC)))
+    pc_action_2ADC.set_xticklabels([stim_labels_2ADC[x] for x in stim_order_2ADC])
+    pc_action_2ADC.set_ylim(0, 1)
+    pc_action_2ADC.legend(frameon=False)
+
+    plt.savefig((path_panels / "2ADC_p_right_by_action_trace").with_suffix(f".{format}"))
+    pc_action_2ADC
+    return
+
+
+@app.cell
+def _(
+    binned_df_2ADC,
+    fig_size,
+    format,
+    path_panels,
+    pl,
+    plt,
+    sns,
+    stim_labels_2ADC,
+    stim_labels_map_2ADC,
+    stim_order_2ADC,
+):
+    _stim_hue_order = [stim_labels_2ADC[x] for x in stim_order_2ADC]
+    _stim_palette = dict(zip(_stim_hue_order, sns.color_palette("RdBu", len(_stim_hue_order)), strict=False))
+
+    _action_centers = (
+        binned_df_2ADC
+        .with_columns(pl.col("_action_trace").qcut(10, allow_duplicates=True).alias("_action_bin"))
+        .group_by("_action_bin")
+        .agg(pl.median("_action_trace").alias("Action trace"))
+    )
+    _action_plot_df = (
+        binned_df_2ADC
+        .with_columns(
+            pl.col("_action_trace").qcut(10, allow_duplicates=True).alias("_action_bin"),
+            pl.col("_stimulus").replace_strict(stim_labels_map_2ADC).cast(pl.Enum(_stim_hue_order)).alias("Delay"),
+        )
+        .join(_action_centers, on="_action_bin")
+        .group_by(["subject", "_stimulus", "Delay", "_action_bin", "Action trace"])
+        .agg(
+            pl.mean("_data_p_right").alias("Data"),
+            pl.mean("_model_p_right").alias("Model"),
+        )
+    )
+
+    _action_model_mean = (
+        _action_plot_df.group_by(["Action trace", "Delay"])
+        .agg(pl.mean("Model").alias("Model"))
+        .sort(["Action trace", "Delay"])
+    )
+
+    _action_data_mean = (
+        _action_plot_df.group_by(["Action trace", "Delay"])
+        .agg(pl.mean("Data").alias("Data"))
+        .sort(["Action trace", "Delay"])
+    )
+
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
+    pc_stim_2ADC = plt.gca()
+
+    sns.lineplot(
+        data=_action_model_mean,
+        x="Action trace",
+        y="Model",
+        hue="Delay",
+        hue_order=_stim_hue_order,
+        palette=_stim_palette,
+        errorbar=None,
+        ax=pc_stim_2ADC,
+    )
+    sns.scatterplot(
+        data=_action_data_mean,
+        x="Action trace",
+        y="Data",
+        hue="Delay",
+        hue_order=_stim_hue_order,
+        palette=_stim_palette,
+        legend=False,
+        ax=pc_stim_2ADC,
+    )
+    pc_stim_2ADC.set_title("2ADC")
+    pc_stim_2ADC.set_ylabel("P(right)")
+    pc_stim_2ADC.set_ylim(0, 1)
+    pc_stim_2ADC.legend(frameon=False)
+    plt.savefig((path_panels / "2ADC_p_right_by_delay").with_suffix(f".{format}"))
+    pc_stim_2ADC
+    return
+
+
+@app.cell
+def _(pl, plot_dfs):
+    _action_col = "choice_lag_param" if "choice_lag_param" in plot_dfs["2AFC"].columns else "choice_lag_one_hot_sum"
+    action_trace_order = ["A Q1", "A Q2", "A Q3", "A Q4"]
+
+    binned_df_2AFC = (
+        plot_dfs["2AFC"]
+        .with_columns(
+            pl.col(_action_col).cast(pl.Float64, strict=False).alias("_action_trace"),
+            pl.col("ILD").cast(pl.Float64, strict=False).alias("_stimulus"),
+            pl.when(pl.col("response").cast(pl.Float64, strict=False).is_in([-1.0, 1.0]))
+            .then((pl.col("response").cast(pl.Float64, strict=False) > 0.0).cast(pl.Float64))
+            .otherwise(pl.col("response").cast(pl.Float64, strict=False))
+            .alias("_data_p_right"),
+            pl.col("pR").cast(pl.Float64, strict=False).alias("_model_p_right"),
+        )
+        .filter(
+            pl.col("_action_trace").is_not_null(),
+            pl.col("_stimulus").is_not_null(),
+            pl.col("_data_p_right").is_not_null(),
+            pl.col("_model_p_right").is_not_null(),
+        )
+    )
+    stim_values_2AFC = sorted(binned_df_2AFC["_stimulus"].unique().to_list())
+    stim_order_2AFC = sorted(stim_values_2AFC)
+    stim_pos_2AFC = {value: idx for idx, value in enumerate(stim_order_2AFC)}
+    stim_labels_2AFC = {value: f"{value:g}" for value in stim_order_2AFC}
+    stim_labels_map_2AFC = {float(k): v for k, v in stim_labels_2AFC.items()}
+    stim_pos_map_2AFC = {float(k): i for i, k in enumerate(stim_order_2AFC)}
+    return (
+        action_trace_order,
+        binned_df_2AFC,
+        stim_labels_2AFC,
+        stim_labels_map_2AFC,
+        stim_order_2AFC,
+        stim_pos_map_2AFC,
+    )
+
+
+@app.cell
+def _(
+    action_trace_order,
+    binned_df_2AFC,
+    fig_size,
+    format,
+    path_panels,
+    pl,
+    plt,
+    sns,
+    stim_labels_2AFC,
+    stim_labels_map_2AFC,
+    stim_order_2AFC,
+    stim_pos_map_2AFC,
+):
+    ild_categories = [stim_labels_2AFC[x] for x in stim_order_2AFC]
+
+    _stim_plot_df = (
+        binned_df_2AFC.with_columns(
+            pl.col("_action_trace").qcut(4, labels=action_trace_order, allow_duplicates=True).alias("Action trace"),
+            pl.col("_stimulus").replace_strict(stim_pos_map_2AFC).alias("ILD position"),
+            pl.col("_stimulus").replace_strict(stim_labels_map_2AFC).cast(pl.Enum(ild_categories)).alias("ILD"),
+        )
+        .group_by(["subject", "_stimulus", "ILD position", "ILD", "Action trace"])
+        .agg(
+            pl.mean("_data_p_right").alias("Data"),
+            pl.mean("_model_p_right").alias("Model"),
+        )
+    )
+
+    _stim_model_mean = (
+        _stim_plot_df.group_by(["ILD position", "ILD", "Action trace"])
+        .agg(pl.mean("Model").alias("Model"))
+        .sort(["ILD position", "Action trace"])
+    )
+
+    _stim_data_mean = (
+        _stim_plot_df.group_by(["ILD position", "ILD", "Action trace"])
+        .agg(pl.mean("Data").alias("Data"))
+        .sort(["ILD position", "Action trace"])
+    )
+
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    pc_action_2AFC = plt.gca()
+    _at_palette = dict(zip(action_trace_order, sns.color_palette("viridis", len(action_trace_order)), strict=False))
+
+    sns.lineplot(
+        data=_stim_model_mean,
+        x="ILD position",
+        y="Model",
+        hue="Action trace",
+        hue_order=action_trace_order,
+        palette=_at_palette,
+        errorbar=None,
+        ax=pc_action_2AFC,
+    )
+    sns.scatterplot(
+        data=_stim_data_mean,
+        x="ILD position",
+        y="Data",
+        hue="Action trace",
+        hue_order=action_trace_order,
+        palette=_at_palette,
+        legend=False,
+        ax=pc_action_2AFC,
+    )
+    pc_action_2AFC.set_title("2AFC")
+    pc_action_2AFC.set_xlabel("ILD")
+    pc_action_2AFC.set_ylabel("P(right)")
+    pc_action_2AFC.set_xticks(range(len(stim_order_2AFC)))
+    pc_action_2AFC.set_xticklabels([stim_labels_2AFC[x] for x in stim_order_2AFC])
+    pc_action_2AFC.set_ylim(0, 1)
+    pc_action_2AFC.legend(frameon=False)
+
+    plt.savefig((path_panels / "2AFC_p_right_by_action_trace").with_suffix(f".{format}"))
+    pc_action_2AFC
+    return
+
+
+@app.cell
+def _(
+    binned_df_2AFC,
+    fig_size,
+    format,
+    path_panels,
+    pl,
+    plt,
+    sns,
+    stim_labels_2AFC,
+    stim_labels_map_2AFC,
+    stim_order_2AFC,
+):
+    _stim_hue_order = [stim_labels_2AFC[x] for x in stim_order_2AFC]
+    _stim_palette = dict(zip(_stim_hue_order, sns.color_palette("RdBu", len(_stim_hue_order)), strict=False))
+
+    _action_centers = (
+        binned_df_2AFC
+        .with_columns(pl.col("_action_trace").qcut(10, allow_duplicates=True).alias("_action_bin"))
+        .group_by("_action_bin")
+        .agg(pl.median("_action_trace").alias("Action trace"))
+    )
+    _action_plot_df = (
+        binned_df_2AFC
+        .with_columns(
+            pl.col("_action_trace").qcut(10, allow_duplicates=True).alias("_action_bin"),
+            pl.col("_stimulus").replace_strict(stim_labels_map_2AFC).cast(pl.Enum(_stim_hue_order)).alias("ILD"),
+        )
+        .join(_action_centers, on="_action_bin")
+        .group_by(["subject", "_stimulus", "ILD", "_action_bin", "Action trace"])
+        .agg(
+            pl.mean("_data_p_right").alias("Data"),
+            pl.mean("_model_p_right").alias("Model"),
+        )
+    )
+
+    _action_model_mean = (
+        _action_plot_df.group_by(["Action trace", "ILD"])
+        .agg(pl.mean("Model").alias("Model"))
+        .sort(["Action trace", "ILD"])
+    )
+
+    _action_data_mean = (
+        _action_plot_df.group_by(["Action trace", "ILD"])
+        .agg(pl.mean("Data").alias("Data"))
+        .sort(["Action trace", "ILD"])
+    )
+
+
+    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
+    pc_stim_2AFC = plt.gca()
+
+    sns.lineplot(
+        data=_action_model_mean,
+        x="Action trace",
+        y="Model",
+        hue="ILD",
+        hue_order=_stim_hue_order,
+        palette=_stim_palette,
+        errorbar=None,
+        ax=pc_stim_2AFC,
+    )
+    sns.scatterplot(
+        data=_action_data_mean,
+        x="Action trace",
+        y="Data",
+        hue="ILD",
+        hue_order=_stim_hue_order,
+        palette=_stim_palette,
+        legend=False,
+        ax=pc_stim_2AFC,
+    )
+    pc_stim_2AFC.set_title("2AFC")
+    pc_stim_2AFC.set_ylabel("P(right)")
+    pc_stim_2AFC.set_ylim(0, 1)
+    pc_stim_2AFC.legend(frameon=False)
+    plt.savefig((path_panels / "2AFC_p_right_by_ild").with_suffix(f".{format}"))
+    pc_stim_2AFC
+    return
+
+
+@app.cell
+def _(fig_size, format, path_panels, pd, pl, plot_dfs, plt, sns):
+    _task_df = plot_dfs["MCDR"]
+    _action_col = "choice_lag_param" if "choice_lag_param" in _task_df.columns else "choice_lag_one_hot_sum"
+    _stim_col = "stimulus"
+    _action_order = ["AT Q1", "AT Q2", "AT Q3", "AT Q4"]
+
+    _base_df = (
+        _task_df
+        .with_columns(
+            pl.col(_action_col).cast(pl.Float64, strict=False).alias("_action_trace"),
+            pl.col(_stim_col).cast(pl.Float64, strict=False).alias("_stimulus"),
+            (pl.col("response").cast(pl.Float64, strict=False) == 2.0).cast(pl.Float64).alias("_data_p_right"),
+            pl.col("pR").cast(pl.Float64, strict=False).alias("_model_p_right"),
+        )
+        .filter(
+            pl.col("_action_trace").is_not_null(),
+            pl.col("_stimulus").is_not_null(),
+            pl.col("_data_p_right").is_not_null(),
+            pl.col("_model_p_right").is_not_null(),
+        )
+    )
+    _stim_order = sorted(_base_df["_stimulus"].unique().to_list())
+    _stim_labels = {value: f"{value:g}" for value in _stim_order}
+
+    _stim_plot_df = (
+        _base_df
+        .with_columns(
+            pl.col("_action_trace")
+            .qcut(4, labels=_action_order, allow_duplicates=True)
+            .alias("Action trace")
+        )
+        .group_by(["subject", "_stimulus", "Action trace"])
+        .agg(
+            pl.mean("_data_p_right").alias("Data"),
+            pl.mean("_model_p_right").alias("Model"),
+        )
+        .to_pandas()
+    )
+    _stim_plot_df["Stimulus"] = pd.Categorical(
+        _stim_plot_df["_stimulus"].map(_stim_labels),
+        categories=[_stim_labels[x] for x in _stim_order],
+        ordered=True,
+    )
+    _action_centers = (
+        _base_df
+        .with_columns(pl.col("_action_trace").qcut(10, allow_duplicates=True).alias("_action_bin"))
+        .group_by("_action_bin")
+        .agg(pl.median("_action_trace").alias("Action trace"))
+    )
+    _action_plot_df = (
+        _base_df
+        .with_columns(pl.col("_action_trace").qcut(10, allow_duplicates=True).alias("_action_bin"))
+        .join(_action_centers, on="_action_bin")
+        .group_by(["subject", "_stimulus", "_action_bin", "Action trace"])
+        .agg(
+            pl.mean("_data_p_right").alias("Data"),
+            pl.mean("_model_p_right").alias("Model"),
+        )
+        .to_pandas()
+    )
+    _action_plot_df["Stimulus"] = pd.Categorical(
+        _action_plot_df["_stimulus"].map(_stim_labels),
+        categories=[_stim_labels[x] for x in _stim_order],
+        ordered=True,
+    )
+    _stim_model_mean = _stim_plot_df.groupby(["Stimulus", "Action trace"], observed=True, as_index=False)["Model"].mean()
+    _stim_data_mean = _stim_plot_df.groupby(["Stimulus", "Action trace"], observed=True, as_index=False)["Data"].mean()
+    _action_model_mean = _action_plot_df.groupby(["Action trace", "Stimulus"], observed=True, as_index=False)["Model"].mean()
+    _action_data_mean = _action_plot_df.groupby(["Action trace", "Stimulus"], observed=True, as_index=False)["Data"].mean()
+
+    fig_accuracy_action_trace_MCDR, _axes = plt.subplots(
+        1, 2, figsize=fig_size(1,2), constrained_layout=True
+    )
+    _at_palette = dict(zip(_action_order, sns.color_palette("viridis", len(_action_order)), strict=False))
+    _stim_hue_order = [_stim_labels[x] for x in _stim_order]
+    _stim_palette = dict(zip(_stim_hue_order, sns.color_palette("RdBu", len(_stim_hue_order)), strict=False))
+
+    sns.lineplot(
+        data=_stim_model_mean,
+        x="Stimulus",
+        y="Model",
+        hue="Action trace",
+        hue_order=_action_order,
+        palette=_at_palette,
+        errorbar=None,
+        ax=_axes[0],
+    )
+    sns.scatterplot(
+        data=_stim_data_mean,
+        x="Stimulus",
+        y="Data",
+        hue="Action trace",
+        hue_order=_action_order,
+        palette=_at_palette,
+        legend=False,
+        ax=_axes[0],
+    )
+    _axes[0].set_title("MCDR")
+    _axes[0].set_ylabel("P(right)")
+    _axes[0].set_ylim(0, 1)
+
+    sns.lineplot(
+        data=_action_model_mean,
+        x="Action trace",
+        y="Model",
+        hue="Stimulus",
+        hue_order=_stim_hue_order,
+        palette=_stim_palette,
+        errorbar=None,
+        ax=_axes[1],
+    )
+    sns.scatterplot(
+        data=_action_data_mean,
+        x="Action trace",
+        y="Data",
+        hue="Stimulus",
+        hue_order=_stim_hue_order,
+        palette=_stim_palette,
+        legend=False,
+        ax=_axes[1],
+    )
+    _axes[1].set_title("MCDR")
+    _axes[1].set_ylabel("P(right)")
+    _axes[1].set_ylim(0, 1)
+    fig_accuracy_action_trace_MCDR.savefig(
+        (path_panels / "MCDR_p_right_by_action_trace_and_stimulus").with_suffix(f".{format}")
+    )
+    fig_accuracy_action_trace_MCDR
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## Example session repetition
     """)
     return
@@ -1121,6 +1713,7 @@ def _(
 def _(
     adapters,
     add_fixed_accuracy_repetition_band,
+    add_stationary_accuracy_band,
     build_session_repetition_data,
     single_subject_df,
     ui_single_session_session,
@@ -1135,6 +1728,7 @@ def _(
         window = 20,
     )
     session_repetition_data = add_fixed_accuracy_repetition_band(session_repetition_data)
+    session_repetition_data = add_stationary_accuracy_band(session_repetition_data)
     return (session_repetition_data,)
 
 
@@ -1163,7 +1757,7 @@ def _(fig_size, plt, session_repetition_data):
         "trial_x",
         "response_repeat_window_fraction",
         color="tab:brown",
-        linewidth=1.5,
+        # linewidth=1.5,
         label="Choice rep.",
         data=session_repetition_data
     )
@@ -1171,23 +1765,23 @@ def _(fig_size, plt, session_repetition_data):
         "trial_x",
         "stimulus_repeat_window_fraction",
         color="tab:blue",
-        linewidth=1.5,
+        # linewidth=1.5,
         label="Stim. rep.",
         data=session_repetition_data
     )
-    single_session_repetition.plot(
-        "trial_x",
-        "accuracy_window_fraction",
-        color="black",
-        linewidth=1.5,
-        label="Acc",
-        data=session_repetition_data
-    )
+    # single_session_repetition.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     color="black",
+    #     # linewidth=1.5,
+    #     label="Acc",
+    #     data=session_repetition_data
+    # )
     single_session_repetition.set_xlabel("Trial")
     single_session_repetition.set_ylabel("Running fraction")
     single_session_repetition.set_ylim(0, 1)
     single_session_repetition.set_xlim(-0.5, len(session_repetition_data) - 0.5)
-    single_session_repetition.legend(frameon=False, loc="lower right")
+    single_session_repetition.legend(frameon=False, ncols=3, handlelength=0.5,    handletextpad=0.4,columnspacing=0.4,loc="upper center", bbox_to_anchor=(0.5, 0.3))
     return
 
 
@@ -1196,6 +1790,24 @@ def _(fig_size, plt, session_repetition_data):
     plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     single_session_accuracy = plt.gca()
 
+    if {"stationary_accuracy_low", "stationary_accuracy_high"}.issubset(session_repetition_data.columns):
+        single_session_accuracy.fill_between(
+            session_repetition_data["trial_x"].to_numpy(),
+            session_repetition_data["stationary_accuracy_low"].to_numpy(),
+            session_repetition_data["stationary_accuracy_high"].to_numpy(),
+            color="tab:green",
+            alpha=0.15,
+            linewidth=0,
+        )
+    if "stationary_accuracy_fraction" in session_repetition_data.columns:
+        single_session_accuracy.plot(
+            "trial_x",
+            "stationary_accuracy_fraction",
+            color="tab:green",
+            linewidth=1.3,
+            label="Stationary",
+            data=session_repetition_data
+        )
     single_session_accuracy.plot(
         "trial_x",
         "accuracy_window_fraction",
@@ -1208,6 +1820,7 @@ def _(fig_size, plt, session_repetition_data):
     single_session_accuracy.set_ylabel("Running accuracy")
     single_session_accuracy.set_ylim(0, 1)
     single_session_accuracy.set_xlim(-0.5, len(session_repetition_data) - 0.5)
+    single_session_accuracy.legend(frameon=False, loc="best")
     return
 
 
@@ -1223,7 +1836,10 @@ def _(mo):
 def _(
     adapters,
     add_fixed_accuracy_repetition_band,
+    add_stationary_accuracy_band,
+    autocorrelograms_by_task,
     build_session_repetition_data,
+    pd,
     pl,
     plot_dfs,
 ):
@@ -1238,6 +1854,32 @@ def _(
         window = 20,
     )
     session_repetition_data_2ADC = add_fixed_accuracy_repetition_band(session_repetition_data_2ADC)
+    session_repetition_data_2ADC = add_stationary_accuracy_band(session_repetition_data_2ADC)
+
+    _glm_pdf = autocorrelograms_by_task["2AFC_delay"]["glm"]["simulated_df"]
+    _glm_pdf = (
+        pd.DataFrame(_glm_pdf)
+        .loc[
+            lambda df: (
+                (df["subject"].astype(str) == f"{_subject}__closed_loop_000")
+                & (df["session"].astype(str) == str(_session))
+            )
+        ]
+        .sort_values("trial_index")
+        .copy()
+    )
+    _n_trials = min(len(_glm_pdf), len(session_repetition_data_2ADC))
+    _glm_pdf = _glm_pdf.iloc[:_n_trials].rename(columns={"trial_index": "trial"}).copy()
+    _glm_pdf["subject"] = _subject
+    _glm_pdf["session"] = _session
+    _glm_pdf["stimulus"] = session_repetition_data_2ADC["stimulus"].to_numpy()[:_n_trials]
+    session_repetition_data_2ADC_glm = build_session_repetition_data(
+        pl.from_pandas(_glm_pdf),
+        subject=_subject,
+        session=_session,
+        adapter=adapters["2AFC_delay"],
+        window=20,
+    )
     return (session_repetition_data_2ADC,)
 
 
@@ -1251,7 +1893,11 @@ def _(
     plt,
     session_repetition_data_2ADC,
 ):
+<<<<<<< HEAD
     plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+=======
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     single_session_2ADC_repetition = plt.gca() if not mount_figure else axd["a"]
     single_session_2ADC_repetition.clear()
 
@@ -1276,7 +1922,7 @@ def _(
         "trial_x",
         "response_repeat_window_fraction",
         color="tab:brown",
-        linewidth=1.5,
+        # linewidth=1.5,
         label="Choice rep.",
         data=session_repetition_data_2ADC
     )
@@ -1284,27 +1930,27 @@ def _(
         "trial_x",
         "stimulus_repeat_window_fraction",
         color="tab:blue",
-        linewidth=1.5,
+        # linewidth=1.5,
         label="Stim. rep.",
         data=session_repetition_data_2ADC
     )
-    single_session_2ADC_repetition.plot(
-        "trial_x",
-        "accuracy_window_fraction",
-        color="black",
-        linewidth=1.5,
-        label="Acc",
-        data=session_repetition_data_2ADC
-    )
+    # single_session_2ADC_repetition.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     color="black",
+    #     # linewidth=1.5,
+    #     label="Acc",
+    #     data=session_repetition_data_2ADC
+    # )
     # single_session_2ADC.set_title("2ADC")
     single_session_2ADC_repetition.set_xlabel("Trial")
     single_session_2ADC_repetition.set_ylabel("Running fraction")
     single_session_2ADC_repetition.set_ylim(0, 1)
     single_session_2ADC_repetition.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
-    single_session_2ADC_repetition.legend(frameon=False, loc="upper right")
+    single_session_2ADC_repetition.legend(frameon=False, ncols=3, handlelength=0.5,    handletextpad=0.4,columnspacing=0.4,loc="upper center", bbox_to_anchor=(0.5, 0.3))
     if not mount_figure:
         single_session_2ADC_repetition.figure.savefig(
-            (path_panels / "2ADC_single_session_repetition").with_suffix(f".{format}")
+            (path_panels / "2ADC_single_session_repetition").with_suffix(f".{format}"), transparent=True,
         )
     single_session_2ADC_repetition
     return
@@ -1326,11 +1972,36 @@ def _(
         single_session_2ADC_accuracy = axd["a_accuracy"]
     single_session_2ADC_accuracy.clear()
 
+    single_session_2ADC_accuracy.fill_between(
+        session_repetition_data_2ADC["trial_x"].to_numpy(),
+        session_repetition_data_2ADC["stationary_accuracy_low"].to_numpy(),
+        session_repetition_data_2ADC["stationary_accuracy_high"].to_numpy(),
+        color="tab:blue",
+        alpha=0.1,
+        linewidth=0,
+    )
+    single_session_2ADC_accuracy.plot(
+        "trial_x",
+        "stationary_accuracy_fraction",
+        color="tab:blue",
+        linewidth=1.5,
+        label="Stationary",
+        data=session_repetition_data_2ADC
+    )
+    # single_session_2ADC_accuracy.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     color="tab:gray",
+    #     linewidth=1.3,
+    #     linestyle="--",
+    #     label="GLM",
+    #     data=session_repetition_data_2ADC_glm
+    # )
     single_session_2ADC_accuracy.plot(
         "trial_x",
         "accuracy_window_fraction",
         color="black",
-        linewidth=1.5,
+        # linewidth=1.5,
         label="Accuracy",
         data=session_repetition_data_2ADC
     )
@@ -1338,6 +2009,7 @@ def _(
     single_session_2ADC_accuracy.set_ylabel("Running accuracy")
     single_session_2ADC_accuracy.set_ylim(0, 1)
     single_session_2ADC_accuracy.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
+    single_session_2ADC_accuracy.legend(frameon=False, loc="best")
     if not mount_figure or "a_accuracy" in axd:
         single_session_2ADC_accuracy.figure.savefig(
             (path_panels / "2ADC_single_session_accuracy").with_suffix(f".{format}")
@@ -1358,7 +2030,10 @@ def _(mo):
 def _(
     adapters,
     add_fixed_accuracy_repetition_band,
+    add_stationary_accuracy_band,
+    autocorrelograms_by_task,
     build_session_repetition_data,
+    pd,
     pl,
     plot_dfs,
 ):
@@ -1373,6 +2048,32 @@ def _(
         window = 20,
     )
     session_repetition_data_2AFC = add_fixed_accuracy_repetition_band(session_repetition_data_2AFC)
+    session_repetition_data_2AFC = add_stationary_accuracy_band(session_repetition_data_2AFC)
+
+    _glm_pdf = autocorrelograms_by_task["2AFC"]["glm"]["simulated_df"]
+    _glm_pdf = (
+        pd.DataFrame(_glm_pdf)
+        .loc[
+            lambda df: (
+                (df["subject"].astype(str) == f"{_subject}__closed_loop_000")
+                & (df["session"].astype(str) == str(_session))
+            )
+        ]
+        .sort_values("trial_index")
+        .copy()
+    )
+    _n_trials = min(len(_glm_pdf), len(session_repetition_data_2AFC))
+    _glm_pdf = _glm_pdf.iloc[:_n_trials].rename(columns={"trial_index": "trial"}).copy()
+    _glm_pdf["subject"] = _subject
+    _glm_pdf["session"] = _session
+    _glm_pdf["stimulus"] = session_repetition_data_2AFC["stimulus"].to_numpy()[:_n_trials]
+    session_repetition_data_2AFC_glm = build_session_repetition_data(
+        pl.from_pandas(_glm_pdf),
+        subject=_subject,
+        session=_session,
+        adapter=adapters["2AFC"],
+        window=20,
+    )
     return (session_repetition_data_2AFC,)
 
 
@@ -1386,7 +2087,7 @@ def _(
     plt,
     session_repetition_data_2AFC,
 ):
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     single_session_2AFC_repetition = plt.gca() if not mount_figure else axd["b"]
     single_session_2AFC_repetition.clear()
 
@@ -1411,7 +2112,7 @@ def _(
         "trial_x",
         "response_repeat_window_fraction",
         color="tab:brown",
-        linewidth=1.5,
+        # linewidth=1.5,
         label="Choice Rep.",
         data=session_repetition_data_2AFC
     )
@@ -1419,28 +2120,29 @@ def _(
         "trial_x",
         "stimulus_repeat_window_fraction",
         color="tab:blue",
-        linewidth=1.5,
+        # linewidth=1.5,
         label="Stim. Rep.",
         data=session_repetition_data_2AFC
     )
 
-    single_session_2AFC_repetition.plot(
-        "trial_x",
-        "accuracy_window_fraction",
-        color="black",
-        linewidth=1.5,
-        label="Acc",
-        data=session_repetition_data_2AFC
-    )
+    # single_session_2AFC_repetition.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     color="black",
+    #     # linewidth=1.5,
+    #     label="Acc",
+    #     data=session_repetition_data_2AFC
+    # )
     single_session_2AFC_repetition.set_title("")
     single_session_2AFC_repetition.set_xlabel("Trial")
     single_session_2AFC_repetition.set_ylabel("Running fraction")
     single_session_2AFC_repetition.set_ylim(0, 1)
     single_session_2AFC_repetition.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
-    single_session_2AFC_repetition.legend(frameon=False, loc="best")
+    single_session_2AFC_repetition.legend(frameon=False, ncols=3, handlelength=0.5,    handletextpad=0.4,columnspacing=0.4,loc="upper center", bbox_to_anchor=(0.5, 0.3))
+
     if not mount_figure:
         single_session_2AFC_repetition.figure.savefig(
-            (path_panels / "2AFC_single_session_repetition").with_suffix(f".{format}")
+            (path_panels / "2AFC_single_session_repetition").with_suffix(f".{format}"), transparent=True
         )
     single_session_2AFC_repetition
     return
@@ -1462,11 +2164,36 @@ def _(
         single_session_2AFC_accuracy = axd["b_accuracy"]
     single_session_2AFC_accuracy.clear()
 
+    single_session_2AFC_accuracy.fill_between(
+        session_repetition_data_2AFC["trial_x"].to_numpy(),
+        session_repetition_data_2AFC["stationary_accuracy_low"].to_numpy(),
+        session_repetition_data_2AFC["stationary_accuracy_high"].to_numpy(),
+        color="tab:blue",
+        alpha=0.1,
+        linewidth=0,
+    )
+    single_session_2AFC_accuracy.plot(
+        "trial_x",
+        "stationary_accuracy_fraction",
+        color="tab:blue",
+        # linewidth=1.5,
+        label="Stationary",
+        data=session_repetition_data_2AFC
+    )
+    # single_session_2AFC_accuracy.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     color="0.45",
+    #     linestyle="--",
+    #     linewidth=1.5,
+    #     label="GLM",
+    #     data=session_repetition_data_2AFC_glm
+    # )
     single_session_2AFC_accuracy.plot(
         "trial_x",
         "accuracy_window_fraction",
         color="black",
-        linewidth=1.5,
+        # linewidth=1.5,
         label="Accuracy",
         data=session_repetition_data_2AFC
     )
@@ -1474,7 +2201,8 @@ def _(
     single_session_2AFC_accuracy.set_ylabel("Running accuracy")
     single_session_2AFC_accuracy.set_ylim(0, 1)
     single_session_2AFC_accuracy.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
-    if not mount_figure or "b_accuracy" in axd:
+    single_session_2AFC_accuracy.legend(frameon=False, loc="best")
+    if not mount_figure:
         single_session_2AFC_accuracy.figure.savefig(
             (path_panels / "2AFC_single_session_accuracy").with_suffix(f".{format}")
         )
@@ -1497,11 +2225,10 @@ def _(
     autocorrelograms_by_task,
     build_session_repetition_data,
     pd,
-    pl,
     plot_dfs,
     task_names,
 ):
-    band_position_order = ["Below", "In", "Above"]
+    band_position_order = ["Below", "Above"]
     band_position_source_order = ["Data", "GLM closed-loop"]
     _task_labels = {"2AFC_delay": "2ADC", "2AFC": "2AFC", "MCDR": "MCDR"}
     band_position_by_task = {}
@@ -1583,50 +2310,50 @@ def _(
             )
             _data_source_rows = _session_rows[_session_row_start:]
 
-            if not {"subject", "session", _glm_trial_col, "response"}.issubset(_glm_pdf.columns):
-                continue
-            _glm_session = (
-                _glm_pdf[
-                    (_glm_pdf["subject"].astype(str) == f"{_subject}__closed_loop_000")
-                    & (_glm_pdf["session"].astype(str) == str(_session))
-                ]
-                .sort_values(_glm_trial_col)
-                .copy()
-            )
-            if _glm_session.empty:
-                continue
+            # if not {"subject", "session", _glm_trial_col, "response"}.issubset(_glm_pdf.columns):
+            #     continue
+            # _glm_session = (
+            #     _glm_pdf[
+            #         (_glm_pdf["subject"].astype(str) == f"{_subject}__closed_loop_000")
+            #         & (_glm_pdf["session"].astype(str) == str(_session))
+            #     ]
+            #     .sort_values(_glm_trial_col)
+            #     .copy()
+            # )
+            # if _glm_session.empty:
+            #     continue
 
-            _n_trials = min(len(_glm_session), len(_session_data))
-            if _n_trials <= 0:
-                continue
-            _glm_session = _glm_session.iloc[:_n_trials].copy()
-            if _glm_trial_col == "trial_index":
-                _glm_session = _glm_session.rename(columns={"trial_index": "trial"})
-            _glm_session["subject"] = str(_subject)
-            _glm_session["session"] = str(_session)
-            _glm_session["stimulus"] = _session_data["stimulus"].to_numpy()[:_n_trials]
+            # _n_trials = min(len(_glm_session), len(_session_data))
+            # if _n_trials <= 0:
+            #     continue
+            # _glm_session = _glm_session.iloc[:_n_trials].copy()
+            # if _glm_trial_col == "trial_index":
+            #     _glm_session = _glm_session.rename(columns={"trial_index": "trial"})
+            # _glm_session["subject"] = str(_subject)
+            # _glm_session["session"] = str(_session)
+            # _glm_session["stimulus"] = _session_data["stimulus"].to_numpy()[:_n_trials]
 
-            try:
-                _glm_session_data = build_session_repetition_data(
-                    pl.from_pandas(_glm_session),
-                    subject=_subject,
-                    session=_session,
-                    adapter=adapters[_task],
-                    window=20,
-                )
-            except ValueError:
-                continue
-            _glm_source_rows = []
-            _append_band_position_rows(
-                _glm_source_rows,
-                _glm_session_data,
-                _subject=_subject,
-                _session=_session,
-                _source="GLM closed-loop",
-            )
-            if _glm_source_rows:
-                _source_session_rows.extend(_data_source_rows)
-                _source_session_rows.extend(_glm_source_rows)
+            # try:
+            #     _glm_session_data = build_session_repetition_data(
+            #         pl.from_pandas(_glm_session),
+            #         subject=_subject,
+            #         session=_session,
+            #         adapter=adapters[_task],
+            #         window=20,
+            #     )
+            # except ValueError:
+            #     continue
+            # _glm_source_rows = []
+            # _append_band_position_rows(
+            #     _glm_source_rows,
+            #     _glm_session_data,
+            #     _subject=_subject,
+            #     _session=_session,
+            #     _source="GLM closed-loop",
+            # )
+            # if _glm_source_rows:
+            #     _source_session_rows.extend(_data_source_rows)
+            #     _source_session_rows.extend(_glm_source_rows)
 
         if _session_rows:
             _subject_summary = (
@@ -1692,12 +2419,13 @@ def _(mo):
 
 @app.cell
 def _(
+    axd,
     band_position_by_task,
     band_position_order,
     boxplot_STYLE,
     fig_size,
     format,
-    np,
+    mount_figure,
     path_panels,
     pd,
     plt,
@@ -1705,9 +2433,10 @@ def _(
     ttest_1samp,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    fixed_band_position_2ADC = plt.gca()
+    fixed_band_position_2ADC = plt.gca() if not mount_figure else axd["boxplot_band_2ADC"]
 
     _plot_df = band_position_by_task["2AFC_delay"]
+    _plot_df = _plot_df[_plot_df["position"] != "In"]
     sns.boxplot(
         data=_plot_df,
         x="position",
@@ -1717,9 +2446,12 @@ def _(
         ax=fixed_band_position_2ADC,
         **boxplot_STYLE,
     )
+    fixed_band_position_2ADC.axhline(0.025, ls = '--', color = "0.5")
+
     fixed_band_position_2ADC.set_xlabel("")
     fixed_band_position_2ADC.set_ylabel("Proportion of trials")
-    fixed_band_position_2ADC.set_ylim(0, 1)
+    fixed_band_position_2ADC.set_ylim(0, 0.5)
+
     for _x_idx, _position in enumerate(band_position_order):
         _values = pd.to_numeric(
             _plot_df.loc[_plot_df["position"] == _position, "proportion"],
@@ -1727,11 +2459,9 @@ def _(
         ).dropna()
         if len(_values) < 2:
             continue
-        _pvalue = float(ttest_1samp(_values.to_numpy(dtype=float), popmean=0.0).pvalue)
-        if not np.isfinite(_pvalue) or _pvalue >= 0.05:
-            continue
-        _stars = "***" if _pvalue < 0.001 else "**" if _pvalue < 0.01 else "*"
-        _text_y = min(0.96, max(0.06, float(_values.max()) + 0.04))
+        _pvalue = float(ttest_1samp(_values.to_numpy(dtype=float), popmean=0.025).pvalue)
+        _stars = "***" if _pvalue < 0.001 else "**" if _pvalue < 0.01 else "*" if _pvalue < 0.05 else "ns"
+        _text_y = min(float(_values.quantile(0.75)-_values.quantile(0.25))*1.5 + _values.quantile(0.75), max(_values)) +0.02
         fixed_band_position_2ADC.text(_x_idx, _text_y, _stars, ha="center", va="bottom")
     fixed_band_position_2ADC.figure.savefig(
         (path_panels / "2ADC_fixed_accuracy_band_position").with_suffix(f".{format}")
@@ -1832,12 +2562,13 @@ def _(mo):
 
 @app.cell
 def _(
+    axd,
     band_position_by_task,
     band_position_order,
     boxplot_STYLE,
     fig_size,
     format,
-    np,
+    mount_figure,
     path_panels,
     pd,
     plt,
@@ -1845,7 +2576,7 @@ def _(
     ttest_1samp,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    fixed_band_position_2AFC = plt.gca()
+    fixed_band_position_2AFC = plt.gca() if not mount_figure else axd["boxplot_band_2AFC"]
 
     _plot_df = band_position_by_task["2AFC"]
     sns.boxplot(
@@ -1857,9 +2588,10 @@ def _(
         ax=fixed_band_position_2AFC,
         **boxplot_STYLE,
     )
+    fixed_band_position_2AFC.axhline(0.025, ls = '--', color = "0.5")
     fixed_band_position_2AFC.set_xlabel("")
     fixed_band_position_2AFC.set_ylabel("Proportion of trials")
-    fixed_band_position_2AFC.set_ylim(0, 1)
+    fixed_band_position_2AFC.set_ylim(0, 0.5)
     for _x_idx, _position in enumerate(band_position_order):
         _values = pd.to_numeric(
             _plot_df.loc[_plot_df["position"] == _position, "proportion"],
@@ -1867,11 +2599,9 @@ def _(
         ).dropna()
         if len(_values) < 2:
             continue
-        _pvalue = float(ttest_1samp(_values.to_numpy(dtype=float), popmean=0.0).pvalue)
-        if not np.isfinite(_pvalue) or _pvalue >= 0.05:
-            continue
-        _stars = "***" if _pvalue < 0.001 else "**" if _pvalue < 0.01 else "*"
-        _text_y = min(0.96, max(0.06, float(_values.max()) + 0.04))
+        _pvalue = float(ttest_1samp(_values.to_numpy(dtype=float), popmean=0.025).pvalue)
+        _stars = "***" if _pvalue < 0.001 else "**" if _pvalue < 0.01 else "*" if _pvalue < 0.05 else "ns"
+        _text_y = min(float(_values.quantile(0.75)-_values.quantile(0.25))*1.5 + _values.quantile(0.75), max(_values)) +0.02
         fixed_band_position_2AFC.text(_x_idx, _text_y, _stars, ha="center", va="bottom")
     fixed_band_position_2AFC.figure.savefig(
         (path_panels / "2AFC_fixed_accuracy_band_position").with_suffix(f".{format}")
@@ -1987,6 +2717,7 @@ def _(
         ax=fixed_band_position_MCDR,
         **boxplot_STYLE,
     )
+    fixed_band_position_MCDR.axhline(0.025, ls = "--", color = "0.7")
     fixed_band_position_MCDR.set_xlabel("")
     fixed_band_position_MCDR.set_ylabel("Proportion of trials")
     fixed_band_position_MCDR.set_ylim(0, 1)
@@ -2001,7 +2732,7 @@ def _(
         if not np.isfinite(_pvalue) or _pvalue >= 0.05:
             continue
         _stars = "***" if _pvalue < 0.001 else "**" if _pvalue < 0.01 else "*"
-        _text_y = min(0.96, max(0.06, float(_values.max()) + 0.04))
+        _text_y = min(float(_values.quantile(0.75)-_values.quantile(0.25))*1.5 + _values.quantile(0.75), max(_values)) +0.02
         fixed_band_position_MCDR.text(_x_idx, _text_y, _stars, ha="center", va="bottom")
     fixed_band_position_MCDR.figure.savefig(
         (path_panels / "MCDR_fixed_accuracy_band_position").with_suffix(f".{format}")

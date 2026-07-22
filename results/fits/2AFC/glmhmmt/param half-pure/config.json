@@ -33,7 +33,9 @@
         "choice_lag_param"
     ],
     "transition_cols": [
-        "cumulative_reward"
+        "filtered_reward",
+        "trial_index",
+        "filtered_difficulty"
     ],
     "frozen_emissions": {
         "1": {

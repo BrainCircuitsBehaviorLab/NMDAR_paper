@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -307,66 +307,64 @@ def _(drug_df, pl):
     return
 
 
-app._unparsable_cell(
-    r"""
-    dApply filter_behavior per subject per experiment; for 2AFC_6 tag each row with condition.
-       parts = []
-       for (exp,), df_group in combined_df.group_by(["Experiment"], maintain_order=True):
-      if exp not in ['2AFC_2', '2AFC_3', '2AFC_4', '2AFC_6']:
-          continue
-      subj_parts = []
-      for subj, df_subj in df_group.to_pandas().groupby('Subject', sort=False):
-          df_subj = df_subj.reset_index(drop=True)
-          df_subj = filter_behavior(df_subj, clean_start=True, drop_miss=True, filter_drug=False)
-          subj_parts.append(df_subj)
-      df_pd = pd.concat(subj_parts, ignore_index=True)
-      if exp == '2AFC_6':
-          # Default: rest (no drug, no saline)
-          df_pd['condition'] = 'rest'
-          # Identify paired sessions per subject (saline immediately followed by drug)
-          if 'Date' in df_pd.columns:
-              for subj, df_subj in df_pd.groupby('Subject'):
-                  df_paired = filter_drug_sessions(df_subj.copy())
-                  paired_dates = set(df_paired['Date'].unique())
-                  mask = (df_pd['Subject'] == subj) & df_pd['Date'].isin(paired_dates)
-                  df_pd.loc[mask & (df_pd['Drug'] == 0), 'condition'] = 'saline'
-                  df_pd.loc[mask & (df_pd['Drug'] == 1), 'condition'] = 'drug'
-      else:
-          df_pd['condition'] = 'rest'
-      parts.append(pl.from_pandas(df_pd))
-       combined_df_filtered = pl.concat(parts, how="diagonal")
-       combined_df_filtered
-    """,
-    name="_"
-)
+@app.cell
+def _():
+    # dApply filter_behavior per subject per experiment; for 2AFC_6 tag each row with condition.
+    #    parts = []
+    #    for (exp,), df_group in combined_df.group_by(["Experiment"], maintain_order=True):
+    #   if exp not in ['2AFC_2', '2AFC_3', '2AFC_4', '2AFC_6']:
+    #       continue
+    #   subj_parts = []
+    #   for subj, df_subj in df_group.to_pandas().groupby('Subject', sort=False):
+    #       df_subj = df_subj.reset_index(drop=True)
+    #       df_subj = filter_behavior(df_subj, clean_start=True, drop_miss=True, filter_drug=False)
+    #       subj_parts.append(df_subj)
+    #   df_pd = pd.concat(subj_parts, ignore_index=True)
+    #   if exp == '2AFC_6':
+    #       # Default: rest (no drug, no saline)
+    #       df_pd['condition'] = 'rest'
+    #       # Identify paired sessions per subject (saline immediately followed by drug)
+    #       if 'Date' in df_pd.columns:
+    #           for subj, df_subj in df_pd.groupby('Subject'):
+    #               df_paired = filter_drug_sessions(df_subj.copy())
+    #               paired_dates = set(df_paired['Date'].unique())
+    #               mask = (df_pd['Subject'] == subj) & df_pd['Date'].isin(paired_dates)
+    #               df_pd.loc[mask & (df_pd['Drug'] == 0), 'condition'] = 'saline'
+    #               df_pd.loc[mask & (df_pd['Drug'] == 1), 'condition'] = 'drug'
+    #   else:
+    #       df_pd['condition'] = 'rest'
+    #   parts.append(pl.from_pandas(df_pd))
+    #    combined_df_filtered = pl.concat(parts, how="diagonal")
+    #    combined_df_filtered
+    return
 
 
 @app.cell
-def _(combined_df_filtered, pl):
-    # Build an explicit rename dict: every column to lowercase, except ILD stays uppercase
-    _rename_map = {
-        col: col if col == "ILD" else col.lower()
-        for col in combined_df_filtered.columns
-    }
-    combined_df_reduced = combined_df_filtered.rename(_rename_map)
+def _():
+    # # Build an explicit rename dict: every column to lowercase, except ILD stays uppercase
+    # _rename_map = {
+    #     col: col if col == "ILD" else col.lower()
+    #     for col in combined_df_filtered.columns
+    # }
+    # combined_df_reduced = combined_df_filtered.rename(_rename_map)
 
-    # If session is still missing (e.g. all-null or name mismatch), derive from filename per subject
-    if "session" not in combined_df_reduced.columns:
-        print("Sessopm is missing")
-        combined_df_reduced = combined_df_reduced.with_columns(
-            pl.col("filename")
-              .rank("dense")
-              .over(["subject", "experiment"])
-              .cast(pl.Int32)
-              .alias("session")
-        )
+    # # If session is still missing (e.g. all-null or name mismatch), derive from filename per subject
+    # if "session" not in combined_df_reduced.columns:
+    #     print("Sessopm is missing")
+    #     combined_df_reduced = combined_df_reduced.with_columns(
+    #         pl.col("filename")
+    #           .rank("dense")
+    #           .over(["subject", "experiment"])
+    #           .cast(pl.Int32)
+    #           .alias("session")
+    #     )
 
-    combined_df_reduced = combined_df_reduced.select(
-        [c for c in ["subject", "trial", "side", "choice", "hit", "punish", "session", "ILD", "filename", "experiment", "p", "condition"]
-         if c in combined_df_reduced.columns]
-    )
-    combined_df_reduced
-    return (combined_df_reduced,)
+    # combined_df_reduced = combined_df_reduced.select(
+    #     [c for c in ["subject", "trial", "side", "choice", "hit", "punish", "session", "ILD", "filename", "experiment", "p", "condition"]
+    #      if c in combined_df_reduced.columns]
+    # )
+    # combined_df_reduced
+    return
 
 
 @app.cell

@@ -59,14 +59,13 @@ def _():
         prepare_closed_loop_model_autocorrelograms,
         prepare_corrected_behavior_autocorrelograms,
     )
-    from src.plots.common import boxplot_STYLE, build_session_repetition_data, fig_size
+    from src.plots.common import build_session_repetition_data, fig_size
 
     return (
         Annotator,
         FuncFormatter,
         Path,
         add_choice_lag_summary_regressor,
-        boxplot_STYLE,
         build_session_repetition_data,
         build_trial_and_weights_df,
         build_views,
@@ -104,6 +103,19 @@ def _():
 
 
 @app.cell
+def _():
+    boxplot_STYLE = dict(
+        fill=False,
+        boxprops={"color": "0.5"},
+        whiskerprops={"color": "0.5"},
+        medianprops={"linewidth": 4},
+        showfliers=False,
+        showcaps=False,
+    )
+    return (boxplot_STYLE,)
+
+
+@app.cell
 def _(load_app_config, process_mcdr, process_two_adc, process_two_afc):
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
@@ -126,8 +138,13 @@ def _(mo):
 @app.cell
 def _():
     mount_figure = False
-    format = "svg"
-    return format, mount_figure
+    return (mount_figure,)
+
+
+@app.cell
+def _():
+    format = "pdf"
+    return (format,)
 
 
 @app.cell
@@ -136,6 +153,7 @@ def _():
     MODEL_BY_TASK = {
         "2AFC_delay": "param half-pure",
         "2AFC": "param half-pure",
+        # drugfinal_stim_fixed_T_drug
         # "MCDR": "param",
     }
     task_names = tuple(MODEL_BY_TASK)
@@ -174,7 +192,7 @@ def _(mo):
 
 @app.cell
 def _(ROOT, plt, sns):
-    sns.set_theme(style="ticks", context="notebook")
+    sns.set_theme(style="ticks", context="poster")
     plt.style.use(ROOT / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = "none"
     plt.rcParams["savefig.bbox"] = "standard"
@@ -204,7 +222,11 @@ def _(ROOT, plt, sns):
         "stim": "Stim.",
         "stim_param": "Stim.",
         "stim_vals": "Stimulus",
+<<<<<<< HEAD
         "stim_x_delay_param": "Stim.",
+=======
+        "stim_x_delay_param": "Stim",
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         "choice_lag_param": "A",
         "choice_lag_param_correct": "A",
         "prev_choice": "Prev. choice",
@@ -219,13 +241,29 @@ def _(ROOT, plt, sns):
     }
     delay_order = [-0.1, -1, -3, -10, 10, 3, 1, 0.1]
     delay_mapping = {value: index for index, value in enumerate(delay_order)}
-    return (
-        delay_order,
-        feature_labels,
-        state_palette,
-        task_labels,
-        task_palette,
+    return feature_labels, state_palette, task_labels, task_palette
+
+
+@app.cell
+def _():
+    psychometric_plot_style = dict(
+        action_line_quantile_bins=4,
+        action_x_quantile_bins=10,
+        color_min=0.15,
+        color_max=0.85,
+        data_capsize=0,
+        data_marker=".",
+        data_markersize=4,
+        legend_fontsize=8,
+        model_line_style="-",
+        model_linewidth=2,
+        reference_alpha=0.5,
+        reference_color="gray",
+        reference_line_style="--",
+        reference_linewidth=0.8,
+        tick_labelsize=6,
     )
+    return (psychometric_plot_style,)
 
 
 @app.cell
@@ -382,9 +420,15 @@ def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
 
         if not whisker_highs:
             return
+<<<<<<< HEAD
         y_min = min(whisker_lows)
         y_max = max(whisker_highs)
         pad = max((y_max - y_min) * 0.08, 0.05)
+=======
+        y_min = float(finite.min())
+        y_max = float(np.quantile(finite, 0.95))
+        pad = max((y_max - y_min) * 0.2, 0.05)
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         text_y = y_max + pad
         ax.set_ylim(top=text_y + pad)
 
@@ -635,7 +679,6 @@ def _(
 def _(
     active_task_names,
     arrays_by_task,
-    delay_order,
     glmhmmt_change_triggered_posterior_df,
     glmhmmt_state_accuracy_df,
     glmhmmt_state_dwell_df,
@@ -647,7 +690,6 @@ def _(
     glmhmmt_transition_weights_df,
     np,
     pd,
-    pl,
     plot_dfs,
     views,
     weight_dfs,
@@ -959,39 +1001,25 @@ def _(
             _transition_df["transition_feature_label"] = _transition_df["feature_label"].astype(str)
         transition_plot_dfs[_task_name] = _transition_df
         _psychometric_source_df = plot_dfs[_task_name]
-        if _task_name == "2AFC_delay":
-            _psychometric_source_df = _psychometric_source_df.clone().with_columns(
-                (
-                    pl.col("delays").cast(pl.Float64)
-                    * pl.when(pl.col("stimulus").cast(pl.Float64) == 0)
-                    .then(pl.lit(-1.0))
-                    .when(pl.col("stimulus").cast(pl.Float64) == 1)
-                    .then(pl.lit(1.0))
-                    .otherwise(pl.col("stimulus").cast(pl.Float64).sign())
-                ).round(1).alias("signed_delay")
-            )
-            _x_col = "signed_delay"
-        else:
-            _x_col = {
-                "2AFC": "ILD",
-                "MCDR": "ttype_c",
-            }[_task_name]
+        _x_col = {
+            "2AFC_delay": "delay",
+            "2AFC": "ILD",
+            "MCDR": "ttype_c",
+        }[_task_name]
         psychometric_x_cols[_task_name] = _x_col
         psychometric_x_labels[_task_name] = {
-            "2AFC": "ILD",
+            "2AFC": "Stimulus ILD (dB)",
             "2AFC_delay": "Signed delay",
             "MCDR": "Trial type",
         }[_task_name]
         psychometric_dfs[_task_name] = state_psychometric_data_model_df(
             _psychometric_source_df,
             x_col=_x_col,
-            x_order=delay_order if _task_name == "2AFC_delay" else None,
         )
         choice_lag_psychometric_dfs[_task_name] = choice_lag_psychometric_df(_psychometric_source_df)
         action_trace_psychometric_dfs[_task_name] = action_trace_psychometric_df(
             _psychometric_source_df,
             x_col=_x_col,
-            x_order=delay_order if _task_name == "2AFC_delay" else None,
         )
         accuracy_dfs[_task_name] = glmhmmt_state_accuracy_df(plot_dfs[_task_name])
         occupancy_dfs[_task_name] = glmhmmt_state_occupancy_df(plot_dfs[_task_name])
@@ -1216,6 +1244,12 @@ def _(mo):
 
 
 @app.cell
+def _(sns):
+    sns.set_context("poster")
+    return
+
+
+@app.cell
 def _(
     autocorrelograms_by_task,
     axd,
@@ -1228,7 +1262,7 @@ def _(
     _data_autocorr = autocorrelograms_by_task["2AFC_delay"]["data"]["autocorr"]
     _model_autocorr = autocorrelograms_by_task["2AFC_delay"]["glmhmmt"]["autocorr"]
 
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd.get("autocorrelograms_2ADC_outcome", plt.gca())
     autocorrelograms_2ADC_outcome.clear()
 
@@ -1239,7 +1273,7 @@ def _(
         yerr=_data_sub.get("autocorr_sem"),
         fmt="o",
         capsize=0,
-        ms=3,
+        # ms=7,
         color="tab:blue",
         ecolor="tab:blue",
         label="Data",
@@ -1265,8 +1299,9 @@ def _(
     autocorrelograms_2ADC_outcome.axhline(0.0, color="0.5", linestyle="--")
     autocorrelograms_2ADC_outcome.set_title("Outcomes")
     autocorrelograms_2ADC_outcome.set_xlabel("Lag")
+    autocorrelograms_2ADC_outcome.set_xlim(0,20.5)
     autocorrelograms_2ADC_outcome.set_ylabel("Autocorrelation")
-    autocorrelograms_2ADC_outcome.legend(frameon=False)
+    autocorrelograms_2ADC_outcome.legend(frameon=False, loc ="upper center", bbox_to_anchor = (0.5,0.35), ncol = 2,   handlelength=0.8,handletextpad=0.4,columnspacing=0.8,)
 
     if not mount_figure:
         autocorrelograms_2ADC_outcome.figure.savefig((path_panels / "2AFC_delay_autocorrelogram_outcome").with_suffix(f".{format}"))
@@ -1288,7 +1323,7 @@ def _(
     _data_autocorr = autocorrelograms_by_task["2AFC_delay"]["data"]["autocorr"]
     _model_autocorr = autocorrelograms_by_task["2AFC_delay"]["glmhmmt"]["autocorr"]
 
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure else axd.get("autocorrelograms_2ADC_repetition", plt.gca())
     autocorrelograms_2ADC_repetition.clear()
 
@@ -1299,19 +1334,13 @@ def _(
         yerr=_data_sub.get("autocorr_sem"),
         fmt="o",
         capsize=0,
-        ms=1,
+        # ms=7,
         color="tab:blue",
         ecolor="tab:blue",
         label="Data",
         zorder=4,
     )
-    autocorrelograms_2ADC_repetition.plot(
-        _data_sub["lag"],
-        _data_sub["autocorr"],
-        color="tab:blue",
-        label="_nolegend_",
-        zorder=3,
-    )
+
 
     _model_sub = _model_autocorr[_model_autocorr["signal"] == "Repetition"].sort_values("lag")
     autocorrelograms_2ADC_repetition.plot(
@@ -1325,6 +1354,7 @@ def _(
     autocorrelograms_2ADC_repetition.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
     autocorrelograms_2ADC_repetition.set_title("Repetition")
     autocorrelograms_2ADC_repetition.set_xlabel("Lag")
+    autocorrelograms_2ADC_repetition.set_xlim(0,20.5)
     autocorrelograms_2ADC_repetition.set_ylabel("Autocorrelation")
     autocorrelograms_2ADC_repetition.legend(frameon=False)
 
@@ -1356,7 +1386,7 @@ def _(
     _data_autocorr = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
     _model_autocorr = autocorrelograms_by_task["2AFC"]["glmhmmt"]["autocorr"]
 
-    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd.get("autocorrelograms_2AFC_outcome", plt.gca())
     autocorrelograms_2AFC_outcome.clear()
 
@@ -1367,7 +1397,7 @@ def _(
         yerr=_data_sub.get("autocorr_sem"),
         fmt="o",
         capsize=0,
-        ms=3,
+        # ms=7,
         color="tab:blue",
         ecolor="tab:blue",
         label="Data",
@@ -1385,9 +1415,10 @@ def _(
 
     autocorrelograms_2AFC_outcome.axhline(0.0, color="0.5", linestyle="--")
     autocorrelograms_2AFC_outcome.set_title("Outcomes")
+    autocorrelograms_2AFC_outcome.set_xlim(0,20.5)
     autocorrelograms_2AFC_outcome.set_xlabel("Lag")
     autocorrelograms_2AFC_outcome.set_ylabel("Autocorrelation")
-    autocorrelograms_2AFC_outcome.legend(frameon=False)
+    autocorrelograms_2AFC_outcome.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.75,1.1))
 
     plt.xlim(None, 20)
 
@@ -1411,7 +1442,7 @@ def _(
     _data_autocorr = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
     _model_autocorr = autocorrelograms_by_task["2AFC"]["glmhmmt"]["autocorr"]
 
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
     autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure else axd.get("autocorrelograms_2AFC_repetition", plt.gca())
     autocorrelograms_2AFC_repetition.clear()
 
@@ -1422,7 +1453,7 @@ def _(
         yerr=_data_sub.get("autocorr_sem"),
         fmt="o",
         capsize=0,
-        ms=1,
+        # ms=7,
         color="tab:blue",
         ecolor="tab:blue",
         label="Data",
@@ -1441,6 +1472,7 @@ def _(
     autocorrelograms_2AFC_repetition.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
     autocorrelograms_2AFC_repetition.set_title("Repetition")
     autocorrelograms_2AFC_repetition.set_xlabel("Lag")
+    autocorrelograms_2AFC_repetition.set_xlim(0,20.5)
     autocorrelograms_2AFC_repetition.set_ylabel("Autocorrelation")
     autocorrelograms_2AFC_repetition.legend(frameon=False)
 
@@ -1538,6 +1570,12 @@ def _(mo):
 
 
 @app.cell
+def _(sns):
+    sns.set_context("poster")
+    return
+
+
+@app.cell
 def _(
     add_paired_state_annotation,
     axd,
@@ -1553,7 +1591,7 @@ def _(
     sns,
     state_palette,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     emission_weights_2ADC = plt.gca() if not mount_figure else axd.get("emission_weights_2ADC", plt.gca())
     emission_weights_2ADC.clear()
     sns.boxplot(
@@ -1570,7 +1608,7 @@ def _(
     )
     # add_subject_pair_lines(emission_weights_2ADC, emission_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=emission_orders["2AFC_delay"])
     add_paired_state_annotation(emission_weights_2ADC, emission_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=emission_orders["2AFC_delay"])
-    emission_weights_2ADC.axhline(0, color="0.5", linestyle="--")
+    emission_weights_2ADC.axhline(0, color="0.5", linestyle="--",alpha = 0.7)
     # emission_weights_2ADC.set_title(task_labels["2AFC_delay"])
     emission_weights_2ADC.set_xlabel("")
     emission_weights_2ADC.set_ylabel("Emission weight")
@@ -1610,7 +1648,7 @@ def _(
     state_palette,
     two_adc_ew_ylim,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     emission_weights_2AFC = plt.gca() if not mount_figure else axd.get("emission_weights_2AFC", plt.gca())
     emission_weights_2AFC.clear()
     sns.boxplot(
@@ -1627,7 +1665,7 @@ def _(
     )
     # add_subject_pair_lines(emission_weights_2AFC, emission_plot_dfs["2AFC"], x="feature_label", y="weight", order=emission_orders["2AFC"])
     add_paired_state_annotation(emission_weights_2AFC, emission_plot_dfs["2AFC"], x="feature_label", y="weight", order=emission_orders["2AFC"])
-    emission_weights_2AFC.axhline(0, color="0.5", linestyle="--")
+    emission_weights_2AFC.axhline(0, color="0.5", linestyle="--",alpha = 0.7)
     # emission_weights_2AFC.set_title(task_labels["2AFC"])
     emission_weights_2AFC.set_xlabel("")
     emission_weights_2AFC.set_ylabel("Emission weight")
@@ -1729,7 +1767,7 @@ def _(
     transition_orders,
     transition_plot_dfs,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     transition_weights_2ADC = plt.gca() if not mount_figure else axd.get("transition_weights_2ADC", plt.gca())
     transition_weights_2ADC.clear()
     if model_type != "glmhmmt":
@@ -1749,10 +1787,12 @@ def _(
         transition_weights_2ADC.axhline(0, color="0.5", linestyle="--")
         add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2AFC_delay"], x="transition_feature_label", y="weight", order=transition_orders["2AFC_delay"])
     # transition_weights_2ADC.set_title(task_labels["2AFC_delay"])
+    transition_weights_2ADC.set_title("Prev. Rew")
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_xticklabels(["E->E", "E->D", "D->E", "D->D"])
-    transition_weights_2ADC.set_ylabel("Transition weight")
+    transition_weights_2ADC.set_ylabel("Trans. weight")
     transition_weights_2ADC.tick_params(axis="x", rotation=45)
+    # transition_weights_2ADC.set_ylim(-7,7)
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2ADC
@@ -1782,7 +1822,7 @@ def _(
     transition_orders,
     transition_plot_dfs,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     transition_weights_2AFC = plt.gca() if not mount_figure else axd.get("transition_weights_2AFC", plt.gca())
     transition_weights_2AFC.clear()
     if model_type != "glmhmmt":
@@ -1806,6 +1846,7 @@ def _(
     transition_weights_2AFC.set_xlabel("")
     transition_weights_2AFC.set_xticklabels(["E->E", "E->D", "D->E", "D->D"])
     transition_weights_2AFC.set_ylabel("Transition weight")
+    transition_weights_2AFC.set_title("Prev. Rew")
     transition_weights_2AFC.tick_params(axis="x", rotation=45)
     if not mount_figure:
         transition_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_transition_weights").with_suffix(f".{format}"))
@@ -1886,37 +1927,207 @@ def _(mo):
 @app.cell
 def _(
     axd,
-    delay_order,
     fig_size,
     format,
     mount_figure,
+    np,
     path_panels,
+    pd,
+    plot_dfs,
     plt,
-    psychometric_dfs,
+    psychometric_plot_style,
     psychometric_x_labels,
-    sns,
     state_palette,
+    views,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2ADC", plt.gca())
     psychometric_by_state_2ADC.clear()
-    _plot_df = psychometric_dfs["2AFC_delay"]
-    _model = _plot_df[_plot_df["source"] == "Model"]
-    _data = _plot_df[_plot_df["source"] == "Data"]
-    sns.lineplot(
-        data=_model,
-        x="x_position",
-        y="p_right",
-        hue="state_label",
-        estimator="mean",
-        errorbar="se",
-        err_kws={
-            "edgecolor": "none",
-            "linewidth": 0,
-        },
-        palette=state_palette,
-        ax=psychometric_by_state_2ADC,
+    _plot_df_all = plot_dfs["2AFC_delay"]
+    _plot_df_all = _plot_df_all.to_pandas().reset_index(drop=True) if hasattr(_plot_df_all, "to_pandas") else _plot_df_all.reset_index(drop=True)
+    _views_sel = views["2AFC_delay"]
+    _K = next(iter(_views_sel.values())).K if _views_sel else 2
+
+    def _local_state_order(_view):
+        _order = [int(_k) for _k in (getattr(_view, "state_idx_order", []) or [])]
+        _view_K = int(getattr(_view, "K", len(_order)))
+        if len(_order) == _view_K and len(set(_order)) == _view_K:
+            return _order
+        return list(range(_view_K))
+
+    _raw_by_rank_by_subject = {}
+    _rank_by_raw_by_subject = {}
+    for _subject, _view in _views_sel.items():
+        _raw_by_rank = {int(_rank): int(_raw_idx) for _rank, _raw_idx in enumerate(_local_state_order(_view))}
+        _rank_by_raw = {int(_raw_idx): int(_rank) for _rank, _raw_idx in _raw_by_rank.items()}
+        _raw_by_rank_by_subject[_subject] = _raw_by_rank
+        _raw_by_rank_by_subject[str(_subject)] = _raw_by_rank
+        _rank_by_raw_by_subject[_subject] = _rank_by_raw
+        _rank_by_raw_by_subject[str(_subject)] = _rank_by_raw
+
+    _plot_df_all = _plot_df_all.copy()
+    if "state_idx" in _plot_df_all.columns:
+        _state_rank = np.full(len(_plot_df_all), np.nan, dtype=float)
+        for _subject, _idx in _plot_df_all.groupby("subject", observed=True).groups.items():
+            _rank_by_raw = _rank_by_raw_by_subject.get(_subject) or _rank_by_raw_by_subject.get(str(_subject))
+            if _rank_by_raw is None:
+                continue
+            _row_idx = np.asarray(_idx, dtype=int)
+            _raw_state = pd.to_numeric(_plot_df_all.iloc[_row_idx]["state_idx"], errors="coerce")
+            _state_rank[_row_idx] = _raw_state.map(_rank_by_raw).to_numpy(dtype=float)
+        _plot_df_all["_state_k"] = _state_rank
+    elif "state_rank" in _plot_df_all.columns:
+        _plot_df_all["_state_k"] = pd.to_numeric(_plot_df_all["state_rank"], errors="coerce")
+    elif "_state_k" in _plot_df_all.columns:
+        _plot_df_all["_state_k"] = pd.to_numeric(_plot_df_all["_state_k"], errors="coerce")
+
+    for _rank in range(_K):
+        _model_values = np.full(len(_plot_df_all), np.nan, dtype=float)
+        _wrote_model = False
+        for _subject, _idx in _plot_df_all.groupby("subject", observed=True).groups.items():
+            _raw_by_rank = _raw_by_rank_by_subject.get(_subject) or _raw_by_rank_by_subject.get(str(_subject))
+            if _raw_by_rank is None or _rank not in _raw_by_rank:
+                continue
+            _raw_idx = _raw_by_rank[_rank]
+            _model_col = f"pR_state_{_raw_idx}"
+            if _model_col not in _plot_df_all.columns:
+                continue
+            _row_idx = np.asarray(_idx, dtype=int)
+            _model_values[_row_idx] = pd.to_numeric(_plot_df_all.iloc[_row_idx][_model_col], errors="coerce").to_numpy(dtype=float)
+            _wrote_model = True
+        if _wrote_model:
+            _plot_df_all[f"_pR_state_rank_{_rank}"] = _model_values
+
+    _plot_df_all["response"] = pd.to_numeric(_plot_df_all["response"], errors="coerce")
+    _unique_response = set(_plot_df_all["response"].dropna().unique().tolist())
+    if _unique_response.issubset({-1.0, 1.0}):
+        _plot_df_all["_response_right"] = (_plot_df_all["response"] > 0).astype(float)
+    else:
+        _plot_df_all["_response_right"] = _plot_df_all["response"].astype(float)
+
+    _stim_col = next((_col for _col in ["stim", "stimulus"] if _col in _plot_df_all.columns), None)
+    _delay_col = next((_col for _col in ["delay_raw", "delays", "delay"] if _col in _plot_df_all.columns), None)
+    if _stim_col is None or _delay_col is None:
+        _plot_df_all["_signed_delay"] = np.nan
+        _plot_df_all["_signed_delay_cat"] = pd.Series(pd.NA, index=_plot_df_all.index, dtype="object")
+    else:
+        _stim_values = pd.to_numeric(_plot_df_all[_stim_col], errors="coerce")
+        _unique_stim = set(_stim_values.dropna().unique().tolist())
+        if _unique_stim and _unique_stim.issubset({0, 1, 0.0, 1.0}):
+            _stim_sign = pd.Series(
+                np.where(_stim_values == 0, -1.0, np.where(_stim_values == 1, 1.0, np.nan)),
+                index=_plot_df_all.index,
+                dtype=float,
+            )
+        else:
+            _stim_sign = np.sign(_stim_values)
+        _delay_values = pd.to_numeric(_plot_df_all[_delay_col], errors="coerce")
+        _signed_delay = _delay_values * _stim_sign
+        _plot_df_all["_signed_delay"] = _signed_delay
+        _signed_delay_cat = pd.Series(pd.NA, index=_plot_df_all.index, dtype="object")
+        _valid_signed_delay = np.isfinite(_delay_values) & np.isfinite(_stim_sign)
+        _signed_delay_cat.loc[_valid_signed_delay] = _signed_delay.loc[_valid_signed_delay].map(lambda _value: f"{float(_value):g}")
+        _preferred_order = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
+        _present = set(_signed_delay_cat.dropna())
+        _existing = [_value for _value in _preferred_order if _value in _present]
+        _extras = sorted((_value for _value in _present if _value not in set(_existing)), key=lambda _value: float(_value))
+        _plot_df_all["_signed_delay_cat"] = pd.Categorical(_signed_delay_cat, categories=_existing + _extras, ordered=True)
+    _state_labels = {}
+    for _view in _views_sel.values():
+        for _rank, _raw_idx in enumerate(_local_state_order(_view)):
+            _state_labels.setdefault(_rank, getattr(_view, "state_name_by_idx", {}).get(_raw_idx, f"State {_rank}"))
+
+    _preferred_order = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
+    _present = set(_plot_df_all["_signed_delay_cat"].dropna().astype(str))
+    _order = [_value for _value in _preferred_order if _value in _present]
+    _order += sorted((_value for _value in _present if _value not in set(_order)), key=lambda _value: float(_value))
+    _labels = [str(int(float(_value))) if float(_value).is_integer() else f"{float(_value):g}" for _value in _order]
+    _plot_df_all = _plot_df_all[_plot_df_all["_signed_delay_cat"].astype(str).isin(_order)].copy()
+    _plot_df_all["_signed_delay_cat"] = pd.Categorical(_plot_df_all["_signed_delay_cat"].astype(str), categories=_order, ordered=True)
+    _plot_df_all["_x_code"] = _plot_df_all["_signed_delay_cat"].astype(str).map({_value: _idx for _idx, _value in enumerate(_order)})
+
+    for _rank in range(_K):
+        _state_label = _state_labels.get(_rank, f"State {_rank}")
+        _color = state_palette.get(_state_label, state_palette.get(f"State {_rank}", f"C{_rank}"))
+        _pred_col = f"_pR_state_rank_{_rank}" if f"_pR_state_rank_{_rank}" in _plot_df_all.columns else "p_pred"
+        if _pred_col not in _plot_df_all.columns:
+            continue
+        _state_df = _plot_df_all[_plot_df_all["_state_k"] == _rank].copy()
+        _state_df = _state_df[
+            _state_df["_signed_delay_cat"].notna()
+            & np.isfinite(pd.to_numeric(_state_df["_response_right"], errors="coerce"))
+            & np.isfinite(pd.to_numeric(_state_df[_pred_col], errors="coerce"))
+        ].copy()
+        if _state_df.empty:
+            continue
+        _rows = []
+        for (_subject, _signed_delay, _x_code), _grp in _state_df.groupby(["subject", "_signed_delay_cat", "_x_code"], observed=True):
+            _response = pd.to_numeric(_grp["_response_right"], errors="coerce").to_numpy(dtype=float)
+            _model = pd.to_numeric(_grp[_pred_col], errors="coerce").to_numpy(dtype=float)
+            _mask = np.isfinite(_response) & np.isfinite(_model)
+            if not np.any(_mask):
+                continue
+            _rows.append(
+                {
+                    "subject": _subject,
+                    "_signed_delay_cat": str(_signed_delay),
+                    "_x_code": float(_x_code),
+                    "data_mean": float(np.nanmean(_response[_mask])),
+                    "model_mean": float(np.nanmean(_model[_mask])),
+                }
+            )
+        _subject_summary = pd.DataFrame(_rows)
+        if _subject_summary.empty:
+            continue
+        _summary = (
+            _subject_summary.groupby(["_signed_delay_cat", "_x_code"], observed=True)
+            .agg(
+                data_mean=("data_mean", "mean"),
+                data_sem=("data_mean", lambda _values: float(np.nanstd(_values, ddof=1) / np.sqrt(max(len(_values), 1))) if len(_values) > 1 else 0.0),
+                model_mean=("model_mean", "mean"),
+            )
+            .reset_index()
+            .sort_values("_x_code")
+        )
+        psychometric_by_state_2ADC.plot(
+            _summary["_x_code"].to_numpy(dtype=float),
+            _summary["model_mean"].to_numpy(dtype=float),
+            color=_color,
+            linestyle=psychometric_plot_style["model_line_style"],
+            linewidth=psychometric_plot_style["model_linewidth"],
+            label="_nolegend_",
+            zorder=6,
+        )
+        psychometric_by_state_2ADC.errorbar(
+            _summary["_x_code"].to_numpy(dtype=float),
+            _summary["data_mean"].to_numpy(dtype=float),
+            yerr=_summary["data_sem"].fillna(0.0).to_numpy(dtype=float),
+            fmt=psychometric_plot_style["data_marker"],
+            color=_color,
+            ecolor=_color,
+            capsize=psychometric_plot_style["data_capsize"],
+            markersize=psychometric_plot_style["data_markersize"],
+            label=_state_label,
+            zorder=5,
+        )
+    psychometric_by_state_2ADC.set_xticks(range(len(_order)))
+    psychometric_by_state_2ADC.set_xticklabels(_labels)
+    if "-10" in _order and "10" in _order:
+        psychometric_by_state_2ADC.axvline(
+            (_order.index("-10") + _order.index("10")) / 2.0,
+            color=psychometric_plot_style["reference_color"],
+            linestyle=psychometric_plot_style["reference_line_style"],
+            linewidth=psychometric_plot_style["reference_linewidth"],
+            alpha=psychometric_plot_style["reference_alpha"],
+        )
+    psychometric_by_state_2ADC.axhline(
+        0.5,
+        color=psychometric_plot_style["reference_color"],
+        linestyle=psychometric_plot_style["reference_line_style"],
+        linewidth=psychometric_plot_style["reference_linewidth"],
+        alpha=psychometric_plot_style["reference_alpha"],
     )
+<<<<<<< HEAD
     sns.pointplot(
         data=_data,
         x="x_position",
@@ -1936,12 +2147,16 @@ def _(
     psychometric_by_state_2ADC.set_xticklabels([f"{value:g}" for value in delay_order])
     psychometric_by_state_2ADC.axhline(0.5, color="0.5", linestyle="--")
     # psychometric_by_state_2ADC.set_title(task_labels["2AFC_delay"])
+=======
+    psychometric_by_state_2ADC.set_title("")
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     psychometric_by_state_2ADC.set_xlabel(psychometric_x_labels["2AFC_delay"])
     psychometric_by_state_2ADC.set_ylabel(r"$p(\mathrm{right})$")
-    psychometric_by_state_2ADC.legend(frameon=False, title="")
-    psychometric_by_state_2ADC.set_ylim(0,1)
-    psychometric_by_state_2ADC.set_yticks([0, 0.5,1], [0, 0.5,1], )
-    psychometric_by_state_2ADC.legend_.remove()
+    psychometric_by_state_2ADC.set_ylim(0, 1)
+    psychometric_by_state_2ADC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
+    psychometric_by_state_2ADC.tick_params(axis="both", labelsize=psychometric_plot_style["tick_labelsize"])
+    if psychometric_by_state_2ADC.get_legend() is not None:
+        psychometric_by_state_2ADC.get_legend().remove()
     if not mount_figure:
         psychometric_by_state_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2ADC
@@ -1965,11 +2180,12 @@ def _(
     path_panels,
     plt,
     psychometric_dfs,
+    psychometric_plot_style,
     psychometric_x_labels,
     sns,
     state_palette,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2AFC", plt.gca())
     psychometric_by_state_2AFC.clear()
     _plot_df = psychometric_dfs["2AFC"]
@@ -1982,10 +2198,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        err_kws={
-            "edgecolor": "none",
-            "linewidth": 0,
-        },
+        err_kws={"edgecolor": "none", "linewidth": 0},
         palette=state_palette,
         ax=psychometric_by_state_2AFC,
     )
@@ -1996,7 +2209,11 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
+<<<<<<< HEAD
         markers="o",
+=======
+        markers='.',
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         linestyles="none",
         native_scale=True,
         palette=state_palette,
@@ -2004,17 +2221,32 @@ def _(
         ax=psychometric_by_state_2AFC,
         ms=3
     )
-    xticks = sorted(psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
-    xticks = [float(tick) for tick in xticks]
-    psychometric_by_state_2AFC.set_xticks(xticks)
-    psychometric_by_state_2AFC.set_xticklabels([f"{tick:g}" if abs(float(tick)) not in {2.0, 4.0} else "" for tick in xticks])
-    psychometric_by_state_2AFC.axhline(0.5, color="0.5", linestyle="--")
-    # psychometric_by_state_2AFC.set_title(task_labels["2AFC"])
+    _xticks = sorted(psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
+    _xticks = [float(tick) for tick in _xticks]
+    _xticks = sorted(psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
+    _xticks = [float(tick) for tick in _xticks]
+
+    _xtick_labels = [
+        "" if tick in [-4, -2,2, 4] else f"{tick:g}"
+        for tick in _xticks
+    ]
+
+    psychometric_by_state_2AFC.set_xticks(_xticks)
+    psychometric_by_state_2AFC.set_xticklabels(_xtick_labels)
+    psychometric_by_state_2AFC.axhline(
+        0.5,
+        color=psychometric_plot_style["reference_color"],
+        linestyle=psychometric_plot_style["reference_line_style"],
+        alpha=psychometric_plot_style["reference_alpha"],
+    )
+    psychometric_by_state_2AFC.set_title("")
     psychometric_by_state_2AFC.set_xlabel(psychometric_x_labels["2AFC"])
     psychometric_by_state_2AFC.set_ylabel(r"$p(\mathrm{right})$")
-    psychometric_by_state_2AFC.legend(frameon=False, title="")
-    psychometric_by_state_2AFC.set_yticks([0, 0.5,1], [0, 0.5,1], )
-    psychometric_by_state_2AFC.legend_.remove()
+    psychometric_by_state_2AFC.set_ylim(0, 1)
+    psychometric_by_state_2AFC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
+    psychometric_by_state_2AFC.tick_params(axis="both")
+    if psychometric_by_state_2AFC.get_legend() is not None:
+        psychometric_by_state_2AFC.get_legend().remove()
     if not mount_figure:
         psychometric_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2AFC
@@ -2039,6 +2271,7 @@ def _(
     plt,
     psychometric_dfs,
     psychometric_orders,
+    psychometric_plot_style,
     psychometric_x_labels,
     sns,
     state_palette,
@@ -2071,7 +2304,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        markers="o",
+        markers=psychometric_plot_style["data_marker"],
         linestyles="none",
         native_scale=True,
         palette=state_palette,
@@ -2080,10 +2313,17 @@ def _(
     )
     psychometric_by_state_3CDR.set_xticks(range(len(psychometric_orders["MCDR"])))
     psychometric_by_state_3CDR.set_xticklabels(psychometric_orders["MCDR"])
-    psychometric_by_state_3CDR.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
+    psychometric_by_state_3CDR.axhline(
+        0.5,
+        color=psychometric_plot_style["reference_color"],
+        linestyle=psychometric_plot_style["reference_line_style"],
+        linewidth=psychometric_plot_style["reference_linewidth"],
+        alpha=psychometric_plot_style["reference_alpha"],
+    )
     psychometric_by_state_3CDR.set_title(task_labels["MCDR"])
     psychometric_by_state_3CDR.set_xlabel(psychometric_x_labels["MCDR"])
     psychometric_by_state_3CDR.set_ylabel(r"$p(\mathrm{right})$")
+    psychometric_by_state_3CDR.tick_params(axis="both", labelsize=psychometric_plot_style["tick_labelsize"])
     psychometric_by_state_3CDR.legend(frameon=False, title="")
     if not mount_figure:
         psychometric_by_state_3CDR.figure.savefig((path_panels / "MCDR_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
@@ -2117,10 +2357,11 @@ def _(
     mount_figure,
     path_panels,
     plt,
+    psychometric_plot_style,
     sns,
     state_palette,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_action_trace_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2ADC", plt.gca())
     psychometric_by_action_trace_2ADC.clear()
     _plot_df = choice_lag_psychometric_dfs["2AFC_delay"]
@@ -2133,10 +2374,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        err_kws={
-            "edgecolor": "none",
-            "linewidth": 0,
-        },
+        err_kws={"edgecolor": "none", "linewidth": 0},
         palette=state_palette,
         ax=psychometric_by_action_trace_2ADC,
     )
@@ -2147,7 +2385,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        markers="o",
+        markers=psychometric_plot_style["data_marker"],
         linestyles="none",
         native_scale=True,
         palette=state_palette,
@@ -2155,18 +2393,21 @@ def _(
         ax=psychometric_by_action_trace_2ADC,
         ms=3
     )
-    # _xticks = sorted(choice_lag_psychometric_dfs["2AFC_delay"]["x_numeric"].dropna().unique())
-    # _xticks = [float(tick) for tick in _xticks]
-    # psychometric_by_action_trace_2ADC.set_xticks(_xticks)
-    # psychometric_by_action_trace_2ADC.set_xticklabels([f"{tick:g}" for tick in _xticks])
-    psychometric_by_action_trace_2ADC.axhline(0.5, color="0.5", linestyle="--")
-    # psychometric_by_action_trace_2ADC.set_title(task_labels["2AFC_delay"])
+    psychometric_by_action_trace_2ADC.axhline(
+        0.5,
+        color=psychometric_plot_style["reference_color"],
+        linestyle=psychometric_plot_style["reference_line_style"],
+        linewidth=psychometric_plot_style["reference_linewidth"],
+        alpha=psychometric_plot_style["reference_alpha"],
+    )
+    psychometric_by_action_trace_2ADC.set_title("")
     psychometric_by_action_trace_2ADC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2ADC.set_ylabel(r"$p(\mathrm{right})$")
-    psychometric_by_action_trace_2ADC.legend(frameon=False, title="")
-    psychometric_by_action_trace_2ADC.set_ylim(0,1)
-    psychometric_by_action_trace_2ADC.set_yticks([0, 0.5,1], [0, 0.5,1], )
-    psychometric_by_action_trace_2ADC.legend_.remove()
+    psychometric_by_action_trace_2ADC.set_ylim(0, 1)
+    psychometric_by_action_trace_2ADC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
+    psychometric_by_action_trace_2ADC.tick_params(axis="both", labelsize=psychometric_plot_style["tick_labelsize"])
+    if psychometric_by_action_trace_2ADC.get_legend() is not None:
+        psychometric_by_action_trace_2ADC.get_legend().remove()
     if not mount_figure:
         psychometric_by_action_trace_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_psychometric_by_action_trace").with_suffix(f".{format}"))
     psychometric_by_action_trace_2ADC
@@ -2191,10 +2432,11 @@ def _(
     mount_figure,
     path_panels,
     plt,
+    psychometric_plot_style,
     sns,
     state_palette,
 ):
-    plt.figure(figsize=fig_size(4, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_action_trace_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2AFC", plt.gca())
     psychometric_by_action_trace_2AFC.clear()
     _plot_df = choice_lag_psychometric_dfs["2AFC"]
@@ -2207,10 +2449,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        err_kws={
-            "edgecolor": "none",
-            "linewidth": 0,
-        },
+        err_kws={"edgecolor": "none", "linewidth": 0},
         palette=state_palette,
         ax=psychometric_by_action_trace_2AFC,
     )
@@ -2221,7 +2460,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        markers="o",
+        markers=psychometric_plot_style["data_marker"],
         linestyles="none",
         native_scale=True,
         palette=state_palette,
@@ -2229,18 +2468,21 @@ def _(
         ax=psychometric_by_action_trace_2AFC,
         ms=3
     )
-    # _xticks = sorted(choice_lag_psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
-    # _xticks = [float(tick) for tick in _xticks]
-    # psychometric_by_action_trace_2AFC.set_xticks(_xticks)
-    # psychometric_by_action_trace_2AFC.set_xticklabels([f"{tick:g}" for tick in _xticks])
-    psychometric_by_action_trace_2AFC.axhline(0.5, color="0.5", linestyle="--")
-    # psychometric_by_action_trace_2AFC.set_title(task_labels["2AFC"])
+    psychometric_by_action_trace_2AFC.axhline(
+        0.5,
+        color=psychometric_plot_style["reference_color"],
+        linestyle=psychometric_plot_style["reference_line_style"],
+        linewidth=psychometric_plot_style["reference_linewidth"],
+        alpha=psychometric_plot_style["reference_alpha"],
+    )
+    psychometric_by_action_trace_2AFC.set_title("")
     psychometric_by_action_trace_2AFC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2AFC.set_ylabel(r"$p(\mathrm{right})$")
-    psychometric_by_action_trace_2AFC.legend(frameon=False, title="")
-    psychometric_by_action_trace_2AFC.set_ylim(0,1)
-    psychometric_by_action_trace_2AFC.set_yticks([0, 0.5,1], [0, 0.5,1], )
-    psychometric_by_action_trace_2AFC.legend_.remove()
+    psychometric_by_action_trace_2AFC.set_ylim(0, 1)
+    psychometric_by_action_trace_2AFC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
+    psychometric_by_action_trace_2AFC.tick_params(axis="both", labelsize=psychometric_plot_style["tick_labelsize"])
+    if psychometric_by_action_trace_2AFC.get_legend() is not None:
+        psychometric_by_action_trace_2AFC.get_legend().remove()
     if not mount_figure:
         psychometric_by_action_trace_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_psychometric_by_action_trace").with_suffix(f".{format}"))
     psychometric_by_action_trace_2AFC
@@ -2265,6 +2507,7 @@ def _(
     mount_figure,
     path_panels,
     plt,
+    psychometric_plot_style,
     sns,
     state_palette,
     task_labels,
@@ -2296,7 +2539,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        markers="o",
+        markers=psychometric_plot_style["data_marker"],
         linestyles="none",
         native_scale=True,
         palette=state_palette,
@@ -2307,10 +2550,17 @@ def _(
     # _xticks = [float(tick) for tick in _xticks]
     # psychometric_by_action_trace_3CDR.set_xticks(_xticks)
     # psychometric_by_action_trace_3CDR.set_xticklabels([f"{tick:g}" for tick in _xticks])
-    psychometric_by_action_trace_3CDR.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
+    psychometric_by_action_trace_3CDR.axhline(
+        0.5,
+        color=psychometric_plot_style["reference_color"],
+        linestyle=psychometric_plot_style["reference_line_style"],
+        linewidth=psychometric_plot_style["reference_linewidth"],
+        alpha=psychometric_plot_style["reference_alpha"],
+    )
     psychometric_by_action_trace_3CDR.set_title(task_labels["MCDR"])
     psychometric_by_action_trace_3CDR.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_3CDR.set_ylabel(r"$p(\mathrm{right})$")
+    psychometric_by_action_trace_3CDR.tick_params(axis="both", labelsize=psychometric_plot_style["tick_labelsize"])
     psychometric_by_action_trace_3CDR.legend(frameon=False, title="")
     psychometric_by_action_trace_3CDR.set_ylim(0,1)
     if not mount_figure:
@@ -4187,7 +4437,7 @@ def _(
 
 
 @app.cell
-def _(axd, fig, format, mount_figure, path_panels):
+def _(axd, fig, format, mount_figure, path_panels, psychometric_x_labels):
     if mount_figure:
         _legend_ax = axd.get("single_session_2ADC")
         _handles, _labels = _legend_ax.get_legend_handles_labels() if _legend_ax is not None else ([], [])
@@ -4217,6 +4467,8 @@ def _(axd, fig, format, mount_figure, path_panels):
         axd["transition_weights_2ADC"].set_ylabel("Transition weight")
         axd["transition_weights_2AFC"].set_ylabel("Transition weight")
         axd["psychometric_by_state_2ADC"].set_ylabel(r"$p(\mathrm{right})$")
+        axd["psychometric_by_state_2ADC"].set_xlabel(psychometric_x_labels["2AFC_delay"])
+        axd["psychometric_by_state_2AFC"].set_xlabel(psychometric_x_labels["2AFC"])
         axd["nlicks_by_state_2ADC"].set_ylabel("nLicks")
         axd["nlicks_by_state_2AFC"].set_ylabel("nLicks")
         # axd["model_comparison_ll_2ADC"].set_ylabel(r"$\Delta$ LL")

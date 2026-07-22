@@ -61,14 +61,13 @@ def _():
         prepare_closed_loop_model_autocorrelograms,
         prepare_corrected_behavior_autocorrelograms,
     )
-    from src.plots.common import boxplot_STYLE, build_session_repetition_data, fig_size
+    from src.plots.common import build_session_repetition_data, fig_size
 
     return (
         Annotator,
         FuncFormatter,
         Path,
         add_choice_lag_summary_regressor,
-        boxplot_STYLE,
         build_session_repetition_data,
         build_trial_and_weights_df,
         build_views,
@@ -105,6 +104,19 @@ def _():
 
 
 @app.cell
+def _():
+    boxplot_STYLE = dict(
+        fill=False,
+        boxprops={"color": "0.5"},
+        whiskerprops={"color": "0.5"},
+        medianprops={"linewidth": 4},
+        showfliers=False,
+        showcaps=False,
+    )
+    return (boxplot_STYLE,)
+
+
+@app.cell
 def _(load_app_config, process_mcdr, process_two_adc, process_two_afc):
     def prepare_predictions_df(task_name, df):
         if task_name == "MCDR":
@@ -128,7 +140,7 @@ def _(mo):
 @app.cell
 def _():
     mount_figure = False
-    format = "svg"
+    format = "pdf"
     return format, mount_figure
 
 
@@ -141,7 +153,7 @@ def _():
 @app.cell
 def _():
     MODEL_BY_TASK = {
-        "2AFC_DRUG": "param half-pure",
+        "2AFC_DRUG": "param_half",
         "2ADC_DRUG": "param half-pure",
         # "MCDR": "param",
     }
@@ -219,8 +231,9 @@ def _(ROOT, plt, sns):
         "prev_difficulty": "Previous difficulty",
         "cumulative_reward": "Cumulative reward",
         "trial_index": "Trial index",
-        "Drug": "NMDAr",
-        "drug_code": "NMDAr",
+        "Drug": "NMDAr block",
+        "drug_code": "NMDAr block",
+        "drug_x_filtered_reward": "NMDAr block : Rew trace",
     }
     delay_order = [-0.1, -1, -3, -10, 10, 3, 1, 0.1]
     delay_mapping = {value: index for index, value in enumerate(delay_order)}
@@ -350,7 +363,7 @@ def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
 
     def _stars(pvalue):
         if not np.isfinite(pvalue) or pvalue >= 0.05:
-            return ""
+            return "ns"
         if pvalue < 0.001:
             return "***"
         if pvalue < 0.01:
@@ -435,6 +448,7 @@ def _(MODEL_BY_TASK, get_adapter, pl):
     }
     if "2AFC" in dfs:
         dfs["2AFC_DRUG"] = dfs["2AFC_DRUG"].filter(pl.col("subject") != "326")
+        dfs["2AFC_DRUG"] = dfs["2AFC_DRUG"].filter(pl.col("subject") != "19")
     if "MCDR" in dfs:
         dfs["MCDR"] = dfs["MCDR"].filter(pl.col("subject").str.contains("B"))
     return adapters, dfs
@@ -846,7 +860,24 @@ def _(
     emission_orders = {task: ordered_feature_values(emission_plot_dfs[task], "feature_label") for task in task_names}
     emission_hue_orders = {task: ordered_states(emission_plot_dfs[task]) for task in task_names}
 
+    def ordered_transition_feature_values(df, column):
+        values = ordered_feature_values(df, column)
+
+        return sorted(
+            values,
+            key=lambda v: (
+                "Drug" in str(v), # False primero, True último
+                values.index(v),            # mantiene el orden previo dentro de cada grupo
+            ),
+        )
+
+
     transition_orders = {}
+    if model_type == "glmhmmt":
+        transition_orders = {
+            task: ordered_transition_feature_values(transition_plot_dfs[task], "feature_label")
+            for task in task_names
+        }
     if model_type == "glmhmmt":  # Check if it is a model with transitions
         transition_orders = {task: ordered_feature_values(transition_plot_dfs[task], "feature_label") for task in task_names}
 
@@ -992,6 +1023,12 @@ def _(mo):
 
 
 @app.cell
+def _(sns):
+    sns.set_context("poster")
+    return
+
+
+@app.cell
 def _(
     add_paired_state_annotation,
     axd,
@@ -1030,7 +1067,7 @@ def _(
     emission_weights_2ADC.set_xlabel("")
     emission_weights_2ADC.set_ylabel("Emission weight")
     emission_weights_2ADC.tick_params(axis="x")
-    emission_weights_2ADC.legend(frameon=False, title="")
+    emission_weights_2ADC.legend().remove()
     if not mount_figure:
         emission_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_emission_weights").with_suffix(f".{format}"))
     emission_weights_2ADC
@@ -1085,6 +1122,7 @@ def _(
     emission_weights_2AFC.set_ylabel("Emission weight")
     emission_weights_2AFC.tick_params(axis="x")
     emission_weights_2AFC.legend(frameon=False, title="")
+    emission_weights_2AFC.legend().remove()
     if not mount_figure:
         emission_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_emission_weights").with_suffix(f".{format}"))
     emission_weights_2AFC
@@ -1122,8 +1160,13 @@ def _(mo):
 
 
 @app.cell
+def _(transition_plot_dfs):
+    transition_plot_dfs
+    return
+
+
+@app.cell
 def _(
-    add_one_sample_zero_annotations,
     axd,
     boxplot_STYLE,
     fig_size,
@@ -1133,11 +1176,10 @@ def _(
     path_panels,
     plt,
     sns,
-    task_labels,
     transition_orders,
     transition_plot_dfs,
 ):
-    plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     transition_weights_2ADC = plt.gca() if not mount_figure else axd.get("transition_weights_2ADC", plt.gca())
     transition_weights_2ADC.clear()
     if model_type != "glmhmmt":
@@ -1145,26 +1187,46 @@ def _(
         transition_weights_2ADC.text(0.5, 0.5, "Transition", ha="center", va="center",)
         transition_weights_2ADC.text(0.5, 0.3, "Weights", ha="center", va="center",)
     else: 
+        palette = {
+            "Engaged -> Engaged": "tab:green",
+            "Disengaged -> Engaged": "tab:green",
+            "Engaged -> Disengaged": "0.5",
+            "Disengaged -> Disengaged": "0.5",
+        }
+    
         sns.boxplot(
             data=transition_plot_dfs["2ADC_DRUG"],
             x="feature_label",
             y="weight",
+            hue="transition_label",
             order=transition_orders["2ADC_DRUG"],
-            color="tab:gray",
+            palette=palette,
             ax=transition_weights_2ADC,
             **boxplot_STYLE,
         )
         transition_weights_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-        add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
-    transition_weights_2ADC.set_title(task_labels["2ADC_DRUG"])
+        # add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
+    # transition_weights_2ADC.set_title(task_labels["2ADC_DRUG"])
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_ylabel("Transition weight")
+<<<<<<< HEAD
     transition_weights_2ADC.tick_params(axis="x", rotation=30)
     plt.ylim(-3, 3)
+=======
+    transition_weights_2ADC.tick_params(axis="x", labelrotation=30)
+    transition_weights_2ADC.set_ylim(top = 10)
+    handles, _ = transition_weights_2ADC.get_legend_handles_labels()
+
+    transition_weights_2ADC.legend(
+        handles,
+        ["E→E", "E→D", "D→E", "D→D"],
+        frameon=False, ncol = 2,  handlelength=0.8,handletextpad=0.4,columnspacing=0.8,
+    )
+>>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2ADC
-    return
+    return (palette,)
 
 
 @app.cell(hide_code=True)
@@ -1176,47 +1238,75 @@ def _(mo):
 
 
 @app.cell
+def _():
+    return
+
+
+@app.cell
 def _(
-    add_one_sample_zero_annotations,
     axd,
     boxplot_STYLE,
     fig_size,
     format,
     model_type,
     mount_figure,
+    palette,
     path_panels,
     plt,
     sns,
-    task_labels,
     transition_orders,
     transition_plot_dfs,
 ):
-    plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
+    sns.set_context("poster")
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     transition_weights_2AFC = plt.gca() if not mount_figure else axd.get("transition_weights_2AFC", plt.gca())
     transition_weights_2AFC.clear()
     if model_type != "glmhmmt":
         transition_weights_2AFC.set_axis_off()
-        transition_weights_2AFC.text(0.5, 0.5, "Transition", ha="center", va="center", )
-        transition_weights_2AFC.text(0.5, 0.3, "Weights", ha="center", va="center",)
+        transition_weights_2AFC.text(0.5, 0.5, "Transition", ha="center", va="center")
+        transition_weights_2AFC.text(0.5, 0.3, "Weights", ha="center", va="center")
     else:
+
         sns.boxplot(
             data=transition_plot_dfs["2AFC_DRUG"],
             x="feature_label",
             y="weight",
+            hue="transition_label",
             order=transition_orders["2AFC_DRUG"],
-            color="tab:gray",
+            palette=palette,
             ax=transition_weights_2AFC,
             **boxplot_STYLE,
         )
+
         transition_weights_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-        add_one_sample_zero_annotations(transition_weights_2AFC, transition_plot_dfs["2AFC_DRUG"], x="feature_label", y="weight",
-                                        order=transition_orders["2AFC_DRUG"])
-    transition_weights_2AFC.set_title(task_labels["2AFC_DRUG"])
+
+        # add_one_sample_zero_annotations(
+        #     transition_weights_2AFC,
+        #     transition_plot_dfs["2AFC_DRUG"],
+        #     x="feature_label",
+        #     y="weight",
+        #     order=transition_orders["2AFC_DRUG"],
+        # )
+
+        _handles, _ = transition_weights_2AFC.get_legend_handles_labels()
+        transition_weights_2AFC.legend(
+            _handles,
+            ["E→E", "E→D", "D→E", "D→D"],
+            ncols=2,
+            frameon=False,
+             handlelength=0.8,handletextpad=0.4,columnspacing=0.8,
+        )
+
+    # transition_weights_2AFC.set_title(task_labels["2AFC_DRUG"])
     transition_weights_2AFC.set_xlabel("")
+    transition_weights_2AFC.set_ylim(top = 10)
     transition_weights_2AFC.set_ylabel("Transition weight")
     transition_weights_2AFC.tick_params(axis="x", rotation=30)
     if not mount_figure:
-        transition_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_transition_weights").with_suffix(f".{format}"))
+        transition_weights_2AFC.figure.savefig(
+            (path_panels / "2AFC_glmhmmt_transition_weights").with_suffix(f".{format}")
+        )
+
     transition_weights_2AFC
     return
 

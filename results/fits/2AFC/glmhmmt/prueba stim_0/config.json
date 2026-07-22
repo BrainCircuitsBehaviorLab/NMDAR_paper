@@ -1,0 +1,27 @@
+{
+    "task": "2AFC",
+    "tau": 50,
+    "subjects": [
+        "325"
+    ],
+    "emission_cols": [
+        "bias",
+        "stim_param",
+        "choice_lag_param"
+    ],
+    "transition_cols": [
+        "cumulative_reward"
+    ],
+    "frozen_emissions": {
+        "1": {
+            "stim_param": 0.0
+        }
+    },
+    "baseline_class_idx": 0,
+    "K_list": [
+        2
+    ],
+    "model_id": "prueba stim_0",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 0
+}
