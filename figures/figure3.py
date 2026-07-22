@@ -220,11 +220,7 @@ app._unparsable_cell(
         "stim": "Stim.",
         "stim_param": "Stim.",
         "stim_vals": "Stimulus",
-    <<<<<<< HEAD
         "stim_x_delay_param": "Stim.",
-    =======
-        "stim_x_delay_param": "Stim",
-    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         "choice_lag_param": "A",
         "choice_lag_param_correct": "A",
         "prev_choice": "Prev. choice",
@@ -420,15 +416,9 @@ app._unparsable_cell(
 
         if not whisker_highs:
             return
-    <<<<<<< HEAD
         y_min = min(whisker_lows)
         y_max = max(whisker_highs)
         pad = max((y_max - y_min) * 0.08, 0.05)
-    =======
-        y_min = float(finite.min())
-        y_max = float(np.quantile(finite, 0.95))
-        pad = max((y_max - y_min) * 0.2, 0.05)
-    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         text_y = y_max + pad
         ax.set_ylim(top=text_y + pad)
 
@@ -2116,7 +2106,6 @@ app._unparsable_cell(
         linewidth=psychometric_plot_style["reference_linewidth"],
         alpha=psychometric_plot_style["reference_alpha"],
     )
-    <<<<<<< HEAD
     sns.pointplot(
         data=_data,
         x="x_position",
@@ -2136,9 +2125,6 @@ app._unparsable_cell(
     psychometric_by_state_2ADC.set_xticklabels([f"{value:g}" for value in delay_order])
     psychometric_by_state_2ADC.axhline(0.5, color="0.5", linestyle="--")
     # psychometric_by_state_2ADC.set_title(task_labels["2AFC_delay"])
-    =======
-    psychometric_by_state_2ADC.set_title("")
-    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     psychometric_by_state_2ADC.set_xlabel(psychometric_x_labels["2AFC_delay"])
     psychometric_by_state_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_state_2ADC.set_ylim(0, 1)
@@ -2188,11 +2174,7 @@ app._unparsable_cell(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-    <<<<<<< HEAD
         markers="o",
-    =======
-        markers='.',
-    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         linestyles="none",
         native_scale=True,
         palette=state_palette,

@@ -26,10 +26,6 @@ app._unparsable_cell(
     from glmhmmt.tasks import get_adapter
     from glmhmmt.runtime import configure_paths
     from glmhmmt.tasks.fitted_regressors import FittedWeightRegressorSpec, mean_feature_weights_from_fit
-    <<<<<<< HEAD
-    =======
-    from src.plots.common import fig_size
-    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     from src.process.common import attach_signed_delay_columns
     from src.plots.common import plot_mean_over_data, psychometric_repeat, fig_size
 
