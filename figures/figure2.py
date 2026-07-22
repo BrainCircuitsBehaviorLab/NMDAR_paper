@@ -1168,6 +1168,7 @@ def _(
 
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
     pc_action_2ADC = plt.gca() if not mount_figure else axd["pc_action_2ADC"]
+    pc_action_2ADC.clear()
     _at_palette = dict(zip(action_trace_order_2ADC, sns.color_palette("viridis", len(action_trace_order_2ADC)), strict=False))
 
     sns.lineplot(
@@ -2224,6 +2225,7 @@ def _(
     _task_labels = {"2AFC_delay": "2ADC", "2AFC": "2AFC", "MCDR": "MCDR"}
     band_position_by_task = {}
     band_position_source_by_task = {}
+    accuracy_band_position_by_task = {}
     conditional_accuracy_below_by_task = {}
 
     def _append_band_position_rows(_rows, _session_data, *, _subject, _session, _source):
@@ -2259,6 +2261,29 @@ def _(
                 }
             )
 
+    def _append_accuracy_band_rows(_rows, _session_data, *, _subject, _session):
+        _session_data = add_stationary_accuracy_band(_session_data)
+        _band_data = _session_data[
+            [
+                "accuracy_window_fraction",
+                "stationary_accuracy_low",
+                "stationary_accuracy_high",
+            ]
+        ].dropna()
+        _observed = _band_data["accuracy_window_fraction"]
+        for _position, _mask in [
+            ("Below", _observed < _band_data["stationary_accuracy_low"]),
+            ("Above", _observed > _band_data["stationary_accuracy_high"]),
+        ]:
+            _rows.append(
+                {
+                    "subject": str(_subject),
+                    "session": str(_session),
+                    "position": _position,
+                    "proportion": float(_mask.mean()),
+                }
+            )
+
     def _glm_pdf_for_task(_task):
         _simulated_df = autocorrelograms_by_task.get(_task, {}).get("glm", {}).get(
             "simulated_df",
@@ -2271,6 +2296,7 @@ def _(
     for _task in task_names:
         _session_rows = []
         _source_session_rows = []
+        _accuracy_session_rows = []
         _conditional_session_rows = []
         _glm_pdf = _glm_pdf_for_task(_task)
         _glm_trial_col = "trial_index" if "trial_index" in _glm_pdf.columns else "trial_idx"
@@ -2329,6 +2355,12 @@ def _(
                 _subject=_subject,
                 _session=_session,
                 _source="Data",
+            )
+            _append_accuracy_band_rows(
+                _accuracy_session_rows,
+                _session_data,
+                _subject=_subject,
+                _session=_session,
             )
             _data_source_rows = _session_rows[_session_row_start:]
 
@@ -2424,6 +2456,23 @@ def _(
             )
         band_position_source_by_task[_task] = _source_subject_summary
 
+        _accuracy_subject_summary = (
+            pd.DataFrame(_accuracy_session_rows)
+            .groupby(["subject", "position"], as_index=False)["proportion"]
+            .mean()
+        )
+        _accuracy_subject_summary["position"] = pd.Categorical(
+            _accuracy_subject_summary["position"],
+            categories=band_position_order,
+            ordered=True,
+        )
+        _accuracy_subject_summary = _accuracy_subject_summary.sort_values(
+            ["position", "subject"]
+        )
+        _accuracy_subject_summary["task"] = _task
+        _accuracy_subject_summary["task_label"] = _task_labels.get(_task, _task)
+        accuracy_band_position_by_task[_task] = _accuracy_subject_summary
+
         _conditional_subject_summary = (
             pd.DataFrame(
                 _conditional_session_rows,
@@ -2450,6 +2499,7 @@ def _(
         _conditional_subject_summary["task_label"] = _task_labels.get(_task, _task)
         conditional_accuracy_below_by_task[_task] = _conditional_subject_summary
     return (
+        accuracy_band_position_by_task,
         band_position_by_task,
         band_position_order,
         band_position_source_by_task,
@@ -2484,7 +2534,7 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     fixed_band_position_2ADC = plt.gca() if not mount_figure or "boxplot_band_2ADC" not in axd else axd["boxplot_band_2ADC"]
 
-    _plot_df = band_position_by_task["2AFC_delay"]
+    _plot_df = band_position_by_task["2AFC_delay"] 
     _plot_df = _plot_df[_plot_df["position"] != "In"]
     sns.boxplot(
         data=_plot_df,
@@ -2516,6 +2566,67 @@ def _(
         (path_panels / "2ADC_fixed_accuracy_band_position").with_suffix(f".{format}")
     )
     fixed_band_position_2ADC
+    return
+
+
+@app.cell
+def _(
+    accuracy_band_position_by_task,
+    axd,
+    band_position_order,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    ttest_1samp,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    stationary_accuracy_band_position_2ADC = plt.gca() if not mount_figure or "boxplot_acc_band_2ADC" not in axd else axd["boxplot_acc_band_2ADC"]
+
+    _plot_df = accuracy_band_position_by_task["2AFC_delay"]
+    sns.boxplot(
+        data=_plot_df,
+        x="position",
+        y="proportion",
+        order=band_position_order,
+        color="tab:blue",
+        ax=stationary_accuracy_band_position_2ADC,
+        **boxplot_STYLE,
+    )
+    stationary_accuracy_band_position_2ADC.axhline(0.025, ls="--", color="0.5")
+    stationary_accuracy_band_position_2ADC.set_xlabel("")
+    stationary_accuracy_band_position_2ADC.set_ylabel("Proportion of trials")
+    stationary_accuracy_band_position_2ADC.set_ylim(0, 0.5)
+    for _x_idx, _position in enumerate(band_position_order):
+        _values = pd.to_numeric(
+            _plot_df.loc[_plot_df["position"] == _position, "proportion"],
+            errors="coerce",
+        ).dropna()
+        if len(_values) < 2:
+            continue
+        _pvalue = float(
+            ttest_1samp(_values.to_numpy(dtype=float), popmean=0.025, alternative = "greater").pvalue
+        )
+        print(_pvalue)
+        _stars = "***" if _pvalue < 0.001 else "**" if _pvalue < 0.01 else "*" if _pvalue < 0.05 else "ns"
+        _text_y = min(
+            float(_values.quantile(0.75) - _values.quantile(0.25)) * 1.5
+            + _values.quantile(0.75),
+            max(_values),
+        ) + 0.02
+        stationary_accuracy_band_position_2ADC.text(
+            _x_idx, _text_y, _stars, ha="center", va="bottom"
+        )
+    stationary_accuracy_band_position_2ADC.figure.savefig(
+        (path_panels / "2ADC_stationary_accuracy_band_position").with_suffix(
+            f".{format}"
+        )
+    )
+    stationary_accuracy_band_position_2ADC
     return
 
 
@@ -2725,6 +2836,66 @@ def _(
 
 @app.cell
 def _(
+    accuracy_band_position_by_task,
+    axd,
+    band_position_order,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    ttest_1samp,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    stationary_accuracy_band_position_2AFC = plt.gca() if not mount_figure or "boxplot_acc_band_2AFC" not in axd else axd["boxplot_acc_band_2AFC"]
+
+    _plot_df = accuracy_band_position_by_task["2AFC"]
+    sns.boxplot(
+        data=_plot_df,
+        x="position",
+        y="proportion",
+        order=band_position_order,
+        color="tab:blue",
+        ax=stationary_accuracy_band_position_2AFC,
+        **boxplot_STYLE,
+    )
+    stationary_accuracy_band_position_2AFC.axhline(0.025, ls="--", color="0.5")
+    stationary_accuracy_band_position_2AFC.set_xlabel("")
+    stationary_accuracy_band_position_2AFC.set_ylabel("Proportion of trials")
+    stationary_accuracy_band_position_2AFC.set_ylim(0, 0.5)
+    for _x_idx, _position in enumerate(band_position_order):
+        _values = pd.to_numeric(
+            _plot_df.loc[_plot_df["position"] == _position, "proportion"],
+            errors="coerce",
+        ).dropna()
+        if len(_values) < 2:
+            continue
+        _pvalue = float(
+            ttest_1samp(_values.to_numpy(dtype=float), popmean=0.025).pvalue
+        )
+        _stars = "***" if _pvalue < 0.001 else "**" if _pvalue < 0.01 else "*" if _pvalue < 0.05 else "ns"
+        _text_y = min(
+            float(_values.quantile(0.75) - _values.quantile(0.25)) * 1.5
+            + _values.quantile(0.75),
+            max(_values),
+        ) + 0.02
+        stationary_accuracy_band_position_2AFC.text(
+            _x_idx, _text_y, _stars, ha="center", va="bottom"
+        )
+    stationary_accuracy_band_position_2AFC.figure.savefig(
+        (path_panels / "2AFC_stationary_accuracy_band_position").with_suffix(
+            f".{format}"
+        )
+    )
+    stationary_accuracy_band_position_2AFC
+    return
+
+
+@app.cell
+def _(
     boxplot_STYLE,
     conditional_accuracy_below_by_task,
     fig_size,
@@ -2915,6 +3086,64 @@ def _(
         (path_panels / "MCDR_fixed_accuracy_band_position").with_suffix(f".{format}")
     )
     fixed_band_position_MCDR
+    return
+
+
+@app.cell
+def _(
+    accuracy_band_position_by_task,
+    band_position_order,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    ttest_1samp,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    stationary_accuracy_band_position_MCDR = plt.gca()
+
+    _plot_df = accuracy_band_position_by_task["MCDR"]
+    sns.boxplot(
+        data=_plot_df,
+        x="position",
+        y="proportion",
+        order=band_position_order,
+        color="tab:blue",
+        ax=stationary_accuracy_band_position_MCDR,
+        **boxplot_STYLE,
+    )
+    stationary_accuracy_band_position_MCDR.axhline(0.025, ls="--", color="0.5")
+    stationary_accuracy_band_position_MCDR.set_xlabel("")
+    stationary_accuracy_band_position_MCDR.set_ylabel("Proportion of trials")
+    stationary_accuracy_band_position_MCDR.set_ylim(0, 1)
+    for _x_idx, _position in enumerate(band_position_order):
+        _values = pd.to_numeric(
+            _plot_df.loc[_plot_df["position"] == _position, "proportion"],
+            errors="coerce",
+        ).dropna()
+        if len(_values) < 2:
+            continue
+        _pvalue = float(
+            ttest_1samp(_values.to_numpy(dtype=float), popmean=0.025).pvalue
+        )
+        _stars = "***" if _pvalue < 0.001 else "**" if _pvalue < 0.01 else "*" if _pvalue < 0.05 else "ns"
+        _text_y = min(
+            float(_values.quantile(0.75) - _values.quantile(0.25)) * 1.5
+            + _values.quantile(0.75),
+            max(_values),
+        ) + 0.02
+        stationary_accuracy_band_position_MCDR.text(
+            _x_idx, _text_y, _stars, ha="center", va="bottom"
+        )
+    stationary_accuracy_band_position_MCDR.figure.savefig(
+        (path_panels / "MCDR_stationary_accuracy_band_position").with_suffix(
+            f".{format}"
+        )
+    )
+    stationary_accuracy_band_position_MCDR
     return
 
 
@@ -4060,7 +4289,7 @@ def _(axd, fig, format, mount_figure, project_path):
             if not _name.startswith("_model_comparison_parent"):
                 _ax.set_ylabel("")
             _legend = _ax.get_legend()
-            if _legend is not None and not _ax in [ axd["i"]]:
+            if _legend is not None and not _ax in [ axd["i"], axd["pc_action_2ADC"]]:
                 _legend.remove()
 
         # Running frations
@@ -4088,6 +4317,10 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_action_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_action_2ADC"].set_ylabel("p(right)")
         axd["pc_action_2ADC"].set_xlabel("Evidence")
+        axd["pc_action_2ADC"].legend(
+            *axd["pc_action_2ADC"].get_legend_handles_labels()[:3], handlelength=0.5, ncol=1, frameon=False, loc="upper left", bbox_to_anchor=(-0.05, 1.1),
+            columnspacing=0.5, handletextpad=0.5, labelspacing = 0.25)
+    
         axd["pc_evi_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2ADC"].set_yticklabels([])
         axd["pc_evi_2ADC"].set_xlabel("Action trace")
@@ -4096,6 +4329,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_action_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_action_2AFC"].set_yticklabels([])
         axd["pc_action_2AFC"].set_xlabel("Evidence")
+    
         axd["pc_evi_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2AFC"].set_yticklabels([])
         axd["pc_evi_2AFC"].set_xlabel("Action trace")

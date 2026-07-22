@@ -63,6 +63,7 @@ def _():
 
     return (
         Annotator,
+        FuncFormatter,
         Path,
         add_choice_lag_summary_regressor,
         build_session_repetition_data,
@@ -97,6 +98,7 @@ def _():
         process_two_adc,
         process_two_afc,
         sns,
+        ttest_1samp,
     )
 
 
@@ -177,7 +179,7 @@ def _(Path, configure_paths, format, get_runtime_paths, os):
     os.makedirs(path_panels, exist_ok=True)
     print(project_path)
     print(path_panels)
-    return path_panels, paths
+    return ROOT, path_panels, paths
 
 
 @app.cell(hide_code=True)
@@ -188,9 +190,9 @@ def _(mo):
     return
 
 
-app._unparsable_cell(
-    r"""
-    sns.set_theme(style="ticks", context="poster")
+@app.cell
+def _(ROOT, plt, sns):
+    sns.set_theme(style="ticks", context="paper")
     plt.style.use(ROOT / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = "none"
     plt.rcParams["savefig.bbox"] = "standard"
@@ -235,9 +237,13 @@ app._unparsable_cell(
     }
     delay_order = [-0.1, -1, -3, -10, 10, 3, 1, 0.1]
     delay_mapping = {value: index for index, value in enumerate(delay_order)}
-    """,
-    name="_"
-)
+    return (
+        delay_order,
+        feature_labels,
+        state_palette,
+        task_labels,
+        task_palette,
+    )
 
 
 @app.cell
@@ -277,8 +283,8 @@ def _(feature_labels):
     return (with_feature_labels,)
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
     state_order = ["Engaged", "Disengaged"]
 
 
@@ -463,9 +469,6 @@ app._unparsable_cell(
         format_delta_bic_axis,
         state_order,
     )
-    """,
-    name="_"
-)
 
 
 @app.cell(hide_code=True)
@@ -1237,12 +1240,6 @@ def _(mo):
 
 
 @app.cell
-def _(sns):
-    sns.set_context("poster")
-    return
-
-
-@app.cell
 def _(
     autocorrelograms_by_task,
     axd,
@@ -1559,12 +1556,6 @@ def _(mo):
     mo.md(r"""
     ### 2ADC
     """)
-    return
-
-
-@app.cell
-def _(sns):
-    sns.set_context("poster")
     return
 
 
@@ -1917,8 +1908,24 @@ def _(mo):
     return
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _(
+    axd,
+    delay_order,
+    fig_size,
+    format,
+    mount_figure,
+    np,
+    path_panels,
+    pd,
+    plot_dfs,
+    plt,
+    psychometric_plot_style,
+    psychometric_x_labels,
+    sns,
+    state_palette,
+    views,
+):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2ADC", plt.gca())
     psychometric_by_state_2ADC.clear()
@@ -2135,9 +2142,7 @@ app._unparsable_cell(
     if not mount_figure:
         psychometric_by_state_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2ADC
-    """,
-    name="_"
-)
+    return
 
 
 @app.cell(hide_code=True)
@@ -2148,8 +2153,20 @@ def _(mo):
     return
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _(
+    axd,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    plt,
+    psychometric_dfs,
+    psychometric_plot_style,
+    psychometric_x_labels,
+    sns,
+    state_palette,
+):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2AFC", plt.gca())
     psychometric_by_state_2AFC.clear()
@@ -2211,9 +2228,7 @@ app._unparsable_cell(
     if not mount_figure:
         psychometric_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2AFC
-    """,
-    name="_"
-)
+    return
 
 
 @app.cell(hide_code=True)

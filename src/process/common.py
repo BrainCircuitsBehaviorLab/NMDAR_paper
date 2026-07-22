@@ -795,6 +795,13 @@ def glmhmmt_transition_weights_df(arrays_by_subject: dict, views_by_subject: dic
 
         view = (views_by_subject or {}).get(subject)
         if weights.ndim == 3:
+            K = int(getattr(view, "K", weights.shape[0]))
+            weights = _expand_self_baseline_transition_array(
+                weights,
+                K=K,
+                trailing_shape=(weights.shape[-1],),
+                name="transition_weights",
+            )
             for source_idx in range(weights.shape[0]):
                 source_label = _state_label(view, source_idx)
                 for destination_idx in range(weights.shape[1]):
@@ -4828,6 +4835,32 @@ def _input_driven_transition_weights_with_baseline(weights: np.ndarray, *, K: in
     )
 
 
+def _expand_self_baseline_transition_array(
+    values: np.ndarray,
+    *,
+    K: int,
+    trailing_shape: tuple[int, ...] = (),
+    name: str,
+) -> np.ndarray:
+    """Restore zero-valued self-transition references in GLM-HMM-T arrays."""
+    values = np.asarray(values, dtype=float)
+    full_shape = (K, K, *trailing_shape)
+    compact_shape = (K, K - 1, *trailing_shape)
+    if values.shape == full_shape:
+        return values
+    if values.shape != compact_shape:
+        raise ValueError(
+            f"{name} must have full shape {full_shape} or self-baseline shape "
+            f"{compact_shape}; got {values.shape}."
+        )
+
+    full = np.zeros(full_shape, dtype=values.dtype)
+    for source_idx in range(K):
+        nonself_targets = [target_idx for target_idx in range(K) if target_idx != source_idx]
+        full[source_idx, nonself_targets, ...] = values[source_idx]
+    return full
+
+
 def autocorrelogram_transition_matrices(arrays: dict, *, K: int, T: int) -> np.ndarray:
     """Build A[t, i, j] = p(z[t+1]=j | z[t]=i) for closed-loop simulations."""
     if T <= 1:
@@ -4840,14 +4873,24 @@ def autocorrelogram_transition_matrices(arrays: dict, *, K: int, T: int) -> np.n
         bias = np.asarray(transition_bias, dtype=float)
         weights = np.asarray(transition_weights, dtype=float)
         U = np.asarray(U, dtype=float)
-        if bias.shape != (K, K):
-            raise ValueError(f"transition_bias must have shape {(K, K)}, got {bias.shape}.")
         if U.ndim != 2 or U.shape[0] != T:
             raise ValueError(f"U must have shape (T, D) with T={T}, got {U.shape}.")
 
+        bias = _expand_self_baseline_transition_array(
+            bias,
+            K=K,
+            name="transition_bias",
+        )
+
         # GLM-HMM-T transition inputs are destination/current-trial aligned:
         # U[t + 1] drives the transition from trial t to t + 1.
-        if weights.ndim == 3 and weights.shape[:2] == (K, K):
+        if weights.ndim == 3:
+            weights = _expand_self_baseline_transition_array(
+                weights,
+                K=K,
+                trailing_shape=(U.shape[1],),
+                name="transition_weights",
+            )
             if U.shape[1] != weights.shape[2]:
                 raise ValueError(f"U width ({U.shape[1]}) does not match transition_weights width ({weights.shape[2]}).")
             input_logits = np.einsum("td,ijd->tij", U[1:], weights)

@@ -10,8 +10,8 @@ __generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
-app._unparsable_cell(
-    r"""
+@app.cell
+def _():
     # Imports
     from pathlib import Path
     import marimo as mo
@@ -46,15 +46,12 @@ app._unparsable_cell(
         psychometric_repeat,
         sns,
     )
-    """,
-    name="_"
-)
 
 
 @app.cell
 def _(Path, fig_size, plt, sns):
     # Set style
-    sns.set_theme(style='ticks', context='poster')
+    sns.set_theme(style='ticks', context='notebook')
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     figsize = fig_size(n_cols=3)
     plt.rcParams["svg.fonttype"] = 'none'
