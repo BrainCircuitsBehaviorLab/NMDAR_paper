@@ -63,7 +63,6 @@ def _():
 
     return (
         Annotator,
-        FuncFormatter,
         Path,
         add_choice_lag_summary_regressor,
         build_session_repetition_data,
@@ -98,7 +97,6 @@ def _():
         process_two_adc,
         process_two_afc,
         sns,
-        ttest_1samp,
     )
 
 
@@ -143,7 +141,7 @@ def _():
 
 @app.cell
 def _():
-    format = "pdf"
+    format = "svg"
     return (format,)
 
 
@@ -179,7 +177,7 @@ def _(Path, configure_paths, format, get_runtime_paths, os):
     os.makedirs(path_panels, exist_ok=True)
     print(project_path)
     print(path_panels)
-    return ROOT, path_panels, paths
+    return path_panels, paths
 
 
 @app.cell(hide_code=True)
@@ -190,8 +188,8 @@ def _(mo):
     return
 
 
-@app.cell
-def _(ROOT, plt, sns):
+app._unparsable_cell(
+    r"""
     sns.set_theme(style="ticks", context="poster")
     plt.style.use(ROOT / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = "none"
@@ -222,11 +220,11 @@ def _(ROOT, plt, sns):
         "stim": "Stim.",
         "stim_param": "Stim.",
         "stim_vals": "Stimulus",
-<<<<<<< HEAD
+    <<<<<<< HEAD
         "stim_x_delay_param": "Stim.",
-=======
+    =======
         "stim_x_delay_param": "Stim",
->>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
+    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         "choice_lag_param": "A",
         "choice_lag_param_correct": "A",
         "prev_choice": "Prev. choice",
@@ -241,7 +239,9 @@ def _(ROOT, plt, sns):
     }
     delay_order = [-0.1, -1, -3, -10, 10, 3, 1, 0.1]
     delay_mapping = {value: index for index, value in enumerate(delay_order)}
-    return feature_labels, state_palette, task_labels, task_palette
+    """,
+    name="_"
+)
 
 
 @app.cell
@@ -281,8 +281,8 @@ def _(feature_labels):
     return (with_feature_labels,)
 
 
-@app.cell
-def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
+app._unparsable_cell(
+    r"""
     state_order = ["Engaged", "Disengaged"]
 
 
@@ -420,15 +420,15 @@ def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
 
         if not whisker_highs:
             return
-<<<<<<< HEAD
+    <<<<<<< HEAD
         y_min = min(whisker_lows)
         y_max = max(whisker_highs)
         pad = max((y_max - y_min) * 0.08, 0.05)
-=======
+    =======
         y_min = float(finite.min())
         y_max = float(np.quantile(finite, 0.95))
         pad = max((y_max - y_min) * 0.2, 0.05)
->>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
+    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         text_y = y_max + pad
         ax.set_ylim(top=text_y + pad)
 
@@ -473,6 +473,9 @@ def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
         format_delta_bic_axis,
         state_order,
     )
+    """,
+    name="_"
+)
 
 
 @app.cell(hide_code=True)
@@ -1924,22 +1927,8 @@ def _(mo):
     return
 
 
-@app.cell
-def _(
-    axd,
-    fig_size,
-    format,
-    mount_figure,
-    np,
-    path_panels,
-    pd,
-    plot_dfs,
-    plt,
-    psychometric_plot_style,
-    psychometric_x_labels,
-    state_palette,
-    views,
-):
+app._unparsable_cell(
+    r"""
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2ADC", plt.gca())
     psychometric_by_state_2ADC.clear()
@@ -2127,7 +2116,7 @@ def _(
         linewidth=psychometric_plot_style["reference_linewidth"],
         alpha=psychometric_plot_style["reference_alpha"],
     )
-<<<<<<< HEAD
+    <<<<<<< HEAD
     sns.pointplot(
         data=_data,
         x="x_position",
@@ -2147,9 +2136,9 @@ def _(
     psychometric_by_state_2ADC.set_xticklabels([f"{value:g}" for value in delay_order])
     psychometric_by_state_2ADC.axhline(0.5, color="0.5", linestyle="--")
     # psychometric_by_state_2ADC.set_title(task_labels["2AFC_delay"])
-=======
+    =======
     psychometric_by_state_2ADC.set_title("")
->>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
+    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     psychometric_by_state_2ADC.set_xlabel(psychometric_x_labels["2AFC_delay"])
     psychometric_by_state_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_state_2ADC.set_ylim(0, 1)
@@ -2160,7 +2149,9 @@ def _(
     if not mount_figure:
         psychometric_by_state_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2ADC
-    return
+    """,
+    name="_"
+)
 
 
 @app.cell(hide_code=True)
@@ -2171,20 +2162,8 @@ def _(mo):
     return
 
 
-@app.cell
-def _(
-    axd,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    plt,
-    psychometric_dfs,
-    psychometric_plot_style,
-    psychometric_x_labels,
-    sns,
-    state_palette,
-):
+app._unparsable_cell(
+    r"""
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2AFC", plt.gca())
     psychometric_by_state_2AFC.clear()
@@ -2209,11 +2188,11 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
-<<<<<<< HEAD
+    <<<<<<< HEAD
         markers="o",
-=======
+    =======
         markers='.',
->>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
+    >>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
         linestyles="none",
         native_scale=True,
         palette=state_palette,
@@ -2250,7 +2229,9 @@ def _(
     if not mount_figure:
         psychometric_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2AFC
-    return
+    """,
+    name="_"
+)
 
 
 @app.cell(hide_code=True)

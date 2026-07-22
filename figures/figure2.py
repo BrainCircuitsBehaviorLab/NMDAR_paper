@@ -30,6 +30,7 @@ def _():
     import marimo as mo
     import matplotlib.image as mpimg
     import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
     import numpy as np
     import pandas as pd
     import polars as pl
@@ -308,16 +309,17 @@ def _(fig_size, mount_figure, plt):
                 ["single_sess_acc_2ADC", "single_sess_acc_2ADC", "single_sess_acc_2AFC", "single_sess_acc_2AFC"],
                 # ["_running_legend", "_running_legend", "_running_legend", "_running_legend"],
                 # ["hist_correct_2ADC", "hist_repeat_2ADC", "hist_correct_2AFC", "hist_repeat_2AFC"], 
-                ["boxplot_band_2ADC", "hist_repeat_2ADC", "boxplot_band_2AFC", "hist_repeat_2AFC"],
+                ["boxplot_band_2ADC", "boxplot_acc_band_2ADC", "boxplot_band_2AFC", "boxplot_acc_band_2AFC"],
+                ["pc_action_2ADC", "pc_evi_2ADC", "pc_action_2AFC", "pc_evi_2AFC"],
                 # ["a", "a", "b", "b"],
                 ["e", "f", "g", "h"],
                 ["i", "k", "j", "l"]
                 # ["i", "i", "j", "j"],
                 # ["k", "k", "l", "l"],
             ],
-            figsize=fig_size(1,0.8),
+            figsize=fig_size(0),
             constrained_layout=True,
-            # gridspec_kw={"height_ratios": [1.1, 1, 1, 1]},
+            gridspec_kw={"height_ratios": [1, 1, 1, 1, 1, 1]},
         )
         # fig.set_constrained_layout_pads(
         #         w_pad=0.01,
@@ -458,13 +460,12 @@ def _(
         _ax.set_xlim(0,20.5)
 
         _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
-
         _minor_pos = [i for i in range(20) if i not in _major_pos]
         _ax.set_xticks(_major_pos)
         _ax.set_xticklabels([str(i + 1) for i in _major_pos])
-        _ax.set_xticks(_minor_pos, minor=True)
-        _ax.tick_params(axis='x', which='major', length=6)
-        _ax.tick_params(axis='x', which='minor', length=3)
+        # _ax.set_xticks(_minor_pos, minor=True)
+        # _ax.tick_params(axis='x', which='major', length=6)
+        # _ax.tick_params(axis='x', which='minor', length=3)
 
         if _signal == "Repetition":
             _ax.set_ylim(top=0.15)
@@ -548,13 +549,12 @@ def _(
         _ax.set_xlim(0,20.5)
 
         _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
-
         _minor_pos = [i for i in range(20) if i not in _major_pos]
         _ax.set_xticks(_major_pos)
         _ax.set_xticklabels([str(i + 1) for i in _major_pos])
-        _ax.set_xticks(_minor_pos, minor=True)
-        _ax.tick_params(axis='x', which='major', length=6)
-        _ax.tick_params(axis='x', which='minor', length=3)
+        # _ax.set_xticks(_minor_pos, minor=True)
+        # _ax.tick_params(axis='x', which='major', length=6)
+        # _ax.tick_params(axis='x', which='minor', length=3)
 
         if _signal == "Repetition":
             _ax.set_ylim(top=0.15)
@@ -657,13 +657,6 @@ def _(mo):
 
 
 @app.cell
-def _():
-    import matplotlib.ticker as mticker
-
-    return
-
-
-@app.cell
 def _(
     axd,
     boxplot_STYLE,
@@ -692,21 +685,19 @@ def _(
         ax=prev_choices_2ADC,
         **boxplot_STYLE,
     )
-    prev_choices_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+    prev_choices_2ADC.axhline(0, color="0.5", linestyle="--")
     # prev_choices_2ADC.set_title("2ADC")
     prev_choices_2ADC.set_title("Prev. Choices")
     prev_choices_2ADC.set_ylabel("Weight")
     prev_choices_2ADC.set_xlabel("Lag")
 
     _major_pos = [i for i in range(len(_order)) if (i + 1) % 5 == 0 or (i + 1) == 1]
-
     _minor_pos = [i for i in range(len(_order)) if i not in _major_pos]
     prev_choices_2ADC.set_xticks(_major_pos)
     prev_choices_2ADC.set_xticklabels([str(i + 1) for i in _major_pos])
-    prev_choices_2ADC.set_xticks(_minor_pos, minor=True)
-    prev_choices_2ADC.tick_params(axis='x', which='major', length=6)
-    prev_choices_2ADC.tick_params(axis='x', which='minor', length=3)
-
+    # prev_choices_2ADC.set_xticks(_minor_pos, minor=True)
+    # prev_choices_2ADC.tick_params(axis='x', which='major', length=6)
+    # prev_choices_2ADC.tick_params(axis='x', which='minor', length=3)
 
     prev_choices_2ADC.set_ylim(-0.1,0.85)
 
@@ -759,7 +750,7 @@ def _(
         ax=stim_2ADC,
         **boxplot_STYLE,
     )
-    stim_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+    stim_2ADC.axhline(0, color="0.5", linestyle="--")
     stim_2ADC.set_xlabel("")
     stim_2ADC.set_title("Stimulus")
     stim_2ADC.set_ylabel("Weight")
@@ -818,20 +809,19 @@ def _(
         ax=prev_choices_2AFC,
         **boxplot_STYLE,
     )
-    prev_choices_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+    prev_choices_2AFC.axhline(0, color="0.5", linestyle="--")
     # prev_choices_2AFC.set_title("2AFC")
     prev_choices_2AFC.set_ylabel("Weight")
     prev_choices_2AFC.set_xlabel("Lag")
 
     _major_pos = [i for i in range(len(_order)) if (i + 1) % 5 == 0 or (i + 1) == 1]
-
     _minor_pos = [i for i in range(len(_order)) if i not in _major_pos]
     prev_choices_2AFC.set_title("Prev. Choices")
     prev_choices_2AFC.set_xticks(_major_pos)
     prev_choices_2AFC.set_xticklabels([str(i + 1) for i in _major_pos])
-    prev_choices_2AFC.set_xticks(_minor_pos, minor=True)
-    prev_choices_2AFC.tick_params(axis='x', which='major', length=6)
-    prev_choices_2AFC.tick_params(axis='x', which='minor', length=3)
+    # prev_choices_2AFC.set_xticks(_minor_pos, minor=True)
+    # prev_choices_2AFC.tick_params(axis='x', which='major', length=6)
+    # prev_choices_2AFC.tick_params(axis='x', which='minor', length=3)
     prev_choices_2AFC.set_ylim(-0.1,0.85)
     if not mount_figure:
         prev_choices_2AFC.figure.savefig((path_panels / "2AFC_prev_choices").with_suffix(f".{format}"))
@@ -876,7 +866,7 @@ def _(
         ax=stim_2AFC,
         **boxplot_STYLE,
     )
-    stim_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+    stim_2AFC.axhline(0, color="0.5", linestyle="--")
     # stim_2AFC.set_title("2AFC")
     stim_2AFC.set_title("Stimulus")
     stim_2AFC.set_ylabel("Weight")
@@ -1135,9 +1125,11 @@ def _(pl, plot_dfs):
 @app.cell
 def _(
     action_trace_order_2ADC,
+    axd,
     binned_df_2ADC,
     fig_size,
     format,
+    mount_figure,
     path_panels,
     pl,
     plt,
@@ -1175,7 +1167,7 @@ def _(
     )
 
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    pc_action_2ADC = plt.gca()
+    pc_action_2ADC = plt.gca() if not mount_figure else axd["pc_action_2ADC"]
     _at_palette = dict(zip(action_trace_order_2ADC, sns.color_palette("viridis", len(action_trace_order_2ADC)), strict=False))
 
     sns.lineplot(
@@ -1213,9 +1205,11 @@ def _(
 
 @app.cell
 def _(
+    axd,
     binned_df_2ADC,
     fig_size,
     format,
+    mount_figure,
     path_panels,
     pl,
     plt,
@@ -1260,7 +1254,7 @@ def _(
     )
 
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    pc_stim_2ADC = plt.gca()
+    pc_stim_2ADC = plt.gca() if not mount_figure else axd["pc_evi_2ADC"]
 
     sns.lineplot(
         data=_action_model_mean,
@@ -1333,9 +1327,11 @@ def _(pl, plot_dfs):
 @app.cell
 def _(
     action_trace_order,
+    axd,
     binned_df_2AFC,
     fig_size,
     format,
+    mount_figure,
     path_panels,
     pl,
     plt,
@@ -1373,7 +1369,7 @@ def _(
     )
 
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    pc_action_2AFC = plt.gca()
+    pc_action_2AFC = plt.gca() if not mount_figure else axd["pc_action_2AFC"]
     _at_palette = dict(zip(action_trace_order, sns.color_palette("viridis", len(action_trace_order)), strict=False))
 
     sns.lineplot(
@@ -1411,9 +1407,11 @@ def _(
 
 @app.cell
 def _(
+    axd,
     binned_df_2AFC,
     fig_size,
     format,
+    mount_figure,
     path_panels,
     pl,
     plt,
@@ -1459,7 +1457,7 @@ def _(
 
 
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    pc_stim_2AFC = plt.gca()
+    pc_stim_2AFC = plt.gca() if not mount_figure else axd["pc_evi_2AFC"]
 
     sns.lineplot(
         data=_action_model_mean,
@@ -3803,31 +3801,6 @@ def _(mo):
 
 
 @app.cell
-def _():
-    8.27 - 6.26771653543307
-    11.69 
-    return
-
-
-@app.cell
-def _(fig_size):
-    fig_size(1)
-    return
-
-
-@app.cell
-def _():
-    ["a", "a", "b", "b"],
-    ["hist_repeat_2ADC", "hist_repeat_2ADC", "hist_repeat_2AFC", "hist_repeat_2AFC"],
-    ["hist_repeat_2ADC", "hist_repeat_2ADC", "hist_repeat_2AFC", "hist_repeat_2AFC"],
-    # ["a", "a", "b", "b"],
-    ["e", "m", "h", "q"],
-    ["i", "i", "k", "k"],
-    ["l", "l", "m", "m"],
-    return
-
-
-@app.cell
 def _(axd, fig, format, mount_figure, project_path):
     if mount_figure:
         for _name, _ax in axd.items():
@@ -3836,89 +3809,79 @@ def _(axd, fig, format, mount_figure, project_path):
             if not _name.startswith("_model_comparison_parent"):
                 _ax.set_ylabel("")
             _legend = _ax.get_legend()
-            if _legend is not None and not _ax in [axd["hist_repeat_2ADC"], axd["i"]]:
+            if _legend is not None and not _ax in [ axd["i"]]:
                 _legend.remove()
 
-        axd["a"].set_ylabel("Running fraction")
+        # Running frations
+        axd["a"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["a"].set_title("2ADC")
-        axd["a"].set_xlabel("Trial")
+        axd["a"].set_xticklabels([])
+        axd["a"].set_ylabel("Running fraction")
+        axd["a"].legend(*axd["a"].get_legend_handles_labels(), handlelength=1, ncol=2, frameon=False, loc="lower right")
 
-        axd["a"].legend(
-            *axd["a"].get_legend_handles_labels(),
-            handlelength=0.4,
-            ncol=2,
-            frameon=False,
-        )
-
+        axd["b"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["b"].set_title("2AFC")
-        axd["b"].set_xlabel("Trial")
+        axd["b"].set_xticklabels([])
+        axd["b"].set_yticklabels([])
 
-        # axd["single_sess_acc_2ADC"].set_ylabel("Running Accuracy")
-        # axd["single_sess_acc_2ADC"].set_xlabel("Trial")
+        axd["single_sess_acc_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+        axd["single_sess_acc_2ADC"].set_ylabel("Running fraction")
+        axd["single_sess_acc_2ADC"].set_xlabel("Trial")
+        axd["single_sess_acc_2ADC"].legend(*axd["single_sess_acc_2ADC"].get_legend_handles_labels(), handlelength=1, ncol=2, frameon=False, loc="lower right")
+        axd["single_sess_acc_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+        axd["single_sess_acc_2AFC"].set_xlabel("Trial")
+        axd["single_sess_acc_2AFC"].set_yticklabels([])
 
-        # axd["single_sess_acc_2AFC"].set_xlabel("Trial")
+        # Psychometric curves
+        axd["pc_action_2ADC"].set_xticks([0, 7], ["-0.1", "0.1"])
+        axd["pc_action_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+        axd["pc_action_2ADC"].set_ylabel("p(right)")
+        axd["pc_action_2ADC"].set_xlabel("Evidence")
+        axd["pc_evi_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+        axd["pc_evi_2ADC"].set_yticklabels([])
+        axd["pc_evi_2ADC"].set_xlabel("Action trace")
 
-        # axd["hist_correct_2ADC"].set_xlabel("Corr. Streak length")
-        # axd["hist_correct_2ADC"].set_ylabel("Count")
+        axd["pc_action_2AFC"].set_xticks([0, 4, 8], ["-20", "0", "20"])
+        axd["pc_action_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+        axd["pc_action_2AFC"].set_yticklabels([])
+        axd["pc_action_2AFC"].set_xlabel("Evidence")
+        axd["pc_evi_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+        axd["pc_evi_2AFC"].set_yticklabels([])
+        axd["pc_evi_2AFC"].set_xlabel("Action trace")
 
-        # axd["hist_repeat_2ADC"].set_ylabel("Count")
-        axd["hist_repeat_2ADC"].set_xlabel("Rep. Streak length")
-        axd["hist_repeat_2ADC"].legend(
-            *axd["hist_repeat_2ADC"].get_legend_handles_labels(),
-            handlelength=1,
-            frameon=False,
-        )
-
-
-        # axd["hist_correct_2ADC"].legend(
-        #     axd["hist_correct_2ADC"].get_legend_handles_labels()[:3],
-        #     handlelength=1,
-        #     frameon=False,
-        #     title = ""
-        # )
-
-        axd["hist_repeat_2AFC"].set_xlabel("Rep. Streak length")
-
-        # axd["hist_correct_2AFC"].set_xlabel("Corr. Streak length")
+        # Proportion of trials above and below the bands of the traces
+        axd["boxplot_band_2ADC"].set_ylabel("Fraction of trials")
 
         axd["e"].set_ylabel("Weight")
         axd["e"].set_xlabel("Delay")
         axd["e"].set_title("Stimulus")
 
         axd["f"].set_title("Prev. Choice")
-        axd["f"].set_xlabel("Lag")
+        axd["f"].set_xlabel("Trial lag")
 
-        axd["g"].set_xlabel("ILD")
+        axd["g"].set_xlabel("|ILD|")
         axd["g"].set_title("Stimulus")
 
         axd["h"].set_title("Prev. Choice")
-        axd["h"].set_xlabel("Lag")
+        axd["h"].set_xlabel("Trial lag")
 
         axd["i"].set_ylabel("Autocorrelation")
-        axd["i"].set_xlabel("Lag")
+        axd["i"].set_xlabel("Trial lag")
         axd["i"].set_title("Outcome")
         axd["i"].legend(
-            *axd["i"].get_legend_handles_labels(),
-            handlelength=0.4,
-            ncol=2,
-            frameon=False,
-            loc="lower left",
-            bbox_to_anchor=(0, -0.06),
-            columnspacing=0.6,
-            handletextpad=0.5,
-        )
+            *axd["i"].get_legend_handles_labels(), handlelength=0.5, ncol=2, frameon=False, loc="lower left", bbox_to_anchor=(0, -0.05), columnspacing=0.5, handletextpad=0.5)
 
         axd["j"].set_title("Outcome")
-        axd["j"].set_xlabel("Lag")
+        axd["j"].set_xlabel("Trial lag")
 
-        axd["k"].set_xlabel("Lag")
+        axd["k"].set_xlabel("Trial lag")
         axd["k"].set_title("Repetition")
 
         axd["l"].set_title("Repetition")
-        axd["l"].set_xlabel("Lag")
+        axd["l"].set_xlabel("Trial lag")
 
-        for _ax in [axd["hist_repeat_2ADC"], axd["hist_repeat_2AFC"]]:
-            _ax.set_ylim(top=1e3)
+        # for _ax in [axd["hist_repeat_2ADC"], axd["hist_repeat_2AFC"]]:
+        #     _ax.set_ylim(top=1e3)
         for _ax in [axd["i"], axd["j"], axd["k"], axd["l"]]:
             _ax.set_xlim(0, 20.5)
 
@@ -3926,11 +3889,6 @@ def _(axd, fig, format, mount_figure, project_path):
         fig.savefig((project_path / "figures" / "panels2" / "figure2").with_suffix(f".{format}"))
 
     fig
-    return
-
-
-@app.cell
-def _():
     return
 
 
