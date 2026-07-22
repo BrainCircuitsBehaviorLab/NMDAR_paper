@@ -19,7 +19,8 @@
         "bias"
     ],
     "transition_cols": [
-        "Drug"
+        "Drug",
+        "filtered_reward"
     ],
     "frozen_emissions": {
         "1": {

@@ -414,10 +414,10 @@ def _(
     plt,
 ):
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure else axd["i"]
+    ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure or "i" not in axd else axd["i"]
     ax_autocorrelograms_2ADC_outcome.clear()
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure else axd["k"]
+    ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure or "k" not in axd else axd["k"]
     ax_autocorrelograms_2ADC_repetition.clear()
 
 
@@ -505,10 +505,10 @@ def _(
     plt,
 ):
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure else axd["j"]
+    ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure or "j" not in axd else axd["j"]
     ax_autocorrelograms_2AFC_outcome.clear()
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure else axd["l"]
+    ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure or "l" not in axd else axd["l"]
     ax_autocorrelograms_2AFC_repetition.clear()
 
     _data_ac = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
@@ -670,7 +670,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    prev_choices_2ADC = plt.gca() if not mount_figure else axd["f"]
+    prev_choices_2ADC = plt.gca() if not mount_figure or "f" not in axd else axd["f"]
     prev_choices_2ADC.clear()
 
     # Filter to just have lagged choices
@@ -729,7 +729,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    stim_2ADC = plt.gca() if not mount_figure else axd["e"]
+    stim_2ADC = plt.gca() if not mount_figure or "e" not in axd else axd["e"]
     stim_2ADC.clear()
 
     # Filter to just have lagged choices
@@ -794,7 +794,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    prev_choices_2AFC = plt.gca() if not mount_figure else axd["h"]
+    prev_choices_2AFC = plt.gca() if not mount_figure or "h" not in axd else axd["h"]
     prev_choices_2AFC.clear()
 
     # Filter to just have lagged choices
@@ -851,7 +851,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    stim_2AFC = plt.gca() if not mount_figure else axd["g"]
+    stim_2AFC = plt.gca() if not mount_figure or "g" not in axd else axd["g"]
     stim_2AFC.clear()
 
     # Filter to just have stimulus
@@ -1883,7 +1883,7 @@ def _(
     session_repetition_data_2ADC,
 ):
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    single_session_2ADC_repetition = plt.gca() if not mount_figure else axd["a"]
+    single_session_2ADC_repetition = plt.gca() if not mount_figure or "a" not in axd else axd["a"]
     single_session_2ADC_repetition.clear()
 
     single_session_2ADC_repetition.fill_between(
@@ -1952,7 +1952,7 @@ def _(
     session_repetition_data_2ADC,
 ):
     plt.figure(figsize=fig_size(1, 3), constrained_layout=True)
-    single_session_2ADC_accuracy = plt.gca() if not mount_figure else axd["single_sess_acc_2ADC"]
+    single_session_2ADC_accuracy = plt.gca() if not mount_figure or "single_sess_acc_2ADC" not in axd else axd["single_sess_acc_2ADC"]
     if mount_figure and "a_accuracy" in axd:
         single_session_2ADC_accuracy = axd["a_accuracy"]
     single_session_2ADC_accuracy.clear()
@@ -2078,7 +2078,7 @@ def _(
     session_repetition_data_2AFC,
 ):
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    single_session_2AFC_repetition = plt.gca() if not mount_figure else axd["b"]
+    single_session_2AFC_repetition = plt.gca() if not mount_figure or "b" not in axd else axd["b"]
     single_session_2AFC_repetition.clear()
 
     single_session_2AFC_repetition.fill_between(
@@ -2149,7 +2149,7 @@ def _(
     session_repetition_data_2AFC,
 ):
     plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
-    single_session_2AFC_accuracy = plt.gca() if not mount_figure else axd["single_sess_acc_2AFC"]
+    single_session_2AFC_accuracy = plt.gca() if not mount_figure or "single_sess_acc_2AFC" not in axd else axd["single_sess_acc_2AFC"]
     if mount_figure and "b_accuracy" in axd:
         single_session_2AFC_accuracy = axd["b_accuracy"]
     single_session_2AFC_accuracy.clear()
@@ -2212,6 +2212,7 @@ def _(mo):
 def _(
     adapters,
     add_fixed_accuracy_repetition_band,
+    add_stationary_accuracy_band,
     autocorrelograms_by_task,
     build_session_repetition_data,
     pd,
@@ -2223,6 +2224,7 @@ def _(
     _task_labels = {"2AFC_delay": "2ADC", "2AFC": "2AFC", "MCDR": "MCDR"}
     band_position_by_task = {}
     band_position_source_by_task = {}
+    conditional_accuracy_below_by_task = {}
 
     def _append_band_position_rows(_rows, _session_data, *, _subject, _session, _source):
         _session_data = add_fixed_accuracy_repetition_band(_session_data)
@@ -2269,6 +2271,7 @@ def _(
     for _task in task_names:
         _session_rows = []
         _source_session_rows = []
+        _conditional_session_rows = []
         _glm_pdf = _glm_pdf_for_task(_task)
         _glm_trial_col = "trial_index" if "trial_index" in _glm_pdf.columns else "trial_idx"
         _session_index = (
@@ -2289,6 +2292,35 @@ def _(
                 )
             except ValueError:
                 continue
+
+            _conditional_data = add_fixed_accuracy_repetition_band(_session_data)
+            _conditional_data = add_stationary_accuracy_band(_conditional_data)
+            _conditional_columns = [
+                "response_repeat_window_fraction",
+                "fixed_accuracy_repeat_high",
+                "accuracy_window_fraction",
+                "stationary_accuracy_low",
+            ]
+            _conditional_data = _conditional_data[_conditional_columns].dropna()
+            if not _conditional_data.empty:
+                _choice_above = (
+                    _conditional_data["response_repeat_window_fraction"]
+                    > _conditional_data["fixed_accuracy_repeat_high"]
+                )
+                _accuracy_below = (
+                    _conditional_data["accuracy_window_fraction"]
+                    < _conditional_data["stationary_accuracy_low"]
+                )
+                _conditional_session_rows.append(
+                    {
+                        "subject": str(_subject),
+                        "session": str(_session),
+                        "n_choice_above": int(_choice_above.sum()),
+                        "n_accuracy_below_given_choice_above": int(
+                            (_choice_above & _accuracy_below).sum()
+                        ),
+                    }
+                )
 
             _session_row_start = len(_session_rows)
             _append_band_position_rows(
@@ -2391,11 +2423,38 @@ def _(
                 columns=["subject", "source", "position", "proportion", "task", "task_label"]
             )
         band_position_source_by_task[_task] = _source_subject_summary
+
+        _conditional_subject_summary = (
+            pd.DataFrame(
+                _conditional_session_rows,
+                columns=[
+                    "subject",
+                    "session",
+                    "n_choice_above",
+                    "n_accuracy_below_given_choice_above",
+                ],
+            )
+            .groupby("subject", as_index=False)[
+                ["n_choice_above", "n_accuracy_below_given_choice_above"]
+            ]
+            .sum()
+        )
+        _conditional_subject_summary = _conditional_subject_summary.loc[
+            _conditional_subject_summary["n_choice_above"] > 0
+        ].copy()
+        _conditional_subject_summary["proportion"] = (
+            _conditional_subject_summary["n_accuracy_below_given_choice_above"]
+            / _conditional_subject_summary["n_choice_above"]
+        )
+        _conditional_subject_summary["task"] = _task
+        _conditional_subject_summary["task_label"] = _task_labels.get(_task, _task)
+        conditional_accuracy_below_by_task[_task] = _conditional_subject_summary
     return (
         band_position_by_task,
         band_position_order,
         band_position_source_by_task,
         band_position_source_order,
+        conditional_accuracy_below_by_task,
     )
 
 
@@ -2423,7 +2482,7 @@ def _(
     ttest_1samp,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    fixed_band_position_2ADC = plt.gca() if not mount_figure else axd["boxplot_band_2ADC"]
+    fixed_band_position_2ADC = plt.gca() if not mount_figure or "boxplot_band_2ADC" not in axd else axd["boxplot_band_2ADC"]
 
     _plot_df = band_position_by_task["2AFC_delay"]
     _plot_df = _plot_df[_plot_df["position"] != "In"]
@@ -2457,6 +2516,70 @@ def _(
         (path_panels / "2ADC_fixed_accuracy_band_position").with_suffix(f".{format}")
     )
     fixed_band_position_2ADC
+    return
+
+
+@app.cell
+def _(
+    boxplot_STYLE,
+    conditional_accuracy_below_by_task,
+    fig_size,
+    format,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    ttest_1samp,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    accuracy_below_given_choice_above_2ADC = plt.gca()
+
+    _plot_df = conditional_accuracy_below_by_task["2AFC_delay"]
+    sns.boxplot(
+        data=_plot_df,
+        y="proportion",
+        color="tab:blue",
+        ax=accuracy_below_given_choice_above_2ADC,
+        **boxplot_STYLE,
+    )
+    # Under independence, low accuracy remains a one-sided 0.025 event.
+    accuracy_below_given_choice_above_2ADC.axhline(0.025, ls="--", color="0.5")
+    accuracy_below_given_choice_above_2ADC.set_xlabel("")
+    accuracy_below_given_choice_above_2ADC.set_ylabel("Proportion of high-rep. trials")
+    accuracy_below_given_choice_above_2ADC.set_xticks(
+        [0], ["Accuracy < lower CI\ngiven choice rep. > upper CI"]
+    )
+    accuracy_below_given_choice_above_2ADC.set_ylim(0, 0.5)
+
+    _values = pd.to_numeric(_plot_df["proportion"], errors="coerce").dropna()
+    if len(_values) >= 2:
+        _pvalue = float(
+            ttest_1samp(_values.to_numpy(dtype=float), popmean=0.025).pvalue
+        )
+        _stars = (
+            "***"
+            if _pvalue < 0.001
+            else "**"
+            if _pvalue < 0.01
+            else "*"
+            if _pvalue < 0.05
+            else "ns"
+        )
+        _text_y = min(
+            float(_values.quantile(0.75) - _values.quantile(0.25)) * 1.5
+            + _values.quantile(0.75),
+            max(_values),
+        ) + 0.02
+        accuracy_below_given_choice_above_2ADC.text(
+            0, _text_y, _stars, ha="center", va="bottom"
+        )
+    accuracy_below_given_choice_above_2ADC.figure.savefig(
+        (
+            path_panels
+            / "2ADC_choice_repetition_above_stimulus_accuracy_below_stationary"
+        ).with_suffix(f".{format}")
+    )
+    accuracy_below_given_choice_above_2ADC
     return
 
 
@@ -2566,7 +2689,7 @@ def _(
     ttest_1samp,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    fixed_band_position_2AFC = plt.gca() if not mount_figure else axd["boxplot_band_2AFC"]
+    fixed_band_position_2AFC = plt.gca() if not mount_figure or "boxplot_band_2AFC" not in axd else axd["boxplot_band_2AFC"]
 
     _plot_df = band_position_by_task["2AFC"]
     sns.boxplot(
@@ -2597,6 +2720,70 @@ def _(
         (path_panels / "2AFC_fixed_accuracy_band_position").with_suffix(f".{format}")
     )
     fixed_band_position_2AFC
+    return
+
+
+@app.cell
+def _(
+    boxplot_STYLE,
+    conditional_accuracy_below_by_task,
+    fig_size,
+    format,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    ttest_1samp,
+):
+    plt.figure(figsize=fig_size(3, 1), constrained_layout=True)
+    accuracy_below_given_choice_above_2AFC = plt.gca()
+
+    _plot_df = conditional_accuracy_below_by_task["2AFC"]
+    sns.boxplot(
+        data=_plot_df,
+        y="proportion",
+        color="tab:blue",
+        ax=accuracy_below_given_choice_above_2AFC,
+        **boxplot_STYLE,
+    )
+    # Under independence, low accuracy remains a one-sided 0.025 event.
+    accuracy_below_given_choice_above_2AFC.axhline(0.025, ls="--", color="0.5")
+    accuracy_below_given_choice_above_2AFC.set_xlabel("")
+    accuracy_below_given_choice_above_2AFC.set_ylabel("Proportion of high-rep. trials")
+    accuracy_below_given_choice_above_2AFC.set_xticks(
+        [0], ["Accuracy < lower CI\ngiven choice rep. > upper CI"]
+    )
+    accuracy_below_given_choice_above_2AFC.set_ylim(0, 0.5)
+
+    _values = pd.to_numeric(_plot_df["proportion"], errors="coerce").dropna()
+    if len(_values) >= 2:
+        _pvalue = float(
+            ttest_1samp(_values.to_numpy(dtype=float), popmean=0.025).pvalue
+        )
+        _stars = (
+            "***"
+            if _pvalue < 0.001
+            else "**"
+            if _pvalue < 0.01
+            else "*"
+            if _pvalue < 0.05
+            else "ns"
+        )
+        _text_y = min(
+            float(_values.quantile(0.75) - _values.quantile(0.25)) * 1.5
+            + _values.quantile(0.75),
+            max(_values),
+        ) + 0.02
+        accuracy_below_given_choice_above_2AFC.text(
+            0, _text_y, _stars, ha="center", va="bottom"
+        )
+    accuracy_below_given_choice_above_2AFC.figure.savefig(
+        (
+            path_panels
+            / "2AFC_choice_repetition_above_stimulus_accuracy_below_stationary"
+        ).with_suffix(f".{format}")
+    )
+    accuracy_below_given_choice_above_2AFC
     return
 
 
@@ -2728,6 +2915,70 @@ def _(
         (path_panels / "MCDR_fixed_accuracy_band_position").with_suffix(f".{format}")
     )
     fixed_band_position_MCDR
+    return
+
+
+@app.cell
+def _(
+    boxplot_STYLE,
+    conditional_accuracy_below_by_task,
+    fig_size,
+    format,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    ttest_1samp,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    accuracy_below_given_choice_above_MCDR = plt.gca()
+
+    _plot_df = conditional_accuracy_below_by_task["MCDR"]
+    sns.boxplot(
+        data=_plot_df,
+        y="proportion",
+        color="tab:blue",
+        ax=accuracy_below_given_choice_above_MCDR,
+        **boxplot_STYLE,
+    )
+    # Under independence, low accuracy remains a one-sided 0.025 event.
+    accuracy_below_given_choice_above_MCDR.axhline(0.025, ls="--", color="0.5")
+    accuracy_below_given_choice_above_MCDR.set_xlabel("")
+    accuracy_below_given_choice_above_MCDR.set_ylabel("Proportion of high-rep. trials")
+    accuracy_below_given_choice_above_MCDR.set_xticks(
+        [0], ["Accuracy < lower CI\ngiven choice rep. > upper CI"]
+    )
+    accuracy_below_given_choice_above_MCDR.set_ylim(0, 0.5)
+
+    _values = pd.to_numeric(_plot_df["proportion"], errors="coerce").dropna()
+    if len(_values) >= 2:
+        _pvalue = float(
+            ttest_1samp(_values.to_numpy(dtype=float), popmean=0.025).pvalue
+        )
+        _stars = (
+            "***"
+            if _pvalue < 0.001
+            else "**"
+            if _pvalue < 0.01
+            else "*"
+            if _pvalue < 0.05
+            else "ns"
+        )
+        _text_y = min(
+            float(_values.quantile(0.75) - _values.quantile(0.25)) * 1.5
+            + _values.quantile(0.75),
+            max(_values),
+        ) + 0.02
+        accuracy_below_given_choice_above_MCDR.text(
+            0, _text_y, _stars, ha="center", va="bottom"
+        )
+    accuracy_below_given_choice_above_MCDR.figure.savefig(
+        (
+            path_panels
+            / "MCDR_choice_repetition_above_stimulus_accuracy_below_stationary"
+        ).with_suffix(f".{format}")
+    )
+    accuracy_below_given_choice_above_MCDR
     return
 
 
@@ -2868,7 +3119,7 @@ def _(
     source_style,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    consec_rep_2ADC = plt.gca() if not mount_figure else axd["hist_repeat_2ADC"]
+    consec_rep_2ADC = plt.gca() if not mount_figure or "hist_repeat_2ADC" not in axd else axd["hist_repeat_2ADC"]
     consec_rep_2ADC.clear()
 
     sns.lineplot(
@@ -2924,7 +3175,7 @@ def _(
     source_style,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    consec_rep_2AFC = plt.gca() if not mount_figure else axd["hist_repeat_2AFC"]
+    consec_rep_2AFC = plt.gca() if not mount_figure or "hist_repeat_2AFC" not in axd else axd["hist_repeat_2AFC"]
     consec_rep_2AFC.clear()
 
     sns.lineplot(
@@ -3040,7 +3291,7 @@ def _(
     sns,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    correct_streak_2ADC = plt.gca() if not mount_figure else axd["hist_correct_2ADC"]
+    correct_streak_2ADC = plt.gca() if not mount_figure or "hist_correct_2ADC" not in axd else axd["hist_correct_2ADC"]
 
     sns.lineplot(
         data=outcome_streak_plot_data[outcome_streak_plot_data["task_label"] == "2ADC"],
@@ -3095,7 +3346,7 @@ def _(
     sns,
 ):
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    correct_streak_2AFC = plt.gca() if not mount_figure else axd["hist_correct_2AFC"]
+    correct_streak_2AFC = plt.gca() if not mount_figure or "hist_correct_2AFC" not in axd else axd["hist_correct_2AFC"]
 
     sns.lineplot(
         data=outcome_streak_plot_data[outcome_streak_plot_data["task_label"] == "2AFC"],
