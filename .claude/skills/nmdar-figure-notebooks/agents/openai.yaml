@@ -1,0 +1,4 @@
+interface:
+  display_name: "NMDAR Figure Notebooks"
+  short_description: "Standardize NMDAR figure notebooks"
+  default_prompt: "Use $nmdar-figure-notebooks to build or revise a Marimo figure notebook for this NMDAR paper."
