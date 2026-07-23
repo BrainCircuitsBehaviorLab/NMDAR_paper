@@ -6,7 +6,7 @@
 
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.14"
 app = marimo.App(width="full")
 
 
@@ -137,7 +137,7 @@ def _(mo):
 
 @app.cell
 def _():
-    mount_figure = False
+    mount_figure = True
     return (mount_figure,)
 
 
@@ -1023,6 +1023,7 @@ def _(
         metric_dfs[_task_name] = glmhmmt_state_metric_df(
             plot_dfs[_task_name],
             metrics=("RT", "RT2", "nLicks", "ILI"),
+            correct_only_metrics=("nLicks",),
         )
         dwell_dfs[_task_name] = glmhmmt_state_dwell_df(plot_dfs[_task_name])
         switch_session_dfs[_task_name], switch_subject_dfs[_task_name] = glmhmmt_state_switches_df(plot_dfs[_task_name])
@@ -3013,6 +3014,98 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### 2ADC
+    """)
+    return
+
+
+@app.cell
+def _(pl, plot_dfs):
+    plot_dfs["2AFC_delay"].filter(pl.col("subject") == "C34")
+    return
+
+
+@app.cell
+def _(
+    Annotator,
+    axd,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    metric_dfs,
+    mount_figure,
+    path_panels,
+    plt,
+    sns,
+    state_order,
+    state_palette,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    rt_by_state_2ADC = plt.gca() if not mount_figure else axd.get("nlicks_by_state_2ADC", plt.gca())
+    rt_by_state_2ADC.clear()
+
+    sns.boxplot(
+        data=metric_dfs["2AFC_delay"][metric_dfs["2AFC_delay"]["metric"].eq("nLicks")],
+        x="state_label",
+        y="value",
+        order=state_order,
+        palette=state_palette,
+        ax=rt_by_state_2ADC,
+        gap=0.25,
+        **boxplot_STYLE,
+    )
+
+    _nlicks = metric_dfs["2AFC_delay"].loc[
+        metric_dfs["2AFC_delay"]["metric"].eq("nLicks")
+    ].copy()
+
+    _paired = (
+        _nlicks
+        .pivot(index="subject", columns="state_label", values="value")
+        .dropna(subset=state_order)
+        .sort_index()
+    )
+
+    _paired_nlicks = (
+        _paired[state_order]
+        .reset_index()
+        .melt(
+            id_vars="subject",
+            var_name="state_label",
+            value_name="value",
+        )
+    )
+    # paired annotation directly between the two x categories
+    _annotator = Annotator(
+        rt_by_state_2ADC,
+        [("Engaged", "Disengaged")],
+        data=_paired_nlicks,
+        x="state_label",
+        y="value",
+        order=state_order,
+    )
+    _annotator.configure(
+        test="t-test_paired",
+        text_format="star",
+        line_height=0,
+        verbose=False,
+    ).apply_and_annotate()
+
+    rt_by_state_2ADC.set_xlabel("")
+    rt_by_state_2ADC.set_ylabel("nLicks")
+    rt_by_state_2ADC.set_xticklabels(["Eng.", "Dis."])
+    rt_by_state_2ADC.set_ylim(bottom=0)
+
+    if not mount_figure:
+        rt_by_state_2ADC.figure.savefig((path_panels / "2ADC_glmhmmt_nLicks_by_state").with_suffix(f".{format}"))
+
+    rt_by_state_2ADC
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ### 2AFC
     """)
     return
@@ -3073,19 +3166,6 @@ def _(
         rt_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_rt_by_state").with_suffix(f".{format}"))
 
     rt_by_state_2AFC
-    return
-
-
-@app.cell
-def _(axd, fig_size, format, mount_figure, path_panels, plt):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    nlicks_by_state_2ADC = plt.gca() if not mount_figure else axd.get("nlicks_by_state_2ADC", plt.gca())
-    nlicks_by_state_2ADC.clear()
-    nlicks_by_state_2ADC.set_axis_off()
-    nlicks_by_state_2ADC.text(0.5, 0.5, "nLicks", ha="center", va="center", transform=nlicks_by_state_2ADC.transAxes)
-    if not mount_figure:
-        nlicks_by_state_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_nlicks_by_state").with_suffix(f".{format}"))
-    nlicks_by_state_2ADC
     return
 
 
@@ -3707,8 +3787,7 @@ def _(
     _task_df = plot_dfs["2AFC_delay"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (
-            _task_df
-            .select(pl.col("subject").cast(pl.Utf8).alias("subject"), pl.col("session").cast(pl.Utf8).alias("session"))
+            _task_df.select(pl.col("subject").cast(pl.Utf8).alias("subject"), pl.col("session").cast(pl.Utf8).alias("session"))
             .unique()
             .sort(["subject", "session"])
         )
@@ -3726,16 +3805,12 @@ def _(
     single_session_2ADC.clear()
     _trial_col = "trial_idx" if "trial_idx" in _task_df.columns else "trial"
     _session_pdf = (
-        _task_df
-        .filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session))
+        _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session))
         .sort(_trial_col)
         .to_pandas()
         .reset_index(drop=True)
     )
-    _posterior_cols = [
-        _col for _col in _session_pdf.columns
-        if str(_col).startswith("p_state_") and str(_col).rsplit("_", 1)[-1].isdigit()
-    ]
+    _posterior_cols = [_col for _col in _session_pdf.columns if str(_col).startswith("p_state_") and str(_col).rsplit("_", 1)[-1].isdigit()]
     _engaged_col = None
     if "state_idx" in _session_pdf.columns:
         _engaged_rows = _session_pdf[_session_pdf["state_label"].astype(str).eq("Engaged")].dropna(subset=["state_idx"])
@@ -3751,42 +3826,67 @@ def _(
 
 
     _x = session_repetition_data_2ADC["trial_x"].iloc[: len(_session_pdf)]
-    _p_engaged = pd.to_numeric(
-        _session_pdf[_engaged_col],
-        errors="coerce",
-    ).iloc[: len(_x)].to_numpy()
+    _p_engaged = (
+        pd.to_numeric(
+            _session_pdf[_engaged_col],
+            errors="coerce",
+        )
+        .iloc[: len(_x)]
+        .to_numpy()
+    )
     _p_disengaged = 1 - _p_engaged
-    single_session_2ADC.fill_between(
+    # single_session_2ADC.fill_between(
+    #     _x,
+    #     0,
+    #     _p_engaged,
+    #     color=state_palette.get("Engaged", "tab:green"),
+    #     alpha=0.5,
+    #     linewidth=0,
+    #     label="Engaged",
+    #     zorder=0,
+    # )
+    # single_session_2ADC.fill_between(
+    #     _x,
+    #     _p_engaged,
+    #     _p_disengaged + _p_engaged,
+    #     color=state_palette.get("Disengaged", "tab:gray"),
+    #     alpha=0.5,
+    #     linewidth=0,
+    #     label="Disengaged",
+    #     zorder=0,
+    # )
+    single_session_2ADC.plot(
         _x,
-        0,
         _p_engaged,
         color=state_palette.get("Engaged", "tab:green"),
-        alpha=0.5,
-        linewidth=0,
+        alpha=1,
         label="Engaged",
-        zorder=0,
     )
-    single_session_2ADC.fill_between(
-        _x,
-        _p_engaged,
-        _p_disengaged + _p_engaged,
-        color=state_palette.get("Disengaged", "tab:gray"),
-        alpha=0.5,
-        linewidth=0,
-        label="Disengaged",
-        zorder=0,
-    )
+    for _trial_x, _prob in zip(_x, _p_engaged, strict=False):
+        if _prob > 0.5:
+            _color = state_palette.get("Engaged", "tab:green")
+        else:
+            _color = state_palette.get("Disengaged", "tab:gray")
 
-    #single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
-    #single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
-    single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2ADC, zorder=2, alpha = 1)
+        single_session_2ADC.axvspan(
+            _trial_x - 0.5,
+            _trial_x + 0.5,
+            ymin=0,
+            ymax=1,
+            color=_color,
+            alpha=0.25,
+            linewidth=0,
+        )
+    # single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
+    # single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
+    # single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2ADC, zorder=2, alpha = 1)
     # single_session_2ADC.set_title(task_labels["2AFC_delay"])
     single_session_2ADC.set_xlabel("Trial")
     single_session_2ADC.set_ylabel("Running fraction")
     single_session_2ADC.set_ylim(0, 1)
     single_session_2ADC.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
     single_session_2ADC.legend(frameon=False, loc="lower right")
-    single_session_2ADC.set_yticks([0,0.5,1],[0,0.5,1])
+    single_session_2ADC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
     if not mount_figure:
         single_session_2ADC.figure.savefig((path_panels / "2AFC_delay_single_session").with_suffix(f".{format}"))
     single_session_2ADC
@@ -3861,31 +3961,55 @@ def _(
         errors="coerce",
     ).iloc[: len(_x)].to_numpy()
     _p_disengaged = 1 - _p_engaged
-    single_session_2AFC.fill_between(
+    # single_session_2AFC.fill_between(
+    #     _x,
+    #     0,
+    #     _p_engaged,
+    #     color=state_palette.get("Engaged", "tab:green"),
+    #     alpha=0.5,
+    #     linewidth=0,
+    #     label="Engaged",
+    #     zorder=0,
+    # )
+    # single_session_2AFC.fill_between(
+    #     _x,
+    #     _p_engaged,
+    #     _p_disengaged + _p_engaged,
+    #     color=state_palette.get("Disengaged", "tab:gray"),
+    #     alpha=0.5,
+    #     linewidth=0,
+    #     label="Disengaged",
+    #     zorder=0,
+    # )
+    single_session_2AFC.plot(
         _x,
-        0,
         _p_engaged,
         color=state_palette.get("Engaged", "tab:green"),
-        alpha=0.5,
-        linewidth=0,
+        alpha=1,
         label="Engaged",
-        zorder=0,
     )
-    single_session_2AFC.fill_between(
-        _x,
-        _p_engaged,
-        _p_disengaged + _p_engaged,
-        color=state_palette.get("Disengaged", "tab:gray"),
-        alpha=0.5,
-        linewidth=0,
-        label="Disengaged",
-        zorder=0,
-    )
+    # Colorea todo el alto del eje según p(Engaged) en cada trial
+    for _trial_x, _prob in zip(_x, _p_engaged, strict=False):
+        if _prob > 0.5:
+            _color = state_palette.get("Engaged", "tab:green")
+        else:
+            _color = state_palette.get("Disengaged", "tab:gray")
+
+        single_session_2AFC.axvspan(
+            _trial_x - 0.5,
+            _trial_x + 0.5,
+            ymin=0,
+            ymax=1,
+            color=_color,
+            alpha=0.25,
+            linewidth=0,
+            zorder=0,
+        )
 
     #single_session_2AFC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
     #single_session_2AFC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
-    if "accuracy_window_fraction" in session_repetition_data_2AFC:
-        single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2AFC, zorder=2, alpha = 1)
+    # if "accuracy_window_fraction" in session_repetition_data_2AFC:
+    #     single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2AFC, zorder=2, alpha = 1)
     #single_session_2AFC.set_title(task_labels["2AFC"])
     single_session_2AFC.set_xlabel("Trial")
     single_session_2AFC.set_ylabel("Running fraction")
@@ -3950,11 +4074,11 @@ def _(MODEL_BY_TASK, load_metrics_dir_raw, paths, pl):
 
     ll_bic_delta_2ADC = model_delta_df(
         load_model_metrics("2AFC_delay", "glm", "one hot2", "GLM"),
-        load_model_metrics("2AFC_delay", "glmhmm", MODEL_BY_TASK["2AFC_delay"], "GLM-HMM-T"),
+        load_model_metrics("2AFC_delay", "glmhmmt", MODEL_BY_TASK["2AFC_delay"], "GLM-HMM-T"),
     )
     ll_bic_delta_2AFC = model_delta_df(
         load_model_metrics("2AFC", "glm", "one hot2", "GLM"),
-        load_model_metrics("2AFC", "glmhmm", MODEL_BY_TASK["2AFC"], "GLM-HMM-T"),
+        load_model_metrics("2AFC", "glmhmmt", MODEL_BY_TASK["2AFC"], "GLM-HMM-T"),
     )
     return ll_bic_delta_2ADC, ll_bic_delta_2AFC
 
@@ -4456,18 +4580,18 @@ def _(axd, fig, format, mount_figure, path_panels, psychometric_x_labels):
         # axd["single_session_2çADC"].set_xlabel("Trial")
         # axd["single_session_2AFC"].set_xlabel("Trial")
 
-        if _legend_items:
-            _handles, _labels = zip(*_legend_items, strict=False)
-            fig.legend(
-                _handles,
-                _labels,
-                loc="lower center",
-                ncol=min(6, len(_labels)),
-                frameon=False,
-                bbox_to_anchor=(0.5, -0.1),
-                handlelength=1.2,
-                columnspacing=0.8,
-            )
+        # if _legend_items:
+        #     _handles, _labels = zip(*_legend_items, strict=False)
+        #     fig.legend(
+        #         _handles,
+        #         _labels,
+        #         loc="lower center",
+        #         ncol=min(6, len(_labels)),
+        #         frameon=False,
+        #         bbox_to_anchor=(0.5, -0.1),
+        #         handlelength=1.2,
+        #         columnspacing=0.8,
+        #     )
         fig.savefig((path_panels / "figure3").with_suffix(f".{format}"))
         fig.align_ylabels()
     fig
