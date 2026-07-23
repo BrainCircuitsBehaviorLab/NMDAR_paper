@@ -51,7 +51,7 @@ def _():
 @app.cell
 def _(Path, fig_size, plt, sns):
     # Set style
-    sns.set_theme(style='ticks', context='notebook')
+    sns.set_theme(style='ticks', context='paper')
     plt.style.use(Path(__file__).resolve().parents[1] / "paper.mplstyle")
     figsize = fig_size(n_cols=3)
     plt.rcParams["svg.fonttype"] = 'none'
@@ -117,12 +117,6 @@ def _(MCDR, data_path, pl, two_afc):
 
 
 @app.cell
-def _(df_MCDR):
-    df_MCDR
-    return
-
-
-@app.cell
 def _(MCDR, two_afc, two_afc_delay):
     # Get plots
     MCDR_plots = MCDR.get_plots()
@@ -173,7 +167,7 @@ def _(mo):
 def _(
     attach_signed_delay_columns,
     df_2AFC_delay,
-    fig_size,
+    figsize,
     path_panels,
     plot_mean_over_data,
     plt,
@@ -185,7 +179,7 @@ def _(
     df_2AFC_delay_signed["_signed_delay_plot"] = df_2AFC_delay_signed["_signed_delay_cat"].astype(str)
     df_2AFC_delay_signed = df_2AFC_delay_signed[df_2AFC_delay_signed["_signed_delay_plot"].isin(signed_delay_order)].copy()
 
-    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
+    plt.figure(figsize=figsize, constrained_layout=True)
     p_right_2ADC = plt.gca()
 
     plot_mean_over_data(
@@ -233,8 +227,8 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC_delay, fig_size, path_panels, pl, plt, two_afc_delay_plots):
-    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
+def _(df_2AFC_delay, figsize, path_panels, pl, plt, two_afc_delay_plots):
+    plt.figure(figsize=figsize, constrained_layout=True)
     rb_2ADC = plt.gca()
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "NR2B"), ax = rb_2ADC, title='', color = "tab:pink")
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Saline"), ax = rb_2ADC, title='', color = "tab:gray")
@@ -327,11 +321,11 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC, fig_size, path_panels, plot_mean_over_data, plt):
+def _(df_2AFC, figsize, path_panels, plot_mean_over_data, plt):
     df_2AFC_p_right = df_2AFC.to_pandas().copy()
     df_2AFC_p_right["p_right"] = df_2AFC_p_right["Choice"].astype(float)
 
-    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
+    plt.figure(figsize=figsize, constrained_layout=True)
     p_right_2AFC = plt.gca()
 
     plot_mean_over_data(
@@ -380,8 +374,8 @@ def _(mo):
 
 
 @app.cell
-def _(df_2AFC, fig_size, path_panels, pl, plt, two_afc_plots):
-    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
+def _(df_2AFC, figsize, path_panels, pl, plt, two_afc_plots):
+    plt.figure(figsize=figsize, constrained_layout=True)
     rb_2AFC = plt.gca()
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 0), ax=rb_2AFC, title="", color="tab:gray")
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 1), ax=rb_2AFC, title="", color="tab:pink")
@@ -523,7 +517,7 @@ def _():
 @app.cell
 def _(
     df_MCDR,
-    fig_size,
+    figsize,
     path_panels,
     pl,
     plot_mean_over_data,
@@ -531,7 +525,7 @@ def _(
     signed_labels,
     signed_order,
 ):
-    plt.figure(figsize=fig_size(2), constrained_layout=True)
+    plt.figure(figsize=figsize, constrained_layout=True)
     p_right_3CDR = plt.gca()
 
     plot_mean_over_data(

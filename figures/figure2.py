@@ -155,7 +155,7 @@ def _():
 
 @app.cell
 def _():
-    format = "pdf"
+    format = "svg"
     return (format,)
 
 
@@ -459,13 +459,9 @@ def _(
         _ax.set_ylabel("Autocorrelation")
         _ax.set_xlim(0,20.5)
 
-        _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
-        _minor_pos = [i for i in range(20) if i not in _major_pos]
+        _major_pos = [lag for lag in range(1, 21) if lag % 5 == 0 or lag == 1]
         _ax.set_xticks(_major_pos)
-        _ax.set_xticklabels([str(i + 1) for i in _major_pos])
-        # _ax.set_xticks(_minor_pos, minor=True)
-        # _ax.tick_params(axis='x', which='major', length=6)
-        # _ax.tick_params(axis='x', which='minor', length=3)
+        _ax.set_xticklabels([str(lag) for lag in _major_pos])
 
         if _signal == "Repetition":
             _ax.set_ylim(top=0.15)
@@ -548,13 +544,9 @@ def _(
         _ax.set_ylabel("Autocorrelation")
         _ax.set_xlim(0,20.5)
 
-        _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
-        _minor_pos = [i for i in range(20) if i not in _major_pos]
+        _major_pos = [lag for lag in range(1, 21) if lag % 5 == 0 or lag == 1]
         _ax.set_xticks(_major_pos)
-        _ax.set_xticklabels([str(i + 1) for i in _major_pos])
-        # _ax.set_xticks(_minor_pos, minor=True)
-        # _ax.tick_params(axis='x', which='major', length=6)
-        # _ax.tick_params(axis='x', which='minor', length=3)
+        _ax.set_xticklabels([str(lag) for lag in _major_pos])
 
         if _signal == "Repetition":
             _ax.set_ylim(top=0.15)
@@ -1988,7 +1980,7 @@ def _(
         "accuracy_window_fraction",
         color="black",
         # linewidth=1.5,
-        label="Accuracy",
+        label="Raw",
         data=session_repetition_data_2ADC
     )
     single_session_2ADC_accuracy.set_xlabel("Trial")
@@ -4296,7 +4288,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["a"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["a"].set_title("2ADC")
         axd["a"].set_xticklabels([])
-        axd["a"].set_ylabel("Running fraction")
+        axd["a"].set_ylabel("Repeat fraction")
         axd["a"].legend(*axd["a"].get_legend_handles_labels(), handlelength=1, ncol=2, frameon=False, loc="lower right")
 
         axd["b"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
@@ -4305,7 +4297,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["b"].set_yticklabels([])
 
         axd["single_sess_acc_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-        axd["single_sess_acc_2ADC"].set_ylabel("Running fraction")
+        axd["single_sess_acc_2ADC"].set_ylabel("Accuracy")
         axd["single_sess_acc_2ADC"].set_xlabel("Trial")
         axd["single_sess_acc_2ADC"].legend(*axd["single_sess_acc_2ADC"].get_legend_handles_labels(), handlelength=1, ncol=2, frameon=False, loc="lower right")
         axd["single_sess_acc_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
@@ -4316,11 +4308,11 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_action_2ADC"].set_xticks([0, 7], ["-0.1", "0.1"])
         axd["pc_action_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_action_2ADC"].set_ylabel("p(right)")
-        axd["pc_action_2ADC"].set_xlabel("Evidence")
+        axd["pc_action_2ADC"].set_xlabel("Stimulus evidence")
         axd["pc_action_2ADC"].legend(
             *axd["pc_action_2ADC"].get_legend_handles_labels()[:3], handlelength=0.5, ncol=1, frameon=False, loc="upper left", bbox_to_anchor=(-0.05, 1.1),
             columnspacing=0.5, handletextpad=0.5, labelspacing = 0.25)
-    
+
         axd["pc_evi_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2ADC"].set_yticklabels([])
         axd["pc_evi_2ADC"].set_xlabel("Action trace")
@@ -4328,8 +4320,8 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_action_2AFC"].set_xticks([0, 4, 8], ["-20", "0", "20"])
         axd["pc_action_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_action_2AFC"].set_yticklabels([])
-        axd["pc_action_2AFC"].set_xlabel("Evidence")
-    
+        axd["pc_action_2AFC"].set_xlabel("Stimulus evidence")
+
         axd["pc_evi_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2AFC"].set_yticklabels([])
         axd["pc_evi_2AFC"].set_xlabel("Action trace")
@@ -4338,13 +4330,13 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["boxplot_band_2ADC"].set_ylabel("Fraction of trials")
 
         axd["e"].set_ylabel("Weight")
-        axd["e"].set_xlabel("Delay")
+        axd["e"].set_xlabel("Delay (s)")
         axd["e"].set_title("Stimulus")
 
         axd["f"].set_title("Prev. Choice")
         axd["f"].set_xlabel("Trial lag")
 
-        axd["g"].set_xlabel("|ILD|")
+        axd["g"].set_xlabel("Stim. |ILD| (dB)")
         axd["g"].set_title("Stimulus")
 
         axd["h"].set_title("Prev. Choice")
@@ -4354,7 +4346,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["i"].set_xlabel("Trial lag")
         axd["i"].set_title("Outcome")
         axd["i"].legend(
-            *axd["i"].get_legend_handles_labels(), handlelength=0.5, ncol=2, frameon=False, loc="lower left", bbox_to_anchor=(0, -0.05), columnspacing=0.5, handletextpad=0.5)
+            *axd["i"].get_legend_handles_labels(), handlelength=0.5, ncol=2, frameon=False, loc="lower left", bbox_to_anchor=(-0.1, -0.05), columnspacing=0.5, handletextpad=0.5)
 
         axd["j"].set_title("Outcome")
         axd["j"].set_xlabel("Trial lag")
@@ -4371,7 +4363,7 @@ def _(axd, fig, format, mount_figure, project_path):
             _ax.set_xlim(0, 20.5)
 
         fig.align_ylabels()
-        fig.savefig((project_path / "figures" / "panels2" / "figure2").with_suffix(f".{format}"))
+        fig.savefig((project_path / "figures" / "panels2" / "Figure2").with_suffix(f".{format}"))
 
     fig
     return
