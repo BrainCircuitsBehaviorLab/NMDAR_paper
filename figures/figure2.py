@@ -6,7 +6,7 @@
 
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.14"
 app = marimo.App(width="full")
 
 
@@ -155,7 +155,7 @@ def _():
 
 @app.cell
 def _():
-    format = "pdf"
+    format = "svg"
     return (format,)
 
 
@@ -459,13 +459,9 @@ def _(
         _ax.set_ylabel("Autocorrelation")
         _ax.set_xlim(0,20.5)
 
-        _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
-        _minor_pos = [i for i in range(20) if i not in _major_pos]
+        _major_pos = [i for i in range(1, 21) if i % 5 == 0 or i == 1]
         _ax.set_xticks(_major_pos)
-        _ax.set_xticklabels([str(i + 1) for i in _major_pos])
-        # _ax.set_xticks(_minor_pos, minor=True)
-        # _ax.tick_params(axis='x', which='major', length=6)
-        # _ax.tick_params(axis='x', which='minor', length=3)
+        _ax.set_xticklabels([str(i) for i in _major_pos])
 
         if _signal == "Repetition":
             _ax.set_ylim(top=0.15)
@@ -548,13 +544,9 @@ def _(
         _ax.set_ylabel("Autocorrelation")
         _ax.set_xlim(0,20.5)
 
-        _major_pos = [i for i in range(20) if (i + 1) % 5 == 0 or (i + 1) == 1]
-        _minor_pos = [i for i in range(20) if i not in _major_pos]
+        _major_pos = [i for i in range(1, 21) if i % 5 == 0 or i == 1]
         _ax.set_xticks(_major_pos)
-        _ax.set_xticklabels([str(i + 1) for i in _major_pos])
-        # _ax.set_xticks(_minor_pos, minor=True)
-        # _ax.tick_params(axis='x', which='major', length=6)
-        # _ax.tick_params(axis='x', which='minor', length=3)
+        _ax.set_xticklabels([str(i) for i in _major_pos])
 
         if _signal == "Repetition":
             _ax.set_ylim(top=0.15)
@@ -1747,7 +1739,6 @@ def _(fig_size, plt, session_repetition_data):
         "trial_x",
         "response_repeat_window_fraction",
         color="tab:brown",
-        # linewidth=1.5,
         label="Choice rep.",
         data=session_repetition_data
     )
@@ -1755,7 +1746,6 @@ def _(fig_size, plt, session_repetition_data):
         "trial_x",
         "stimulus_repeat_window_fraction",
         color="tab:blue",
-        # linewidth=1.5,
         label="Stim. rep.",
         data=session_repetition_data
     )
@@ -1763,7 +1753,6 @@ def _(fig_size, plt, session_repetition_data):
     #     "trial_x",
     #     "accuracy_window_fraction",
     #     color="black",
-    #     # linewidth=1.5,
     #     label="Acc",
     #     data=session_repetition_data
     # )
@@ -1909,7 +1898,6 @@ def _(
         "trial_x",
         "response_repeat_window_fraction",
         color="tab:brown",
-        # linewidth=1.5,
         label="Choice rep.",
         data=session_repetition_data_2ADC
     )
@@ -1924,7 +1912,7 @@ def _(
         session_repetition_data_2ADC["trial_x"].to_numpy(),
         np.ma.masked_where(~_choice_outside_band, _choice_repeat),
         color="tab:brown",
-        linewidth=1.8,
+        linewidth=2,
         solid_capstyle="round",
         zorder=3,
         label="_nolegend_",
@@ -1933,7 +1921,6 @@ def _(
         "trial_x",
         "stimulus_repeat_window_fraction",
         color="tab:blue",
-        # linewidth=1.5,
         label="Stim. rep.",
         data=session_repetition_data_2ADC
     )
@@ -1988,7 +1975,6 @@ def _(
         "trial_x",
         "stationary_accuracy_fraction",
         color="tab:blue",
-        linewidth=1.5,
         label="Stationary",
         data=session_repetition_data_2ADC
     )
@@ -2005,8 +1991,7 @@ def _(
         "trial_x",
         "accuracy_window_fraction",
         color="black",
-        # linewidth=1.5,
-        label="Accuracy",
+        label="Raw",
         data=session_repetition_data_2ADC
     )
     _accuracy = session_repetition_data_2ADC["accuracy_window_fraction"].to_numpy()
@@ -2018,7 +2003,7 @@ def _(
         session_repetition_data_2ADC["trial_x"].to_numpy(),
         np.ma.masked_where(~_accuracy_outside_band, _accuracy),
         color="black",
-        linewidth=1.8,
+        linewidth=2,
         solid_capstyle="round",
         zorder=3,
         label="_nolegend_",
@@ -2033,11 +2018,6 @@ def _(
             (path_panels / "2ADC_single_session_accuracy").with_suffix(f".{format}")
         )
     single_session_2ADC_accuracy
-    return
-
-
-@app.cell
-def _():
     return
 
 
@@ -2136,7 +2116,6 @@ def _(
         "trial_x",
         "response_repeat_window_fraction",
         color="tab:brown",
-        # linewidth=1.5,
         label="Choice Rep.",
         data=session_repetition_data_2AFC
     )
@@ -2151,7 +2130,7 @@ def _(
         session_repetition_data_2AFC["trial_x"].to_numpy(),
         np.ma.masked_where(~_choice_outside_band, _choice_repeat),
         color="tab:brown",
-        linewidth=1.8,
+        linewidth=2,
         solid_capstyle="round",
         zorder=3,
         label="_nolegend_",
@@ -2160,7 +2139,6 @@ def _(
         "trial_x",
         "stimulus_repeat_window_fraction",
         color="tab:blue",
-        # linewidth=1.5,
         label="Stim. Rep.",
         data=session_repetition_data_2AFC
     )
@@ -2217,7 +2195,6 @@ def _(
         "trial_x",
         "stationary_accuracy_fraction",
         color="tab:blue",
-        # linewidth=1.5,
         label="Stationary",
         data=session_repetition_data_2AFC
     )
@@ -2234,7 +2211,6 @@ def _(
         "trial_x",
         "accuracy_window_fraction",
         color="black",
-        # linewidth=1.5,
         label="Accuracy",
         data=session_repetition_data_2AFC
     )
@@ -2247,7 +2223,7 @@ def _(
         session_repetition_data_2AFC["trial_x"].to_numpy(),
         np.ma.masked_where(~_accuracy_outside_band, _accuracy),
         color="black",
-        linewidth=1.8,
+        linewidth=2,
         solid_capstyle="round",
         zorder=3,
         label="_nolegend_",
@@ -4360,7 +4336,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["a"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["a"].set_title("2ADC")
         axd["a"].set_xticklabels([])
-        axd["a"].set_ylabel("Running fraction")
+        axd["a"].set_ylabel("Repeat fraction")
         axd["a"].legend(*axd["a"].get_legend_handles_labels(), handlelength=1, ncol=2, frameon=False, loc="lower right")
 
         axd["b"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
@@ -4369,7 +4345,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["b"].set_yticklabels([])
 
         axd["single_sess_acc_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-        axd["single_sess_acc_2ADC"].set_ylabel("Running fraction")
+        axd["single_sess_acc_2ADC"].set_ylabel("Accuracy")
         axd["single_sess_acc_2ADC"].set_xlabel("Trial")
         axd["single_sess_acc_2ADC"].legend(*axd["single_sess_acc_2ADC"].get_legend_handles_labels(), handlelength=1, ncol=2, frameon=False, loc="lower right")
         axd["single_sess_acc_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
@@ -4380,7 +4356,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_action_2ADC"].set_xticks([0, 7], ["-0.1", "0.1"])
         axd["pc_action_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_action_2ADC"].set_ylabel("p(right)")
-        axd["pc_action_2ADC"].set_xlabel("Evidence")
+        axd["pc_action_2ADC"].set_xlabel("Stim. evidence")
         axd["pc_action_2ADC"].legend(
             *axd["pc_action_2ADC"].get_legend_handles_labels()[:3], handlelength=0.5, ncol=1, frameon=False, loc="upper left", bbox_to_anchor=(-0.05, 1.1),
             columnspacing=0.5, handletextpad=0.5, labelspacing = 0.25)
@@ -4392,7 +4368,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_action_2AFC"].set_xticks([0, 4, 8], ["-20", "0", "20"])
         axd["pc_action_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_action_2AFC"].set_yticklabels([])
-        axd["pc_action_2AFC"].set_xlabel("Evidence")
+        axd["pc_action_2AFC"].set_xlabel("Stim. evidence")
 
         axd["pc_evi_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2AFC"].set_yticklabels([])
@@ -4402,13 +4378,13 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["boxplot_band_2ADC"].set_ylabel("Fraction of trials")
 
         axd["e"].set_ylabel("Weight")
-        axd["e"].set_xlabel("Delay")
+        axd["e"].set_xlabel("Delay (s)")
         axd["e"].set_title("Stimulus")
 
         axd["f"].set_title("Prev. Choice")
         axd["f"].set_xlabel("Trial lag")
 
-        axd["g"].set_xlabel("|ILD|")
+        axd["g"].set_xlabel("Stim. |ILD| (dB)")
         axd["g"].set_title("Stimulus")
 
         axd["h"].set_title("Prev. Choice")
