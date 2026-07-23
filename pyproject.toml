@@ -13,7 +13,7 @@ dependencies = [
     "bottleneck>=1.6.0",
     "duckdb>=1.5.3",
     "glmhmmt==0.4.1",
-    "marimo==0.23.9",
+    "marimo==0.23.14",
     "marimo-toml-editor>=0.1.1",
     "numexpr>=2.14.1",
     "numpy>=2.0,<2.1",

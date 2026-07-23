@@ -6,7 +6,7 @@
 
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.14"
 app = marimo.App(width="full")
 
 
@@ -486,6 +486,7 @@ def _(df_MCDR, figsize, path_panels, pl, plot_mean_over_data, plt):
         color="tab:pink",
         ax=acc_MCDR,
     )
+
     plt.ylim(0.3, 1)
     plt.savefig(f'{path_panels}/acc_MCDR.svg')
     plt.savefig(f'{path_panels}/acc_MCDR.png')

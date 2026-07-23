@@ -1879,6 +1879,7 @@ def _(
     fig_size,
     format,
     mount_figure,
+    np,
     path_panels,
     plt,
     session_repetition_data_2ADC,
@@ -1911,6 +1912,22 @@ def _(
         # linewidth=1.5,
         label="Choice rep.",
         data=session_repetition_data_2ADC
+    )
+    _choice_repeat = session_repetition_data_2ADC[
+        "response_repeat_window_fraction"
+    ].to_numpy()
+    _choice_outside_band = (
+        (_choice_repeat < session_repetition_data_2ADC["fixed_accuracy_repeat_low"].to_numpy())
+        | (_choice_repeat > session_repetition_data_2ADC["fixed_accuracy_repeat_high"].to_numpy())
+    )
+    single_session_2ADC_repetition.plot(
+        session_repetition_data_2ADC["trial_x"].to_numpy(),
+        np.ma.masked_where(~_choice_outside_band, _choice_repeat),
+        color="tab:brown",
+        linewidth=1.8,
+        solid_capstyle="round",
+        zorder=3,
+        label="_nolegend_",
     )
     single_session_2ADC_repetition.plot(
         "trial_x",
@@ -1948,6 +1965,7 @@ def _(
     fig_size,
     format,
     mount_figure,
+    np,
     path_panels,
     plt,
     session_repetition_data_2ADC,
@@ -1990,6 +2008,20 @@ def _(
         # linewidth=1.5,
         label="Accuracy",
         data=session_repetition_data_2ADC
+    )
+    _accuracy = session_repetition_data_2ADC["accuracy_window_fraction"].to_numpy()
+    _accuracy_outside_band = (
+        (_accuracy < session_repetition_data_2ADC["stationary_accuracy_low"].to_numpy())
+        | (_accuracy > session_repetition_data_2ADC["stationary_accuracy_high"].to_numpy())
+    )
+    single_session_2ADC_accuracy.plot(
+        session_repetition_data_2ADC["trial_x"].to_numpy(),
+        np.ma.masked_where(~_accuracy_outside_band, _accuracy),
+        color="black",
+        linewidth=1.8,
+        solid_capstyle="round",
+        zorder=3,
+        label="_nolegend_",
     )
     single_session_2ADC_accuracy.set_xlabel("Trial")
     single_session_2ADC_accuracy.set_ylabel("Running accuracy")
@@ -2074,6 +2106,7 @@ def _(
     fig_size,
     format,
     mount_figure,
+    np,
     path_panels,
     plt,
     session_repetition_data_2AFC,
@@ -2106,6 +2139,22 @@ def _(
         # linewidth=1.5,
         label="Choice Rep.",
         data=session_repetition_data_2AFC
+    )
+    _choice_repeat = session_repetition_data_2AFC[
+        "response_repeat_window_fraction"
+    ].to_numpy()
+    _choice_outside_band = (
+        (_choice_repeat < session_repetition_data_2AFC["fixed_accuracy_repeat_low"].to_numpy())
+        | (_choice_repeat > session_repetition_data_2AFC["fixed_accuracy_repeat_high"].to_numpy())
+    )
+    single_session_2AFC_repetition.plot(
+        session_repetition_data_2AFC["trial_x"].to_numpy(),
+        np.ma.masked_where(~_choice_outside_band, _choice_repeat),
+        color="tab:brown",
+        linewidth=1.8,
+        solid_capstyle="round",
+        zorder=3,
+        label="_nolegend_",
     )
     single_session_2AFC_repetition.plot(
         "trial_x",
@@ -2145,6 +2194,7 @@ def _(
     fig_size,
     format,
     mount_figure,
+    np,
     path_panels,
     plt,
     session_repetition_data_2AFC,
@@ -2187,6 +2237,20 @@ def _(
         # linewidth=1.5,
         label="Accuracy",
         data=session_repetition_data_2AFC
+    )
+    _accuracy = session_repetition_data_2AFC["accuracy_window_fraction"].to_numpy()
+    _accuracy_outside_band = (
+        (_accuracy < session_repetition_data_2AFC["stationary_accuracy_low"].to_numpy())
+        | (_accuracy > session_repetition_data_2AFC["stationary_accuracy_high"].to_numpy())
+    )
+    single_session_2AFC_accuracy.plot(
+        session_repetition_data_2AFC["trial_x"].to_numpy(),
+        np.ma.masked_where(~_accuracy_outside_band, _accuracy),
+        color="black",
+        linewidth=1.8,
+        solid_capstyle="round",
+        zorder=3,
+        label="_nolegend_",
     )
     single_session_2AFC_accuracy.set_xlabel("Trial")
     single_session_2AFC_accuracy.set_ylabel("Running accuracy")
@@ -2600,7 +2664,7 @@ def _(
     stationary_accuracy_band_position_2ADC.axhline(0.025, ls="--", color="0.5")
     stationary_accuracy_band_position_2ADC.set_xlabel("")
     stationary_accuracy_band_position_2ADC.set_ylabel("Proportion of trials")
-    stationary_accuracy_band_position_2ADC.set_ylim(0, 0.5)
+    stationary_accuracy_band_position_2ADC.set_ylim(0, 0.15)
     for _x_idx, _position in enumerate(band_position_order):
         _values = pd.to_numeric(
             _plot_df.loc[_plot_df["position"] == _position, "proportion"],
@@ -2865,7 +2929,7 @@ def _(
     stationary_accuracy_band_position_2AFC.axhline(0.025, ls="--", color="0.5")
     stationary_accuracy_band_position_2AFC.set_xlabel("")
     stationary_accuracy_band_position_2AFC.set_ylabel("Proportion of trials")
-    stationary_accuracy_band_position_2AFC.set_ylim(0, 0.5)
+    stationary_accuracy_band_position_2AFC.set_ylim(0, 0.15)
     for _x_idx, _position in enumerate(band_position_order):
         _values = pd.to_numeric(
             _plot_df.loc[_plot_df["position"] == _position, "proportion"],
@@ -4320,7 +4384,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_action_2ADC"].legend(
             *axd["pc_action_2ADC"].get_legend_handles_labels()[:3], handlelength=0.5, ncol=1, frameon=False, loc="upper left", bbox_to_anchor=(-0.05, 1.1),
             columnspacing=0.5, handletextpad=0.5, labelspacing = 0.25)
-    
+
         axd["pc_evi_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2ADC"].set_yticklabels([])
         axd["pc_evi_2ADC"].set_xlabel("Action trace")
@@ -4329,7 +4393,7 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_action_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_action_2AFC"].set_yticklabels([])
         axd["pc_action_2AFC"].set_xlabel("Evidence")
-    
+
         axd["pc_evi_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2AFC"].set_yticklabels([])
         axd["pc_evi_2AFC"].set_xlabel("Action trace")

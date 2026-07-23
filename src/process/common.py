@@ -1026,8 +1026,14 @@ def glmhmmt_state_metric_df(
     metrics: Sequence[str],
     state_col: str = "state_label",
     subject_col: str = "subject",
+    correct_only_metrics: Sequence[str] = (),
+    correct_col: str = "correct_bool",
 ) -> pd.DataFrame:
-    """Summarize arbitrary numeric trial metrics by subject and state."""
+    """Summarize numeric trial metrics by subject and state.
+
+    Metrics listed in ``correct_only_metrics`` are computed only from trials
+    where ``correct_col`` equals one. Other metrics continue to use all trials.
+    """
 
     df = to_pandas_df(trial_df)
     available_metrics = [metric for metric in metrics if metric in df.columns]
@@ -1035,15 +1041,32 @@ def glmhmmt_state_metric_df(
     if df.empty or not required.issubset(df.columns) or not available_metrics:
         return pd.DataFrame(columns=[subject_col, state_col, "metric", "value", "n_trials"])
 
-    work = df[[subject_col, state_col, *available_metrics]].copy()
+    filtered_metrics = set(correct_only_metrics).intersection(available_metrics)
+    if filtered_metrics and correct_col not in df.columns:
+        raise ValueError(
+            f"Cannot restrict {sorted(filtered_metrics)} to correct trials: "
+            f"missing column {correct_col!r}."
+        )
+
+    work_cols = [subject_col, state_col, *available_metrics]
+    if filtered_metrics:
+        work_cols.append(correct_col)
+    work = df[work_cols].copy()
     for metric in available_metrics:
         work[metric] = pd.to_numeric(work[metric], errors="coerce")
+    id_vars = [subject_col, state_col]
+    if filtered_metrics:
+        work[correct_col] = pd.to_numeric(work[correct_col], errors="coerce")
+        id_vars.append(correct_col)
     long = work.melt(
-        id_vars=[subject_col, state_col],
+        id_vars=id_vars,
         value_vars=available_metrics,
         var_name="metric",
         value_name="value",
     ).dropna(subset=["value"])
+    if filtered_metrics:
+        keep = ~long["metric"].isin(filtered_metrics) | long[correct_col].eq(1)
+        long = long.loc[keep].drop(columns=correct_col)
     if long.empty:
         return pd.DataFrame(columns=[subject_col, state_col, "metric", "value", "n_trials"])
     return (
