@@ -179,7 +179,7 @@ def _(Path, configure_paths, format, get_runtime_paths, os):
     os.makedirs(path_panels, exist_ok=True)
     print(project_path)
     print(path_panels)
-    return ROOT, path_panels, paths
+    return ROOT, path_panels, paths, project_path
 
 
 @app.cell(hide_code=True)
@@ -1163,70 +1163,64 @@ def _(transition_plot_dfs):
 
 
 @app.cell
-def _(fig_size, mount_figure, plt):
+def _(mount_figure, plt):
     if mount_figure:
-        fig = plt.figure(figsize=fig_size(1), constrained_layout=True)
-
-        gs = fig.add_gridspec(
-            4, 4,
-            width_ratios=[1, 1, 1, 1],
-            height_ratios=[1, 1, 1, 1],
+        fig, axd = plt.subplot_mosaic(
+            [
+                [
+                    "emission_weights_2ADC",
+                    "transition_weights_2ADC",
+                    "emission_weights_2AFC",
+                    "transition_weights_2AFC",
+                ],
+                [
+                    "psychometric_by_state_2ADC",
+                    "psychometric_by_action_trace_2ADC",
+                    "psychometric_by_state_2AFC",
+                    "psychometric_by_action_trace_2AFC",
+                ],
+                [
+                    "autocorrelograms_2ADC_repetition",
+                    "autocorrelograms_2ADC_outcome",
+                    "autocorrelograms_2AFC_repetition",
+                    "autocorrelograms_2AFC_outcome",
+                ],
+                [
+                    "single_session_2ADC",
+                    "single_session_2ADC",
+                    "single_session_2AFC",
+                    "single_session_2AFC",
+                ],
+            ],
+            figsize = (6.26771653543307, 6.26771653543307),
+            constrained_layout=True,
+            gridspec_kw={
+                "width_ratios": [1, 1, 1, 1],
+                "height_ratios": [1, 1, 1, 1],
+            },
         )
-
-        axd = {
-            "emission_weights_2ADC": fig.add_subplot(gs[0, 0]),
-            "transition_weights_2ADC": fig.add_subplot(gs[0, 1]),
-            "emission_weights_2AFC": fig.add_subplot(gs[0, 2]),
-            "transition_weights_2AFC": fig.add_subplot(gs[0, 3]),
-
-            "psychometric_by_state_2ADC": fig.add_subplot(gs[1, 0]),
-            # "nlicks_by_state_2ADC": fig.add_subplot(gs[1, 1]),
-            "psychometric_by_action_trace_2ADC": fig.add_subplot(gs[1, 1]),
-            "psychometric_by_state_2AFC": fig.add_subplot(gs[1, 2]),
-            "psychometric_by_action_trace_2AFC": fig.add_subplot(gs[1, 3]),
-            # "nlicks_by_state_2AFC": fig.add_subplot(gs[1, 3]),
-
-            "autocorrelograms_2ADC_repetition": fig.add_subplot(gs[2, 0]),
-            "autocorrelograms_2ADC_outcome": fig.add_subplot(gs[2, 1]),
-        
-            "autocorrelograms_2AFC_repetition": fig.add_subplot(gs[2, 2]),
-            "autocorrelograms_2AFC_outcome": fig.add_subplot(gs[2, 3]),
-
-            "single_session_2ADC": fig.add_subplot(gs[3, 0:2]),
-            "single_session_2AFC": fig.add_subplot(gs[3, 2:4]),
-        }
-
-        # # ---- parent axes for model comparison blocks ----
-        # parent_2ADC = fig.add_subplot(gs[2, 1])
-        # parent_2AFC = fig.add_subplot(gs[2, 3])
-
-        # for parent in [parent_2ADC, parent_2AFC]:
-        #     parent.set_xticks([])
-        #     parent.set_yticks([])
-        #     parent.set_frame_on(False)
-        #     parent.set_ylabel(r"$\Delta$ GLM-HMM", labelpad=2)
-
-        # # ---- actual inner axes ----
-        # axd["model_comparison_ll_2ADC"] = parent_2ADC.inset_axes([0.00, 0.0, 0.35, 1.0])
-        # axd["model_comparison_bic_2ADC"] = parent_2ADC.inset_axes([0.65, 0.0, 0.35, 1.0])
-
-        # axd["model_comparison_ll_2AFC"] = parent_2AFC.inset_axes([0.00, 0.0, 0.35, 1.0])
-        # axd["model_comparison_bic_2AFC"] = parent_2AFC.inset_axes([0.65, 0.0, 0.35, 1.0])
-
-        # # Optional: keep parents accessible
-        # axd["_model_comparison_parent_2ADC"] = parent_2ADC
-        # axd["_model_comparison_parent_2AFC"] = parent_2AFC
-
         fig.set_constrained_layout_pads(
             w_pad=0.005,
             h_pad=0.01,
             wspace=0.005,
             hspace=0.04,
         )
+        for name in (
+            "psychometric_by_state_2ADC",
+            "psychometric_by_action_trace_2ADC",
+            "psychometric_by_state_2AFC",
+            "psychometric_by_action_trace_2AFC",
+        ):
+            axd[name].set_box_aspect(1)
 
     else:
         fig, axd = None, {}
     return axd, fig
+
+
+@app.cell
+def _():
+    return
 
 
 @app.cell(hide_code=True)
@@ -1269,11 +1263,11 @@ def _(
         yerr=_data_sub.get("autocorr_sem"),
         fmt="o",
         capsize=0,
-        # ms=7,
+        ms=3,
         color="tab:blue",
         ecolor="tab:blue",
         label="Data",
-        zorder=4,
+        zorder=3,
     )
     # autocorrelograms_2ADC_outcome.plot(
     #     _data_sub["lag"],
@@ -1289,13 +1283,16 @@ def _(
         _model_sub["autocorr"],
         color="tab:red",
         label="GLM-HMM-T",
-        zorder=3,
+        zorder=4,
     )
 
     autocorrelograms_2ADC_outcome.axhline(0.0, color="0.5", linestyle="--")
     autocorrelograms_2ADC_outcome.set_title("Outcomes")
     autocorrelograms_2ADC_outcome.set_xlabel("Lag")
     autocorrelograms_2ADC_outcome.set_xlim(0,20.5)
+    _major_pos = [i for i in range(1, 21) if i % 5 == 0 or i == 1]
+    autocorrelograms_2ADC_outcome.set_xticks(_major_pos)
+    autocorrelograms_2ADC_outcome.set_xticklabels([str(i) for i in _major_pos])
     autocorrelograms_2ADC_outcome.set_ylabel("Autocorrelation")
     autocorrelograms_2ADC_outcome.legend(frameon=False, loc ="upper center", bbox_to_anchor = (0.5,0.35), ncol = 2,   handlelength=0.8,handletextpad=0.4,columnspacing=0.8,)
 
@@ -1330,11 +1327,11 @@ def _(
         yerr=_data_sub.get("autocorr_sem"),
         fmt="o",
         capsize=0,
-        # ms=7,
+        ms=3,
         color="tab:blue",
         ecolor="tab:blue",
         label="Data",
-        zorder=4,
+        zorder=3,
     )
 
 
@@ -1344,12 +1341,15 @@ def _(
         _model_sub["autocorr"],
         color="tab:red",
         label="GLM-HMM-T",
-        zorder=3,
+        zorder=4,
     )
 
     autocorrelograms_2ADC_repetition.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
     autocorrelograms_2ADC_repetition.set_title("Repetition")
     autocorrelograms_2ADC_repetition.set_xlabel("Lag")
+    _major_pos = [i for i in range(1, 21) if i % 5 == 0 or i == 1]
+    autocorrelograms_2ADC_repetition.set_xticks(_major_pos)
+    autocorrelograms_2ADC_repetition.set_xticklabels([str(i) for i in _major_pos])
     autocorrelograms_2ADC_repetition.set_xlim(0,20.5)
     autocorrelograms_2ADC_repetition.set_ylabel("Autocorrelation")
     autocorrelograms_2ADC_repetition.legend(frameon=False)
@@ -1393,11 +1393,11 @@ def _(
         yerr=_data_sub.get("autocorr_sem"),
         fmt="o",
         capsize=0,
-        # ms=7,
+        ms=3,
         color="tab:blue",
         ecolor="tab:blue",
         label="Data",
-        zorder=4,
+        zorder=3,
     )
 
     _model_sub = _model_autocorr[_model_autocorr["signal"] == "Outcome"].sort_values("lag")
@@ -1406,11 +1406,14 @@ def _(
         _model_sub["autocorr"],
         color="tab:red",
         label="GLM-HMM-T",
-        zorder=3,
+        zorder=4,
     )
 
     autocorrelograms_2AFC_outcome.axhline(0.0, color="0.5", linestyle="--")
     autocorrelograms_2AFC_outcome.set_title("Outcomes")
+    _major_pos = [i for i in range(1, 21) if i % 5 == 0 or i == 1]
+    autocorrelograms_2AFC_outcome.set_xticks(_major_pos)
+    autocorrelograms_2AFC_outcome.set_xticklabels([str(i) for i in _major_pos])
     autocorrelograms_2AFC_outcome.set_xlim(0,20.5)
     autocorrelograms_2AFC_outcome.set_xlabel("Lag")
     autocorrelograms_2AFC_outcome.set_ylabel("Autocorrelation")
@@ -1449,11 +1452,11 @@ def _(
         yerr=_data_sub.get("autocorr_sem"),
         fmt="o",
         capsize=0,
-        # ms=7,
+        ms=3,
         color="tab:blue",
         ecolor="tab:blue",
         label="Data",
-        zorder=4,
+        zorder=3,
     )
 
     _model_sub = _model_autocorr[_model_autocorr["signal"] == "Repetition"].sort_values("lag")
@@ -1462,12 +1465,15 @@ def _(
         _model_sub["autocorr"],
         color="tab:red",
         label="GLM-HMM-T",
-        zorder=3,
+        zorder=4,
     )
 
     autocorrelograms_2AFC_repetition.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
     autocorrelograms_2AFC_repetition.set_title("Repetition")
     autocorrelograms_2AFC_repetition.set_xlabel("Lag")
+    _major_pos = [i for i in range(1, 21) if i % 5 == 0 or i == 1]
+    autocorrelograms_2AFC_repetition.set_xticks(_major_pos)
+    autocorrelograms_2AFC_repetition.set_xticklabels([str(i) for i in _major_pos])
     autocorrelograms_2AFC_repetition.set_xlim(0,20.5)
     autocorrelograms_2AFC_repetition.set_ylabel("Autocorrelation")
     autocorrelograms_2AFC_repetition.legend(frameon=False)
@@ -1781,7 +1787,6 @@ def _(
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_xticklabels(["E->E", "E->D", "D->E", "D->D"])
     transition_weights_2ADC.set_ylabel("Trans. weight")
-    transition_weights_2ADC.tick_params(axis="x", rotation=45)
     # transition_weights_2ADC.set_ylim(-7,7)
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
@@ -1837,7 +1842,6 @@ def _(
     transition_weights_2AFC.set_xticklabels(["E->D", "D->E"])
     transition_weights_2AFC.set_ylabel("Transition weight")
     transition_weights_2AFC.set_title("Cum. Rew")
-    transition_weights_2AFC.tick_params(axis="x", rotation=45)
     if not mount_figure:
         transition_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2AFC
@@ -4438,7 +4442,7 @@ def _(mo):
 
 
 @app.cell
-def _(axd, fig, format, mount_figure, path_panels, psychometric_x_labels):
+def _(axd, fig, mount_figure, project_path):
     if mount_figure:
         _legend_ax = axd.get("single_session_2ADC")
         _handles, _labels = _legend_ax.get_legend_handles_labels() if _legend_ax is not None else ([], [])
@@ -4460,24 +4464,42 @@ def _(axd, fig, format, mount_figure, path_panels, psychometric_x_labels):
             if _legend is not None:
                 _legend.remove()
 
+        axd["autocorrelograms_2ADC_outcome"].set_xlabel("Trial lag")
+        axd["autocorrelograms_2ADC_repetition"].set_xlabel("Trial lag")
+        axd["autocorrelograms_2AFC_outcome"].set_xlabel("Trial lag")
+        axd["autocorrelograms_2AFC_repetition"].set_xlabel("Trial lag")
+        axd["autocorrelograms_2ADC_outcome"].set_title("Outcome")
+        axd["autocorrelograms_2ADC_repetition"].set_title("Repetition")
+        axd["autocorrelograms_2AFC_outcome"].set_title("Outcome")
+        axd["autocorrelograms_2AFC_repetition"].set_title("Repetition")
+
         axd["emission_weights_2ADC"].set_title("2ADC")
         axd["emission_weights_2AFC"].set_title("2AFC")
 
-        axd["emission_weights_2ADC"].set_ylabel("Emission weight")
-        axd["emission_weights_2AFC"].set_ylabel("Emission weight")
-        axd["transition_weights_2ADC"].set_ylabel("Transition weight")
-        axd["transition_weights_2AFC"].set_ylabel("Transition weight")
+        axd["emission_weights_2ADC"].set_ylabel("Weight")
+        axd["emission_weights_2ADC"].set_title("Emission")
+        axd["emission_weights_2AFC"].set_title("Emission")
+        axd["transition_weights_2ADC"].set_title("Transition")
+        axd["transition_weights_2AFC"].set_title("Transition")
         axd["psychometric_by_state_2ADC"].set_ylabel(r"$p(\mathrm{right})$")
-        axd["psychometric_by_state_2ADC"].set_xlabel(psychometric_x_labels["2AFC_delay"])
-        axd["psychometric_by_state_2AFC"].set_xlabel(psychometric_x_labels["2AFC"])
+        axd["psychometric_by_state_2ADC"].set_xlabel("Stimulus evidence")
+
+        axd["psychometric_by_state_2AFC"].set_xlabel("Stimulus evidence")
+        axd["psychometric_by_state_2AFC"].set_yticklabels([])
+
+        axd["psychometric_by_action_trace_2ADC"].set_xlabel("Action trace")
+        axd["psychometric_by_action_trace_2ADC"].set_yticklabels([])
+        axd["psychometric_by_action_trace_2AFC"].set_xlabel("Action trace")
+        axd["psychometric_by_action_trace_2AFC"].set_yticklabels([])
         # axd["nlicks_by_state_2ADC"].set_ylabel("nLicks")
         # axd["nlicks_by_state_2AFC"].set_ylabel("nLicks")
         # axd["model_comparison_ll_2ADC"].set_ylabel(r"$\Delta$ LL")
         # axd["model_comparison_ll_2AFC"].set_ylabel(r"$\Delta$ LL")
         axd["autocorrelograms_2ADC_repetition"].set_ylabel("Autocorrelation")
-        axd["single_session_2ADC"].set_ylabel("Running fraction")
-        # axd["single_session_2çADC"].set_xlabel("Trial")
-        # axd["single_session_2AFC"].set_xlabel("Trial")
+        axd["single_session_2ADC"].set_ylabel("$p$(state)")
+        axd["single_session_2AFC"].set_yticklabels([])
+        axd["single_session_2ADC"].set_xlabel("Trial")
+        axd["single_session_2AFC"].set_xlabel("Trial")
 
         # if _legend_items:
         #     _handles, _labels = zip(*_legend_items, strict=False)
@@ -4491,14 +4513,17 @@ def _(axd, fig, format, mount_figure, path_panels, psychometric_x_labels):
         #         handlelength=1.2,
         #         columnspacing=0.8,
         #     )
-        fig.savefig((path_panels / "figure3").with_suffix(f".{format}"))
+        fig.savefig((project_path / "figures" / "panels3" / "figure3.pdf"))
+        fig.savefig((project_path / "figures" / "panels3" / "figure3.png"))
+        fig.savefig((project_path / "figures" / "panels3" / "figure3.svg"))
         fig.align_ylabels()
     fig
     return
 
 
 @app.cell
-def _():
+def _(path_panels):
+    path_panels
     return
 
 
