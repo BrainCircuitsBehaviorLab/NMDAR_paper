@@ -237,13 +237,7 @@ def _(ROOT, plt, sns):
     }
     delay_order = [-0.1, -1, -3, -10, 10, 3, 1, 0.1]
     delay_mapping = {value: index for index, value in enumerate(delay_order)}
-    return (
-        delay_order,
-        feature_labels,
-        state_palette,
-        task_labels,
-        task_palette,
-    )
+    return feature_labels, state_palette, task_labels, task_palette
 
 
 @app.cell
@@ -995,17 +989,17 @@ def _(
             )
         else:
             _transition_df["transition_feature_label"] = _transition_df["feature_label"].astype(str)
-        transition_plot_dfs[_task_name] = _transition_df
+        transition_plot_dfs[_task_name] = _transition_df[_transition_df["source_state_label"] != _transition_df["destination_state_label"]]
         _psychometric_source_df = plot_dfs[_task_name]
         _x_col = {
-            "2AFC_delay": "delay",
-            "2AFC": "ILD",
+            "2AFC_delay": "stim_x_delay_param",
+            "2AFC": "stim_param",
             "MCDR": "ttype_c",
         }[_task_name]
         psychometric_x_cols[_task_name] = _x_col
         psychometric_x_labels[_task_name] = {
-            "2AFC": "Stimulus ILD (dB)",
-            "2AFC_delay": "Signed delay",
+            "2AFC": "Stimulus evidence",
+            "2AFC_delay": "Stimulus evidence",
             "MCDR": "Trial type",
         }[_task_name]
         psychometric_dfs[_task_name] = state_psychometric_data_model_df(
@@ -1163,6 +1157,12 @@ def _(mo):
 
 
 @app.cell
+def _(transition_plot_dfs):
+    transition_plot_dfs["2AFC_delay"]
+    return
+
+
+@app.cell
 def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig = plt.figure(figsize=fig_size(1), constrained_layout=True)
@@ -1180,37 +1180,42 @@ def _(fig_size, mount_figure, plt):
             "transition_weights_2AFC": fig.add_subplot(gs[0, 3]),
 
             "psychometric_by_state_2ADC": fig.add_subplot(gs[1, 0]),
-            "nlicks_by_state_2ADC": fig.add_subplot(gs[1, 1]),
+            # "nlicks_by_state_2ADC": fig.add_subplot(gs[1, 1]),
+            "psychometric_by_action_trace_2ADC": fig.add_subplot(gs[1, 1]),
             "psychometric_by_state_2AFC": fig.add_subplot(gs[1, 2]),
-            "nlicks_by_state_2AFC": fig.add_subplot(gs[1, 3]),
+            "psychometric_by_action_trace_2AFC": fig.add_subplot(gs[1, 3]),
+            # "nlicks_by_state_2AFC": fig.add_subplot(gs[1, 3]),
 
             "autocorrelograms_2ADC_repetition": fig.add_subplot(gs[2, 0]),
+            "autocorrelograms_2ADC_outcome": fig.add_subplot(gs[2, 1]),
+        
             "autocorrelograms_2AFC_repetition": fig.add_subplot(gs[2, 2]),
+            "autocorrelograms_2AFC_outcome": fig.add_subplot(gs[2, 3]),
 
             "single_session_2ADC": fig.add_subplot(gs[3, 0:2]),
             "single_session_2AFC": fig.add_subplot(gs[3, 2:4]),
         }
 
-        # ---- parent axes for model comparison blocks ----
-        parent_2ADC = fig.add_subplot(gs[2, 1])
-        parent_2AFC = fig.add_subplot(gs[2, 3])
+        # # ---- parent axes for model comparison blocks ----
+        # parent_2ADC = fig.add_subplot(gs[2, 1])
+        # parent_2AFC = fig.add_subplot(gs[2, 3])
 
-        for parent in [parent_2ADC, parent_2AFC]:
-            parent.set_xticks([])
-            parent.set_yticks([])
-            parent.set_frame_on(False)
-            parent.set_ylabel(r"$\Delta$ GLM-HMM", labelpad=2)
+        # for parent in [parent_2ADC, parent_2AFC]:
+        #     parent.set_xticks([])
+        #     parent.set_yticks([])
+        #     parent.set_frame_on(False)
+        #     parent.set_ylabel(r"$\Delta$ GLM-HMM", labelpad=2)
 
-        # ---- actual inner axes ----
-        axd["model_comparison_ll_2ADC"] = parent_2ADC.inset_axes([0.00, 0.0, 0.35, 1.0])
-        axd["model_comparison_bic_2ADC"] = parent_2ADC.inset_axes([0.65, 0.0, 0.35, 1.0])
+        # # ---- actual inner axes ----
+        # axd["model_comparison_ll_2ADC"] = parent_2ADC.inset_axes([0.00, 0.0, 0.35, 1.0])
+        # axd["model_comparison_bic_2ADC"] = parent_2ADC.inset_axes([0.65, 0.0, 0.35, 1.0])
 
-        axd["model_comparison_ll_2AFC"] = parent_2AFC.inset_axes([0.00, 0.0, 0.35, 1.0])
-        axd["model_comparison_bic_2AFC"] = parent_2AFC.inset_axes([0.65, 0.0, 0.35, 1.0])
+        # axd["model_comparison_ll_2AFC"] = parent_2AFC.inset_axes([0.00, 0.0, 0.35, 1.0])
+        # axd["model_comparison_bic_2AFC"] = parent_2AFC.inset_axes([0.65, 0.0, 0.35, 1.0])
 
-        # Optional: keep parents accessible
-        axd["_model_comparison_parent_2ADC"] = parent_2ADC
-        axd["_model_comparison_parent_2AFC"] = parent_2AFC
+        # # Optional: keep parents accessible
+        # axd["_model_comparison_parent_2ADC"] = parent_2ADC
+        # axd["_model_comparison_parent_2AFC"] = parent_2AFC
 
         fig.set_constrained_layout_pads(
             w_pad=0.005,
@@ -1829,9 +1834,9 @@ def _(
                                         order=transition_orders["2AFC"])
     # transition_weights_2AFC.set_title(task_labels["2AFC"])
     transition_weights_2AFC.set_xlabel("")
-    transition_weights_2AFC.set_xticklabels(["E->E", "E->D", "D->E", "D->D"])
+    transition_weights_2AFC.set_xticklabels(["E->D", "D->E"])
     transition_weights_2AFC.set_ylabel("Transition weight")
-    transition_weights_2AFC.set_title("Prev. Rew")
+    transition_weights_2AFC.set_title("Cum. Rew")
     transition_weights_2AFC.tick_params(axis="x", rotation=45)
     if not mount_figure:
         transition_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_transition_weights").with_suffix(f".{format}"))
@@ -1912,7 +1917,6 @@ def _(mo):
 @app.cell
 def _(
     axd,
-    delay_order,
     fig_size,
     format,
     mount_figure,
@@ -1921,223 +1925,71 @@ def _(
     pd,
     plot_dfs,
     plt,
-    psychometric_plot_style,
     psychometric_x_labels,
     sns,
     state_palette,
-    views,
 ):
+    _plot_df = plot_dfs["2AFC_delay"].to_pandas().copy()
+    _plot_df["p_right_state"] = np.where(
+        _plot_df["state_idx"] == 0,
+        _plot_df["pR_state_0"],
+        _plot_df["pR_state_1"],
+    )
+    _plot_df["_response_right"] = (_plot_df["response"] > 0).astype(float)
+    _plot_df["_bin"] = pd.qcut(
+        _plot_df["stim_x_delay_param"],
+        q=9,
+        duplicates="drop",
+    )
+    _plot_df["stimulus_evidence"] = _plot_df.groupby(
+        "_bin",
+        observed=True,
+    )["stim_x_delay_param"].transform("mean")
+    _plot_df = (
+        _plot_df.groupby(
+            ["subject", "state_label", "stimulus_evidence"],
+            as_index=False,
+            observed=True,
+        )
+        .agg(
+            p_right_data=("_response_right", "mean"),
+            p_right_state=("p_right_state", "mean"),
+        )
+    )
+
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2ADC", plt.gca())
     psychometric_by_state_2ADC.clear()
-    _plot_df_all = plot_dfs["2AFC_delay"]
-    _plot_df_all = _plot_df_all.to_pandas().reset_index(drop=True) if hasattr(_plot_df_all, "to_pandas") else _plot_df_all.reset_index(drop=True)
-    _views_sel = views["2AFC_delay"]
-    _K = next(iter(_views_sel.values())).K if _views_sel else 2
 
-    def _local_state_order(_view):
-        _order = [int(_k) for _k in (getattr(_view, "state_idx_order", []) or [])]
-        _view_K = int(getattr(_view, "K", len(_order)))
-        if len(_order) == _view_K and len(set(_order)) == _view_K:
-            return _order
-        return list(range(_view_K))
-
-    _raw_by_rank_by_subject = {}
-    _rank_by_raw_by_subject = {}
-    for _subject, _view in _views_sel.items():
-        _raw_by_rank = {int(_rank): int(_raw_idx) for _rank, _raw_idx in enumerate(_local_state_order(_view))}
-        _rank_by_raw = {int(_raw_idx): int(_rank) for _rank, _raw_idx in _raw_by_rank.items()}
-        _raw_by_rank_by_subject[_subject] = _raw_by_rank
-        _raw_by_rank_by_subject[str(_subject)] = _raw_by_rank
-        _rank_by_raw_by_subject[_subject] = _rank_by_raw
-        _rank_by_raw_by_subject[str(_subject)] = _rank_by_raw
-
-    _plot_df_all = _plot_df_all.copy()
-    if "state_idx" in _plot_df_all.columns:
-        _state_rank = np.full(len(_plot_df_all), np.nan, dtype=float)
-        for _subject, _idx in _plot_df_all.groupby("subject", observed=True).groups.items():
-            _rank_by_raw = _rank_by_raw_by_subject.get(_subject) or _rank_by_raw_by_subject.get(str(_subject))
-            if _rank_by_raw is None:
-                continue
-            _row_idx = np.asarray(_idx, dtype=int)
-            _raw_state = pd.to_numeric(_plot_df_all.iloc[_row_idx]["state_idx"], errors="coerce")
-            _state_rank[_row_idx] = _raw_state.map(_rank_by_raw).to_numpy(dtype=float)
-        _plot_df_all["_state_k"] = _state_rank
-    elif "state_rank" in _plot_df_all.columns:
-        _plot_df_all["_state_k"] = pd.to_numeric(_plot_df_all["state_rank"], errors="coerce")
-    elif "_state_k" in _plot_df_all.columns:
-        _plot_df_all["_state_k"] = pd.to_numeric(_plot_df_all["_state_k"], errors="coerce")
-
-    for _rank in range(_K):
-        _model_values = np.full(len(_plot_df_all), np.nan, dtype=float)
-        _wrote_model = False
-        for _subject, _idx in _plot_df_all.groupby("subject", observed=True).groups.items():
-            _raw_by_rank = _raw_by_rank_by_subject.get(_subject) or _raw_by_rank_by_subject.get(str(_subject))
-            if _raw_by_rank is None or _rank not in _raw_by_rank:
-                continue
-            _raw_idx = _raw_by_rank[_rank]
-            _model_col = f"pR_state_{_raw_idx}"
-            if _model_col not in _plot_df_all.columns:
-                continue
-            _row_idx = np.asarray(_idx, dtype=int)
-            _model_values[_row_idx] = pd.to_numeric(_plot_df_all.iloc[_row_idx][_model_col], errors="coerce").to_numpy(dtype=float)
-            _wrote_model = True
-        if _wrote_model:
-            _plot_df_all[f"_pR_state_rank_{_rank}"] = _model_values
-
-    _plot_df_all["response"] = pd.to_numeric(_plot_df_all["response"], errors="coerce")
-    _unique_response = set(_plot_df_all["response"].dropna().unique().tolist())
-    if _unique_response.issubset({-1.0, 1.0}):
-        _plot_df_all["_response_right"] = (_plot_df_all["response"] > 0).astype(float)
-    else:
-        _plot_df_all["_response_right"] = _plot_df_all["response"].astype(float)
-
-    _stim_col = next((_col for _col in ["stim", "stimulus"] if _col in _plot_df_all.columns), None)
-    _delay_col = next((_col for _col in ["delay_raw", "delays", "delay"] if _col in _plot_df_all.columns), None)
-    if _stim_col is None or _delay_col is None:
-        _plot_df_all["_signed_delay"] = np.nan
-        _plot_df_all["_signed_delay_cat"] = pd.Series(pd.NA, index=_plot_df_all.index, dtype="object")
-    else:
-        _stim_values = pd.to_numeric(_plot_df_all[_stim_col], errors="coerce")
-        _unique_stim = set(_stim_values.dropna().unique().tolist())
-        if _unique_stim and _unique_stim.issubset({0, 1, 0.0, 1.0}):
-            _stim_sign = pd.Series(
-                np.where(_stim_values == 0, -1.0, np.where(_stim_values == 1, 1.0, np.nan)),
-                index=_plot_df_all.index,
-                dtype=float,
-            )
-        else:
-            _stim_sign = np.sign(_stim_values)
-        _delay_values = pd.to_numeric(_plot_df_all[_delay_col], errors="coerce")
-        _signed_delay = _delay_values * _stim_sign
-        _plot_df_all["_signed_delay"] = _signed_delay
-        _signed_delay_cat = pd.Series(pd.NA, index=_plot_df_all.index, dtype="object")
-        _valid_signed_delay = np.isfinite(_delay_values) & np.isfinite(_stim_sign)
-        _signed_delay_cat.loc[_valid_signed_delay] = _signed_delay.loc[_valid_signed_delay].map(lambda _value: f"{float(_value):g}")
-        _preferred_order = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
-        _present = set(_signed_delay_cat.dropna())
-        _existing = [_value for _value in _preferred_order if _value in _present]
-        _extras = sorted((_value for _value in _present if _value not in set(_existing)), key=lambda _value: float(_value))
-        _plot_df_all["_signed_delay_cat"] = pd.Categorical(_signed_delay_cat, categories=_existing + _extras, ordered=True)
-    _state_labels = {}
-    for _view in _views_sel.values():
-        for _rank, _raw_idx in enumerate(_local_state_order(_view)):
-            _state_labels.setdefault(_rank, getattr(_view, "state_name_by_idx", {}).get(_raw_idx, f"State {_rank}"))
-
-    _preferred_order = ["-0.1", "-1", "-3", "-10", "10", "3", "1", "0.1"]
-    _present = set(_plot_df_all["_signed_delay_cat"].dropna().astype(str))
-    _order = [_value for _value in _preferred_order if _value in _present]
-    _order += sorted((_value for _value in _present if _value not in set(_order)), key=lambda _value: float(_value))
-    _labels = [str(int(float(_value))) if float(_value).is_integer() else f"{float(_value):g}" for _value in _order]
-    _plot_df_all = _plot_df_all[_plot_df_all["_signed_delay_cat"].astype(str).isin(_order)].copy()
-    _plot_df_all["_signed_delay_cat"] = pd.Categorical(_plot_df_all["_signed_delay_cat"].astype(str), categories=_order, ordered=True)
-    _plot_df_all["_x_code"] = _plot_df_all["_signed_delay_cat"].astype(str).map({_value: _idx for _idx, _value in enumerate(_order)})
-
-    for _rank in range(_K):
-        _state_label = _state_labels.get(_rank, f"State {_rank}")
-        _color = state_palette.get(_state_label, state_palette.get(f"State {_rank}", f"C{_rank}"))
-        _pred_col = f"_pR_state_rank_{_rank}" if f"_pR_state_rank_{_rank}" in _plot_df_all.columns else "p_pred"
-        if _pred_col not in _plot_df_all.columns:
-            continue
-        _state_df = _plot_df_all[_plot_df_all["_state_k"] == _rank].copy()
-        _state_df = _state_df[
-            _state_df["_signed_delay_cat"].notna()
-            & np.isfinite(pd.to_numeric(_state_df["_response_right"], errors="coerce"))
-            & np.isfinite(pd.to_numeric(_state_df[_pred_col], errors="coerce"))
-        ].copy()
-        if _state_df.empty:
-            continue
-        _rows = []
-        for (_subject, _signed_delay, _x_code), _grp in _state_df.groupby(["subject", "_signed_delay_cat", "_x_code"], observed=True):
-            _response = pd.to_numeric(_grp["_response_right"], errors="coerce").to_numpy(dtype=float)
-            _model = pd.to_numeric(_grp[_pred_col], errors="coerce").to_numpy(dtype=float)
-            _mask = np.isfinite(_response) & np.isfinite(_model)
-            if not np.any(_mask):
-                continue
-            _rows.append(
-                {
-                    "subject": _subject,
-                    "_signed_delay_cat": str(_signed_delay),
-                    "_x_code": float(_x_code),
-                    "data_mean": float(np.nanmean(_response[_mask])),
-                    "model_mean": float(np.nanmean(_model[_mask])),
-                }
-            )
-        _subject_summary = pd.DataFrame(_rows)
-        if _subject_summary.empty:
-            continue
-        _summary = (
-            _subject_summary.groupby(["_signed_delay_cat", "_x_code"], observed=True)
-            .agg(
-                data_mean=("data_mean", "mean"),
-                data_sem=("data_mean", lambda _values: float(np.nanstd(_values, ddof=1) / np.sqrt(max(len(_values), 1))) if len(_values) > 1 else 0.0),
-                model_mean=("model_mean", "mean"),
-            )
-            .reset_index()
-            .sort_values("_x_code")
-        )
-        psychometric_by_state_2ADC.plot(
-            _summary["_x_code"].to_numpy(dtype=float),
-            _summary["model_mean"].to_numpy(dtype=float),
-            color=_color,
-            linestyle=psychometric_plot_style["model_line_style"],
-            linewidth=psychometric_plot_style["model_linewidth"],
-            label="_nolegend_",
-            zorder=6,
-        )
-        psychometric_by_state_2ADC.errorbar(
-            _summary["_x_code"].to_numpy(dtype=float),
-            _summary["data_mean"].to_numpy(dtype=float),
-            yerr=_summary["data_sem"].fillna(0.0).to_numpy(dtype=float),
-            fmt=psychometric_plot_style["data_marker"],
-            color=_color,
-            ecolor=_color,
-            capsize=psychometric_plot_style["data_capsize"],
-            markersize=psychometric_plot_style["data_markersize"],
-            label=_state_label,
-            zorder=5,
-        )
-    psychometric_by_state_2ADC.set_xticks(range(len(_order)))
-    psychometric_by_state_2ADC.set_xticklabels(_labels)
-    if "-10" in _order and "10" in _order:
-        psychometric_by_state_2ADC.axvline(
-            (_order.index("-10") + _order.index("10")) / 2.0,
-            color=psychometric_plot_style["reference_color"],
-            linestyle=psychometric_plot_style["reference_line_style"],
-            linewidth=psychometric_plot_style["reference_linewidth"],
-            alpha=psychometric_plot_style["reference_alpha"],
-        )
-    psychometric_by_state_2ADC.axhline(
-        0.5,
-        color=psychometric_plot_style["reference_color"],
-        linestyle=psychometric_plot_style["reference_line_style"],
-        linewidth=psychometric_plot_style["reference_linewidth"],
-        alpha=psychometric_plot_style["reference_alpha"],
-    )
-    sns.pointplot(
-        data=_data,
-        x="x_position",
-        y="p_right",
+    sns.lineplot(
+        data=_plot_df,
+        x="stimulus_evidence",
+        y="p_right_state",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        markers="o",
-        linestyles="none",
-        native_scale=True,
+        palette=state_palette,
+        ax=psychometric_by_state_2ADC,
+    )
+    sns.lineplot(
+        data=_plot_df,
+        x="stimulus_evidence",
+        y="p_right_data",
+        hue="state_label",
+        estimator="mean",
+        errorbar="se",
+        marker="o",
+        markeredgecolor="none",
+        lw = 0,
         palette=state_palette,
         legend=False,
         ax=psychometric_by_state_2ADC,
-        ms=3
     )
-    psychometric_by_state_2ADC.set_xticks(range(len(delay_order)))
-    psychometric_by_state_2ADC.set_xticklabels([f"{value:g}" for value in delay_order])
-    psychometric_by_state_2ADC.axhline(0.5, color="0.5", linestyle="--")
-    # psychometric_by_state_2ADC.set_title(task_labels["2AFC_delay"])
+    psychometric_by_state_2ADC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_state_2ADC.set_xlabel(psychometric_x_labels["2AFC_delay"])
     psychometric_by_state_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_state_2ADC.set_ylim(0, 1)
     psychometric_by_state_2ADC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
-    psychometric_by_state_2ADC.tick_params(axis="both", labelsize=psychometric_plot_style["tick_labelsize"])
     if psychometric_by_state_2ADC.get_legend() is not None:
         psychometric_by_state_2ADC.get_legend().remove()
     if not mount_figure:
@@ -2160,64 +2012,72 @@ def _(
     fig_size,
     format,
     mount_figure,
+    np,
     path_panels,
+    pd,
+    plot_dfs,
     plt,
-    psychometric_dfs,
-    psychometric_plot_style,
     psychometric_x_labels,
     sns,
     state_palette,
 ):
+    _plot_df = plot_dfs["2AFC"].to_pandas().copy()
+    _plot_df["p_right_state"] = np.where(
+        _plot_df["state_idx"] == 0,
+        _plot_df["pR_state_0"],
+        _plot_df["pR_state_1"],
+    )
+    _plot_df["_response_right"] = (_plot_df["response"] > 0).astype(float)
+    _plot_df["_bin"] = pd.qcut(
+        _plot_df["stim_param"],
+        q=9,
+        duplicates="drop",
+    )
+    _plot_df["stimulus_evidence"] = _plot_df.groupby(
+        "_bin",
+        observed=True,
+    )["stim_param"].transform("mean")
+    _plot_df = (
+        _plot_df.groupby(
+            ["subject", "state_label", "stimulus_evidence"],
+            as_index=False,
+            observed=True,
+        )
+        .agg(
+            p_right_data=("_response_right", "mean"),
+            p_right_state=("p_right_state", "mean"),
+        )
+    )
+
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_state_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_state_2AFC", plt.gca())
     psychometric_by_state_2AFC.clear()
-    _plot_df = psychometric_dfs["2AFC"]
-    _model = _plot_df[_plot_df["source"] == "Model"]
-    _data = _plot_df[_plot_df["source"] == "Data"]
+
     sns.lineplot(
-        data=_model,
-        x="x_numeric",
-        y="p_right",
+        data=_plot_df,
+        x="stimulus_evidence",
+        y="p_right_state",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        err_kws={"edgecolor": "none", "linewidth": 0},
         palette=state_palette,
         ax=psychometric_by_state_2AFC,
     )
-    sns.pointplot(
-        data=_data,
-        x="x_numeric",
-        y="p_right",
+    sns.lineplot(
+        data=_plot_df,
+        x="stimulus_evidence",
+        y="p_right_data",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        markers="o",
-        linestyles="none",
-        native_scale=True,
+        marker="o",
+        markeredgecolor="none",
+        lw = 0,
         palette=state_palette,
         legend=False,
         ax=psychometric_by_state_2AFC,
-        ms=3
     )
-    _xticks = sorted(psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
-    _xticks = [float(tick) for tick in _xticks]
-    _xticks = sorted(psychometric_dfs["2AFC"]["x_numeric"].dropna().unique())
-    _xticks = [float(tick) for tick in _xticks]
-
-    _xtick_labels = [
-        "" if tick in [-4, -2,2, 4] else f"{tick:g}"
-        for tick in _xticks
-    ]
-
-    psychometric_by_state_2AFC.set_xticks(_xticks)
-    psychometric_by_state_2AFC.set_xticklabels(_xtick_labels)
-    psychometric_by_state_2AFC.axhline(
-        0.5,
-        color=psychometric_plot_style["reference_color"],
-        linestyle=psychometric_plot_style["reference_line_style"],
-        alpha=psychometric_plot_style["reference_alpha"],
-    )
+    psychometric_by_state_2AFC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_state_2AFC.set_title("")
     psychometric_by_state_2AFC.set_xlabel(psychometric_x_labels["2AFC"])
     psychometric_by_state_2AFC.set_ylabel(r"$p(\mathrm{right})$")
@@ -2292,13 +2152,7 @@ def _(
     )
     psychometric_by_state_3CDR.set_xticks(range(len(psychometric_orders["MCDR"])))
     psychometric_by_state_3CDR.set_xticklabels(psychometric_orders["MCDR"])
-    psychometric_by_state_3CDR.axhline(
-        0.5,
-        color=psychometric_plot_style["reference_color"],
-        linestyle=psychometric_plot_style["reference_line_style"],
-        linewidth=psychometric_plot_style["reference_linewidth"],
-        alpha=psychometric_plot_style["reference_alpha"],
-    )
+    psychometric_by_state_3CDR.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_state_3CDR.set_title(task_labels["MCDR"])
     psychometric_by_state_3CDR.set_xlabel(psychometric_x_labels["MCDR"])
     psychometric_by_state_3CDR.set_ylabel(r"$p(\mathrm{right})$")
@@ -2329,62 +2183,81 @@ def _(mo):
 @app.cell
 def _(
     axd,
-    choice_lag_psychometric_dfs,
     feature_labels,
     fig_size,
     format,
     mount_figure,
+    np,
     path_panels,
+    pd,
+    plot_dfs,
     plt,
-    psychometric_plot_style,
     sns,
     state_palette,
 ):
+
+    _plot_df = plot_dfs["2AFC_delay"].to_pandas().copy()
+    _plot_df["p_right_state"] = np.where(
+        _plot_df["state_idx"] == 0,
+        _plot_df["pR_state_0"],
+        _plot_df["pR_state_1"],
+    )
+    _plot_df["_response_right"] = (_plot_df["response"] > 0).astype(float)
+    _plot_df["_bin"] = pd.qcut(
+        _plot_df["choice_lag_param"],
+        q=9,
+        duplicates="drop",
+    )
+    _plot_df["action_trace"] = _plot_df.groupby(
+        "_bin",
+        observed=True,
+    )["choice_lag_param"].transform("mean")
+    _plot_df = (
+        _plot_df.groupby(
+            ["subject", "state_label", "action_trace"],
+            as_index=False,
+            observed=True,
+        )
+        .agg(
+            p_right_data=("_response_right", "mean"),
+            p_right_state=("p_right_state", "mean"),
+        )
+    )
+
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_action_trace_2ADC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2ADC", plt.gca())
     psychometric_by_action_trace_2ADC.clear()
-    _plot_df = choice_lag_psychometric_dfs["2AFC_delay"]
-    _model = _plot_df[_plot_df["source"] == "Model"]
-    _data = _plot_df[_plot_df["source"] == "Data"]
+
     sns.lineplot(
-        data=_model,
-        x="x_numeric",
-        y="p_right",
+        data=_plot_df,
+        x="action_trace",
+        y="p_right_state",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        err_kws={"edgecolor": "none", "linewidth": 0},
         palette=state_palette,
         ax=psychometric_by_action_trace_2ADC,
     )
-    sns.pointplot(
-        data=_data,
-        x="x_numeric",
-        y="p_right",
+    sns.lineplot(
+        data=_plot_df,
+        x="action_trace",
+        y="p_right_data",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        markers=psychometric_plot_style["data_marker"],
-        linestyles="none",
-        native_scale=True,
+        marker="o",
+        markeredgecolor="none",
+        lw = 0,
         palette=state_palette,
         legend=False,
         ax=psychometric_by_action_trace_2ADC,
-        ms=3
     )
-    psychometric_by_action_trace_2ADC.axhline(
-        0.5,
-        color=psychometric_plot_style["reference_color"],
-        linestyle=psychometric_plot_style["reference_line_style"],
-        linewidth=psychometric_plot_style["reference_linewidth"],
-        alpha=psychometric_plot_style["reference_alpha"],
-    )
+    psychometric_by_action_trace_2ADC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_action_trace_2ADC.set_title("")
     psychometric_by_action_trace_2ADC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_action_trace_2ADC.set_ylim(0, 1)
     psychometric_by_action_trace_2ADC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
-    psychometric_by_action_trace_2ADC.tick_params(axis="both", labelsize=psychometric_plot_style["tick_labelsize"])
     if psychometric_by_action_trace_2ADC.get_legend() is not None:
         psychometric_by_action_trace_2ADC.get_legend().remove()
     if not mount_figure:
@@ -2404,62 +2277,80 @@ def _(mo):
 @app.cell
 def _(
     axd,
-    choice_lag_psychometric_dfs,
     feature_labels,
     fig_size,
     format,
     mount_figure,
+    np,
     path_panels,
+    pd,
+    plot_dfs,
     plt,
-    psychometric_plot_style,
     sns,
     state_palette,
 ):
+    _plot_df = plot_dfs["2AFC"].to_pandas().copy()
+    _plot_df["p_right_state"] = np.where(
+        _plot_df["state_idx"] == 0,
+        _plot_df["pR_state_0"],
+        _plot_df["pR_state_1"],
+    )
+    _plot_df["_response_right"] = (_plot_df["response"] > 0).astype(float)
+    _plot_df["_bin"] = pd.qcut(
+        _plot_df["choice_lag_param"],
+        q=9,
+        duplicates="drop",
+    )
+    _plot_df["action_trace"] = _plot_df.groupby(
+        "_bin",
+        observed=True,
+    )["choice_lag_param"].transform("mean")
+    _plot_df = (
+        _plot_df.groupby(
+            ["subject", "state_label", "action_trace"],
+            as_index=False,
+            observed=True,
+        )
+        .agg(
+            p_right_data=("_response_right", "mean"),
+            p_right_state=("p_right_state", "mean"),
+        )
+    )
+
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_by_action_trace_2AFC = plt.gca() if not mount_figure else axd.get("psychometric_by_action_trace_2AFC", plt.gca())
     psychometric_by_action_trace_2AFC.clear()
-    _plot_df = choice_lag_psychometric_dfs["2AFC"]
-    _model = _plot_df[_plot_df["source"] == "Model"]
-    _data = _plot_df[_plot_df["source"] == "Data"]
+
     sns.lineplot(
-        data=_model,
-        x="x_numeric",
-        y="p_right",
+        data=_plot_df,
+        x="action_trace",
+        y="p_right_state",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        err_kws={"edgecolor": "none", "linewidth": 0},
         palette=state_palette,
         ax=psychometric_by_action_trace_2AFC,
     )
-    sns.pointplot(
-        data=_data,
-        x="x_numeric",
-        y="p_right",
+    sns.lineplot(
+        data=_plot_df,
+        x="action_trace",
+        y="p_right_data",
         hue="state_label",
         estimator="mean",
         errorbar="se",
-        markers=psychometric_plot_style["data_marker"],
-        linestyles="none",
-        native_scale=True,
+        marker="o",
+        markeredgecolor="none",
+        lw = 0,
         palette=state_palette,
         legend=False,
         ax=psychometric_by_action_trace_2AFC,
-        ms=3
     )
-    psychometric_by_action_trace_2AFC.axhline(
-        0.5,
-        color=psychometric_plot_style["reference_color"],
-        linestyle=psychometric_plot_style["reference_line_style"],
-        linewidth=psychometric_plot_style["reference_linewidth"],
-        alpha=psychometric_plot_style["reference_alpha"],
-    )
+    psychometric_by_action_trace_2AFC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_action_trace_2AFC.set_title("")
     psychometric_by_action_trace_2AFC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2AFC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_action_trace_2AFC.set_ylim(0, 1)
     psychometric_by_action_trace_2AFC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
-    psychometric_by_action_trace_2AFC.tick_params(axis="both", labelsize=psychometric_plot_style["tick_labelsize"])
     if psychometric_by_action_trace_2AFC.get_legend() is not None:
         psychometric_by_action_trace_2AFC.get_legend().remove()
     if not mount_figure:
@@ -4538,6 +4429,14 @@ def _(
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Full figure
+    """)
+    return
+
+
 @app.cell
 def _(axd, fig, format, mount_figure, path_panels, psychometric_x_labels):
     if mount_figure:
@@ -4571,8 +4470,8 @@ def _(axd, fig, format, mount_figure, path_panels, psychometric_x_labels):
         axd["psychometric_by_state_2ADC"].set_ylabel(r"$p(\mathrm{right})$")
         axd["psychometric_by_state_2ADC"].set_xlabel(psychometric_x_labels["2AFC_delay"])
         axd["psychometric_by_state_2AFC"].set_xlabel(psychometric_x_labels["2AFC"])
-        axd["nlicks_by_state_2ADC"].set_ylabel("nLicks")
-        axd["nlicks_by_state_2AFC"].set_ylabel("nLicks")
+        # axd["nlicks_by_state_2ADC"].set_ylabel("nLicks")
+        # axd["nlicks_by_state_2AFC"].set_ylabel("nLicks")
         # axd["model_comparison_ll_2ADC"].set_ylabel(r"$\Delta$ LL")
         # axd["model_comparison_ll_2AFC"].set_ylabel(r"$\Delta$ LL")
         axd["autocorrelograms_2ADC_repetition"].set_ylabel("Autocorrelation")

@@ -49,11 +49,11 @@
     ],
     "emission_cols": [
         "bias",
-        "stim_x_delay_param",
-        "choice_lag_param"
+        "choice_lag_param",
+        "stim_x_delay_param"
     ],
     "transition_cols": [
-        "filtered_reward"
+        "cumulative_reward"
     ],
     "frozen_emissions": {
         "1": {
