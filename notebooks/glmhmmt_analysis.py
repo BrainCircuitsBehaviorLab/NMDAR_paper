@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -2873,6 +2873,7 @@ def _(
     build_session_deepdive_payload,
     mo,
     model_plots,
+    pl,
     put_figure_legend_at_bottom,
     save_plot,
     trial_df,
@@ -2902,11 +2903,11 @@ def _(
     _fig_traces = model_plots.session_deepdive_state_traces(_deepdive_payload)
     put_figure_legend_at_bottom(_fig, bottom=0.18)
     put_figure_legend_at_bottom(_fig_traces, bottom=0.28)
-    # drug_text = "Drug" if (trial_df.filter(pl.col("subject") == ui_session_subj.value, pl.col("session") == ui_session_id.value)["Drug"].unique()[0] == 1) else "Saline"
+    drug_text = "Drug" if (trial_df.filter(pl.col("subject") == ui_session_subj.value, pl.col("session") == ui_session_id.value)["Drug"].unique()[0] == 1) else "Saline"
     mo.vstack(
         [
             mo.hstack([ui_random_session, ui_session_subj, ui_session_id, ui_engaged_window, ui_engaged_trace_mode], align = "center"),
-            # drug_text,
+            drug_text,
             _fig,
             _fig_traces,
             save_plot(_fig, "session statistics", stem=f"session_stats_{_subj}_{_sess}"),

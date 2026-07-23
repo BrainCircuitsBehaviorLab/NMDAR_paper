@@ -6,7 +6,7 @@
 
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -1352,7 +1352,12 @@ def _(
     autocorrelograms_2ADC_repetition.set_xticklabels([str(i) for i in _major_pos])
     autocorrelograms_2ADC_repetition.set_xlim(0,20.5)
     autocorrelograms_2ADC_repetition.set_ylabel("Autocorrelation")
-    autocorrelograms_2ADC_repetition.legend(frameon=False)
+    autocorrelograms_2ADC_repetition.legend(
+        frameon=False,
+        title=None,
+        handlelength=0.8,
+        handletextpad=0.4,
+    )
 
     if not mount_figure:
         autocorrelograms_2ADC_repetition.figure.savefig((path_panels / "2AFC_delay_autocorrelogram_repetition").with_suffix(f".{format}"))
@@ -1609,8 +1614,17 @@ def _(
     emission_weights_2ADC.set_xlabel("")
     emission_weights_2ADC.set_ylabel("Emission weight")
     emission_weights_2ADC.tick_params(axis="x")
-    # emission_weights_2ADC.legend(frameon=False, title="")
-    emission_weights_2ADC.legend_.remove()
+    _handles, _labels = emission_weights_2ADC.get_legend_handles_labels()
+    emission_weights_2ADC.legend(
+        _handles,
+        [{"Disengaged": "Dis.", "Engaged": "Eng."}.get(_label, _label) for _label in _labels],
+        frameon=False,
+        title=None,
+        ncol=2,
+        handlelength=0.8,
+        handletextpad=0.4,
+        columnspacing=0.5,
+    )
     two_adc_ew_ylim = plt.gca().get_ylim()
     print(two_adc_ew_ylim)
     if not mount_figure:
@@ -1972,6 +1986,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
+        err_kws = {"lw": 0},
         palette=state_palette,
         ax=psychometric_by_state_2ADC,
     )
@@ -1982,6 +1997,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
+        err_style="bars",
         marker="o",
         markeredgecolor="none",
         lw = 0,
@@ -1989,13 +2005,20 @@ def _(
         legend=False,
         ax=psychometric_by_state_2ADC,
     )
-    psychometric_by_state_2ADC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
+    # psychometric_by_state_2ADC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_state_2ADC.set_xlabel(psychometric_x_labels["2AFC_delay"])
     psychometric_by_state_2ADC.set_ylabel(r"$p(\mathrm{right})$")
     psychometric_by_state_2ADC.set_ylim(0, 1)
     psychometric_by_state_2ADC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
-    if psychometric_by_state_2ADC.get_legend() is not None:
-        psychometric_by_state_2ADC.get_legend().remove()
+    _handles, _labels = psychometric_by_state_2ADC.get_legend_handles_labels()
+    psychometric_by_state_2ADC.legend(
+        _handles,
+        [{"Disengaged": "Dis.", "Engaged": "Eng."}.get(_label, _label) for _label in _labels],
+        frameon=False,
+        title=None,
+        handlelength=0.8,
+        handletextpad=0.4,
+    )
     if not mount_figure:
         psychometric_by_state_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_psychometric_by_state").with_suffix(f".{format}"))
     psychometric_by_state_2ADC
@@ -2064,6 +2087,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
+        err_kws = {"lw": 0},
         palette=state_palette,
         ax=psychometric_by_state_2AFC,
     )
@@ -2073,6 +2097,7 @@ def _(
         y="p_right_data",
         hue="state_label",
         estimator="mean",
+        err_style="bars",
         errorbar="se",
         marker="o",
         markeredgecolor="none",
@@ -2081,7 +2106,7 @@ def _(
         legend=False,
         ax=psychometric_by_state_2AFC,
     )
-    psychometric_by_state_2AFC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
+    # psychometric_by_state_2AFC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_state_2AFC.set_title("")
     psychometric_by_state_2AFC.set_xlabel(psychometric_x_labels["2AFC"])
     psychometric_by_state_2AFC.set_ylabel(r"$p(\mathrm{right})$")
@@ -2136,7 +2161,7 @@ def _(
         err_kws={
             "edgecolor": "none",
             "linewidth": 0,
-        },
+        }, 
         palette=state_palette,
         ax=psychometric_by_state_3CDR,
     )
@@ -2156,7 +2181,7 @@ def _(
     )
     psychometric_by_state_3CDR.set_xticks(range(len(psychometric_orders["MCDR"])))
     psychometric_by_state_3CDR.set_xticklabels(psychometric_orders["MCDR"])
-    psychometric_by_state_3CDR.axhline(0.5,color = "0.7", ls = "--", lw = 1)
+    # psychometric_by_state_3CDR.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_state_3CDR.set_title(task_labels["MCDR"])
     psychometric_by_state_3CDR.set_xlabel(psychometric_x_labels["MCDR"])
     psychometric_by_state_3CDR.set_ylabel(r"$p(\mathrm{right})$")
@@ -2239,6 +2264,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
+        err_kws = {"lw": 0},
         palette=state_palette,
         ax=psychometric_by_action_trace_2ADC,
     )
@@ -2249,6 +2275,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
+        err_style="bars",
         marker="o",
         markeredgecolor="none",
         lw = 0,
@@ -2256,7 +2283,7 @@ def _(
         legend=False,
         ax=psychometric_by_action_trace_2ADC,
     )
-    psychometric_by_action_trace_2ADC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
+    # psychometric_by_action_trace_2ADC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_action_trace_2ADC.set_title("")
     psychometric_by_action_trace_2ADC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2ADC.set_ylabel(r"$p(\mathrm{right})$")
@@ -2332,6 +2359,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
+        err_kws = {"lw": 0},
         palette=state_palette,
         ax=psychometric_by_action_trace_2AFC,
     )
@@ -2342,6 +2370,7 @@ def _(
         hue="state_label",
         estimator="mean",
         errorbar="se",
+        err_style="bars",
         marker="o",
         markeredgecolor="none",
         lw = 0,
@@ -2349,7 +2378,7 @@ def _(
         legend=False,
         ax=psychometric_by_action_trace_2AFC,
     )
-    psychometric_by_action_trace_2AFC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
+    # psychometric_by_action_trace_2AFC.axhline(0.5,color = "0.7", ls = "--", lw = 1)
     psychometric_by_action_trace_2AFC.set_title("")
     psychometric_by_action_trace_2AFC.set_xlabel(feature_labels["choice_lag_param"])
     psychometric_by_action_trace_2AFC.set_ylabel(r"$p(\mathrm{right})$")
@@ -3677,8 +3706,8 @@ def _(
     plt,
     state_palette,
 ):
-    _subject = "N25"
-    _session = "N25_StageTraining_4B_V1_20201026-123528"
+    _subject = "C36"
+    _session = "C36_StageTraining_Ephys_V1_20210622-124924"
     _task_df = plot_dfs["2AFC_delay"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (
@@ -3774,7 +3803,7 @@ def _(
         )
     # single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
     # single_session_2ADC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
-    # single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2ADC, zorder=2, alpha = 1)
+    single_session_2ADC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
     # single_session_2ADC.set_title(task_labels["2AFC_delay"])
     single_session_2ADC.set_xlabel("Trial")
     single_session_2ADC.set_ylabel("Running fraction")
@@ -3803,8 +3832,8 @@ def _(
     plt,
     state_palette,
 ):
-    _subject = "337"
-    _session = "337_stage_training_v2_20220704-105124" 
+    _subject = "821"
+    _session = "821_stage_training_v4_20230825-121844" 
     _task_df = plot_dfs["2AFC"]
     if _task_df.filter((pl.col("subject").cast(pl.Utf8) == _subject) & (pl.col("session").cast(pl.Utf8) == _session)).height == 0:
         _available = (
@@ -3903,8 +3932,8 @@ def _(
 
     #single_session_2AFC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
     #single_session_2AFC.plot("trial_x", "stimulus_repeat_window_fraction", color="tab:blue", linewidth=1.5, label="Rep. Stimulus", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
-    # if "accuracy_window_fraction" in session_repetition_data_2AFC:
-    #     single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2AFC, zorder=2, alpha = 1)
+    if "accuracy_window_fraction" in session_repetition_data_2AFC:
+        single_session_2AFC.plot("trial_x", "accuracy_window_fraction", color="black", linewidth=1, label="Accuracy", data=session_repetition_data_2AFC, zorder=2, alpha = 0.5)
     #single_session_2AFC.set_title(task_labels["2AFC"])
     single_session_2AFC.set_xlabel("Trial")
     single_session_2AFC.set_ylabel("Running fraction")
@@ -4461,7 +4490,11 @@ def _(axd, fig, mount_figure, project_path):
             if not _name.startswith("_model_comparison_parent"):
                 _ax.set_ylabel("")
             _legend = _ax.get_legend()
-            if _legend is not None:
+            if _legend is not None and _name not in {
+                "emission_weights_2ADC",
+                "psychometric_by_state_2ADC",
+                "autocorrelograms_2ADC_repetition",
+            }:
                 _legend.remove()
 
         axd["autocorrelograms_2ADC_outcome"].set_xlabel("Trial lag")

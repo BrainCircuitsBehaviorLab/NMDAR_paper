@@ -139,7 +139,7 @@ def _(mo):
 
 @app.cell
 def _():
-    mount_figure = False
+    mount_figure = True
     format = "pdf"
     return format, mount_figure
 
@@ -153,8 +153,8 @@ def _():
 @app.cell
 def _():
     MODEL_BY_TASK = {
-        "2AFC_DRUG": "param_half",
-        "2ADC_DRUG": "param half-pure",
+        "2AFC_DRUG": "drug_transitions",
+        "2ADC_DRUG": "drug_transitions",
         # "MCDR": "param",
     }
     task_names = tuple(MODEL_BY_TASK)
@@ -754,6 +754,7 @@ def _(
         transition_plot_dfs[_task_name] = with_feature_labels(
             glmhmmt_transition_weights_df(arrays_by_task[_task_name], views[_task_name])
         )
+        transition_plot_dfs[_task_name] = transition_plot_dfs[_task_name][transition_plot_dfs[_task_name]["source_state_label"] != transition_plot_dfs[_task_name]["destination_state_label"]]
         _psychometric_source_df = plot_dfs[_task_name]
         if _task_name == "2ADC_DRUG":
             _psychometric_source_df = _psychometric_source_df.clone().with_columns(
@@ -945,55 +946,38 @@ def _(mo):
 
 
 @app.cell
-def _(fig_size, mount_figure, plt):
+def _(mount_figure, plt):
     if mount_figure:
-        fig = plt.figure(figsize=fig_size(1), constrained_layout=True)
-
-        gs = fig.add_gridspec(
-            4, 4,
-            width_ratios=[1, 1, 1, 1],
-            height_ratios=[1, 1, 1, 1],
+        fig, axd = plt.subplot_mosaic(
+            [
+                [
+                    "single_session_saline_2ADC",
+                    "single_session_saline_2ADC",
+                    "single_session_saline_2AFC",
+                    "single_session_saline_2AFC",
+                ],
+                [
+                    "single_session_drug_2ADC",
+                    "single_session_drug_2ADC",
+                    "single_session_drug_2AFC",
+                    "single_session_drug_2AFC",
+                ],
+                [
+                    "histogram_transitions_2ADC",
+                    "dwell_time_2ADC",
+                    "histogram_transitions_2AFC",
+                    "dwell_time_2AFC",
+                ],
+                [
+                    "transition_weights_2ADC",
+                    "psychometric_2ADC",
+                    "transition_weights_2AFC",
+                    "psychometric_2AFC",
+                ],
+            ],
+            figsize = (6.26771653543307, 6.26771653543307),
+            constrained_layout=True,
         )
-
-        axd = {
-            "emission_weights_2ADC": fig.add_subplot(gs[0, 0]),
-            "transition_weights_2ADC": fig.add_subplot(gs[0, 1]),
-            "emission_weights_2AFC": fig.add_subplot(gs[0, 2]),
-            "transition_weights_2AFC": fig.add_subplot(gs[0, 3]),
-
-            "psychometric_by_state_2ADC": fig.add_subplot(gs[1, 0]),
-            "nlicks_by_state_2ADC": fig.add_subplot(gs[1, 1]),
-            "psychometric_by_state_2AFC": fig.add_subplot(gs[1, 2]),
-            "nlicks_by_state_2AFC": fig.add_subplot(gs[1, 3]),
-
-            "autocorrelograms_2ADC_repetition": fig.add_subplot(gs[2, 0]),
-            "autocorrelograms_2AFC_repetition": fig.add_subplot(gs[2, 2]),
-
-            "single_session_2ADC": fig.add_subplot(gs[3, 0:2]),
-            "single_session_2AFC": fig.add_subplot(gs[3, 2:4]),
-        }
-
-        # ---- parent axes for model comparison blocks ----
-        parent_2ADC = fig.add_subplot(gs[2, 1])
-        parent_2AFC = fig.add_subplot(gs[2, 3])
-
-        for parent in [parent_2ADC, parent_2AFC]:
-            parent.set_xticks([])
-            parent.set_yticks([])
-            parent.set_frame_on(False)
-            parent.set_ylabel(r"$\Delta$ GLM-HMM", labelpad=2)
-
-        # ---- actual inner axes ----
-        axd["model_comparison_ll_2ADC"] = parent_2ADC.inset_axes([0.00, 0.0, 0.35, 1.0])
-        axd["model_comparison_bic_2ADC"] = parent_2ADC.inset_axes([0.65, 0.0, 0.35, 1.0])
-
-        axd["model_comparison_ll_2AFC"] = parent_2AFC.inset_axes([0.00, 0.0, 0.35, 1.0])
-        axd["model_comparison_bic_2AFC"] = parent_2AFC.inset_axes([0.65, 0.0, 0.35, 1.0])
-
-        # Optional: keep parents accessible
-        axd["_model_comparison_parent_2ADC"] = parent_2ADC
-        axd["_model_comparison_parent_2AFC"] = parent_2AFC
-
         fig.set_constrained_layout_pads(
             w_pad=0.005,
             h_pad=0.01,
@@ -1001,9 +985,28 @@ def _(fig_size, mount_figure, plt):
             hspace=0.04,
         )
 
+        for name, axis in axd.items():
+            axis.text(
+                0.5,
+                0.5,
+                name,
+                transform=axis.transAxes,
+                ha="center",
+                va="center",
+                fontsize=8,
+                wrap=True,
+            )
+
     else:
         fig, axd = None, {}
     return axd, fig
+
+
+@app.cell
+def _(fig):
+
+    fig
+    return
 
 
 @app.cell(hide_code=True)
@@ -1193,7 +1196,7 @@ def _(
             "Engaged -> Disengaged": "0.5",
             "Disengaged -> Disengaged": "0.5",
         }
-    
+
         sns.boxplot(
             data=transition_plot_dfs["2ADC_DRUG"],
             x="feature_label",
@@ -1209,20 +1212,15 @@ def _(
     # transition_weights_2ADC.set_title(task_labels["2ADC_DRUG"])
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_ylabel("Transition weight")
-<<<<<<< HEAD
-    transition_weights_2ADC.tick_params(axis="x", rotation=30)
-    plt.ylim(-3, 3)
-=======
     transition_weights_2ADC.tick_params(axis="x", labelrotation=30)
     transition_weights_2ADC.set_ylim(top = 10)
     handles, _ = transition_weights_2ADC.get_legend_handles_labels()
 
     transition_weights_2ADC.legend(
         handles,
-        ["E→E", "E→D", "D→E", "D→D"],
+        [r"$E\rightarrow D$", r"$D\rightarrow E$"],
         frameon=False, ncol = 2,  handlelength=0.8,handletextpad=0.4,columnspacing=0.8,
     )
->>>>>>> 42ede9a (updated figure 2, parsing and model comparison)
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2ADC
@@ -1291,7 +1289,7 @@ def _(
         _handles, _ = transition_weights_2AFC.get_legend_handles_labels()
         transition_weights_2AFC.legend(
             _handles,
-            ["E→E", "E→D", "D→E", "D→D"],
+            [r"$E\rightarrow D$", r"$D\rightarrow E$"],
             ncols=2,
             frameon=False,
              handlelength=0.8,handletextpad=0.4,columnspacing=0.8,
@@ -3130,6 +3128,12 @@ def _(
     sns.despine(ax=lick_roc_2AFC_ax)
     lick_roc_2AFC.savefig((path_panels / "2AFC_nlicks_state_roc").with_suffix(f".{format}"))
     lick_roc_2AFC
+    return
+
+
+@app.cell
+def _(dfs):
+    dfs["2ADC_DRUG"]
     return
 
 

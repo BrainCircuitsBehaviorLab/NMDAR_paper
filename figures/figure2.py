@@ -6,7 +6,7 @@
 
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -1759,7 +1759,7 @@ def _(fig_size, plt, session_repetition_data):
     single_session_repetition.set_xlabel("Trial")
     single_session_repetition.set_ylabel("Running fraction")
     single_session_repetition.set_ylim(0, 1)
-    single_session_repetition.set_xlim(-0.5, len(session_repetition_data) - 0.5)
+    single_session_repetition.set_xlim(0, len(session_repetition_data) - 0.5)
     single_session_repetition.legend(frameon=False, ncols=3, handlelength=0.5,    handletextpad=0.4,columnspacing=0.4,loc="upper center", bbox_to_anchor=(0.5, 0.3))
     return
 
@@ -1798,7 +1798,7 @@ def _(fig_size, plt, session_repetition_data):
     single_session_accuracy.set_xlabel("Trial")
     single_session_accuracy.set_ylabel("Running accuracy")
     single_session_accuracy.set_ylim(0, 1)
-    single_session_accuracy.set_xlim(-0.5, len(session_repetition_data) - 0.5)
+    single_session_accuracy.set_xlim(0, len(session_repetition_data) - 0.5)
     single_session_accuracy.legend(frameon=False, loc="best")
     return
 
@@ -1822,8 +1822,8 @@ def _(
     pl,
     plot_dfs,
 ):
-    _subject = "E11"
-    _session = "E11_StageTraining_Ephys_V1_20210409-115620"
+    _subject = "C36"
+    _session = "C36_StageTraining_Ephys_V1_20210622-124924"
     _subject_df  = plot_dfs["2AFC_delay"].filter(pl.col("subject") == _subject, pl.col("session") == _session)
     session_repetition_data_2ADC = build_session_repetition_data(
         _subject_df,
@@ -1936,7 +1936,7 @@ def _(
     single_session_2ADC_repetition.set_xlabel("Trial")
     single_session_2ADC_repetition.set_ylabel("Running fraction")
     single_session_2ADC_repetition.set_ylim(0, 1)
-    single_session_2ADC_repetition.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
+    single_session_2ADC_repetition.set_xlim(19, len(session_repetition_data_2ADC) - 0.5)
     single_session_2ADC_repetition.legend(frameon=False, ncols=3, handlelength=0.5,    handletextpad=0.4,columnspacing=0.4,loc="upper center", bbox_to_anchor=(0.5, 0.3))
     if not mount_figure:
         single_session_2ADC_repetition.figure.savefig(
@@ -2011,7 +2011,7 @@ def _(
     single_session_2ADC_accuracy.set_xlabel("Trial")
     single_session_2ADC_accuracy.set_ylabel("Running accuracy")
     single_session_2ADC_accuracy.set_ylim(0, 1)
-    single_session_2ADC_accuracy.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
+    single_session_2ADC_accuracy.set_xlim(19, len(session_repetition_data_2ADC) - 0.5)
     single_session_2ADC_accuracy.legend(frameon=False, loc="best")
     if not mount_figure or "a_accuracy" in axd:
         single_session_2ADC_accuracy.figure.savefig(
@@ -2040,8 +2040,8 @@ def _(
     pl,
     plot_dfs,
 ):
-    _subject = "875"
-    _session = "875_stage_training_v4_20230717-112113" 
+    _subject = "821"
+    _session = "821_stage_training_v4_20230825-121844" 
     _subject_df  = plot_dfs["2AFC"].filter(pl.col("subject") == _subject, pl.col("session") == _session)
     session_repetition_data_2AFC = build_session_repetition_data(
         _subject_df,
@@ -2155,7 +2155,7 @@ def _(
     single_session_2AFC_repetition.set_xlabel("Trial")
     single_session_2AFC_repetition.set_ylabel("Running fraction")
     single_session_2AFC_repetition.set_ylim(0, 1)
-    single_session_2AFC_repetition.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
+    single_session_2AFC_repetition.set_xlim(19, len(session_repetition_data_2AFC) - 0.5)
     single_session_2AFC_repetition.legend(frameon=False, ncols=3, handlelength=0.5,    handletextpad=0.4,columnspacing=0.4,loc="upper center", bbox_to_anchor=(0.5, 0.3))
 
     if not mount_figure:
@@ -2231,7 +2231,7 @@ def _(
     single_session_2AFC_accuracy.set_xlabel("Trial")
     single_session_2AFC_accuracy.set_ylabel("Running accuracy")
     single_session_2AFC_accuracy.set_ylim(0, 1)
-    single_session_2AFC_accuracy.set_xlim(-0.5, len(session_repetition_data_2AFC) - 0.5)
+    single_session_2AFC_accuracy.set_xlim(19, len(session_repetition_data_2AFC) - 0.5)
     single_session_2AFC_accuracy.legend(frameon=False, loc="best")
     if not mount_figure:
         single_session_2AFC_accuracy.figure.savefig(

@@ -1447,6 +1447,11 @@ def _(mo, plot_df_all):
 
 
 @app.cell
+def _():
+    return
+
+
+@app.cell
 def _(df_all, mo, pl, plot_df_all, random_session, ui_behavior_random_session):
     if ui_behavior_random_session.value:
         pick = random_session()

@@ -148,8 +148,13 @@ def _(DATA_PATH, pl):
             "Miss",
         )
     )
+    return licks_contract_df, licks_df
 
-    return (licks_contract_df,)
+
+@app.cell
+def _(licks_df):
+    licks_df
+    return
 
 
 @app.cell
