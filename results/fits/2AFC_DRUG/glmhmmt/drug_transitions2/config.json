@@ -16,21 +16,22 @@
     "emission_cols": [
         "stim_param",
         "bias",
-        "choice_lag_param_correct",
-        "prev_choice"
+        "choice_lag_param"
     ],
     "transition_cols": [
         "Drug",
-        "trial_index",
-        "drug_x_trial_index",
-        "filtered_reward"
+        "cumulative_reward"
     ],
-    "frozen_emissions": {},
+    "frozen_emissions": {
+        "1": {
+            "stim_param": 0.0
+        }
+    },
     "baseline_class_idx": 0,
     "K_list": [
         2
     ],
     "model_id": "drug_transitions2",
-    "cv_mode": "none",
+    "cv_mode": "balanced_session_holdout",
     "cv_repeats": 0
 }

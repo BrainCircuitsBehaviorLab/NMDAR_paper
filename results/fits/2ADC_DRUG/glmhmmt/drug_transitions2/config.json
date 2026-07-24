@@ -1,0 +1,37 @@
+{
+    "task": "2ADC_DRUG",
+    "tau": 50,
+    "subjects": [
+        "C37",
+        "C38",
+        "E10",
+        "E11",
+        "E13",
+        "N19",
+        "N24",
+        "N25",
+        "N27",
+        "N28"
+    ],
+    "emission_cols": [
+        "stim_x_delay_param",
+        "choice_lag_param",
+        "bias"
+    ],
+    "transition_cols": [
+        "drug_code",
+        "cumulative_reward"
+    ],
+    "frozen_emissions": {
+        "1": {
+            "stim_x_delay_param": 0.0
+        }
+    },
+    "baseline_class_idx": 1,
+    "K_list": [
+        2
+    ],
+    "model_id": "drug_transitions2",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 0
+}

@@ -15,6 +15,7 @@ def _():
     import seaborn as sns
     from matplotlib.colors import to_hex, to_rgb
     from matplotlib.lines import Line2D
+    from scipy.special import digamma
     from scipy.stats import ttest_1samp, ttest_ind, ttest_rel
     from statannotations.Annotator import Annotator
 
@@ -41,6 +42,7 @@ def _():
         build_trial_df,
         build_views,
         custom_boxplot,
+        digamma,
         fig_size,
         get_adapter,
         get_task_options,
@@ -586,6 +588,133 @@ def _(mo):
     mo.md(r"""
     ## Compare all selected models
     """)
+    return
+
+
+@app.cell
+def _(digamma, np):
+    def random_effects_bms(log_evidence, n_draws=100_000):
+        """Run random-effects BMS on a (subjects, models) log-evidence array.
+
+        Returns the posterior Dirichlet parameters, expected model frequencies,
+        exceedance probabilities, and subject-level model responsibilities.
+        A flat Dirichlet prior is assumed, following Stephan et al. (2009).
+        """
+        alpha_prior = np.ones(log_evidence.shape[1])
+        alpha = alpha_prior.copy()
+
+        for _ in range(10_000):
+            log_responsibility = (
+                log_evidence + digamma(alpha) - digamma(alpha.sum())
+            )
+            log_responsibility -= log_responsibility.max(axis=1, keepdims=True)
+            responsibility = np.exp(log_responsibility)
+            responsibility /= responsibility.sum(axis=1, keepdims=True)
+            alpha_new = alpha_prior + responsibility.sum(axis=0)
+
+            if np.max(np.abs(alpha_new - alpha)) < 1e-8:
+                alpha = alpha_new
+                break
+            alpha = alpha_new
+        else:
+            raise RuntimeError("Random-effects BMS did not converge.")
+
+        model_frequency = alpha / alpha.sum()
+        frequency_draws = np.random.default_rng(0).dirichlet(alpha, size=n_draws)
+        exceedance_probability = np.bincount(
+            frequency_draws.argmax(axis=1), minlength=log_evidence.shape[1]
+        ) / n_draws
+        return alpha, model_frequency, exceedance_probability, responsibility
+
+    return (random_effects_bms,)
+
+
+@app.cell
+def _(mo, random_effects_bms, results_filtered):
+    bms_rows = (
+        results_filtered
+        .select(["subject", "model_kind", "model_alias", "model_label", "K", "bic"])
+        .drop_nulls(["bic"])
+        .sort(["model_kind", "K", "model_alias", "subject"])
+        .to_pandas()
+    )
+    bms_rows["model_id"] = (
+        bms_rows["model_kind"]
+        + " | "
+        + bms_rows["model_alias"]
+        + " | K="
+        + bms_rows["K"].astype(int).astype(str)
+    )
+    bms_model_metadata = (
+        bms_rows[
+            ["model_id", "model_kind", "model_alias", "model_label", "K"]
+        ]
+        .drop_duplicates()
+        .set_index("model_id")
+    )
+    bms_model_ids = bms_model_metadata.index.to_list()
+
+    mo.stop(
+        len(bms_model_ids) < 2,
+        mo.md("Select at least two fitted models for Bayesian model selection."),
+    )
+
+    bms_bic = bms_rows.pivot(
+        index="subject", columns="model_id", values="bic"
+    ).reindex(columns=bms_model_ids)
+    bms_bic_complete = bms_bic.dropna()
+    mo.stop(
+        len(bms_bic_complete) < 2,
+        mo.md(
+            "Random-effects Bayesian model selection needs at least two subjects "
+            "with BIC values for every selected model."
+        ),
+    )
+
+    # The stored BIC uses the conventional lower-is-better scale, so -BIC / 2
+    # is the corresponding approximation to subject-level log model evidence.
+    bms_log_evidence = -0.5 * bms_bic_complete.to_numpy(dtype=float)
+    (
+        bms_alpha,
+        bms_model_frequency,
+        bms_exceedance_probability,
+        bms_responsibility,
+    ) = random_effects_bms(bms_log_evidence)
+
+    bms_summary = (
+        bms_model_metadata
+        .assign(
+            dirichlet_alpha=bms_alpha,
+            expected_model_frequency=bms_model_frequency,
+            exceedance_probability=bms_exceedance_probability,
+        )
+        .reset_index(drop=True)
+        .sort_values("exceedance_probability", ascending=False)
+    )
+    bms_n_dropped = len(bms_bic) - len(bms_bic_complete)
+
+    mo.vstack([
+        mo.md(
+            f"""
+            ### Random-effects Bayesian model selection
+
+            **Primary metric: exceedance probability.** It is the posterior
+            probability that a model is more frequent in the population than
+            every other selected model. Also report the expected model frequency,
+            which estimates the probability that the model generated a randomly
+            chosen subject's data.
+
+            This implements Eqs. 11-16 of
+            [Stephan et al. (2009)](https://doi.org/10.1016/j.neuroimage.2009.03.025),
+            using `-BIC / 2` as an approximation to each subject's log model
+            evidence and a flat Dirichlet prior. The analysis includes
+            **{len(bms_bic_complete)} complete-case subjects** and excludes
+            **{bms_n_dropped}** with a missing BIC for any selected model.
+            Exceedance probabilities use 100,000 reproducible Dirichlet draws.
+            """
+        ),
+        mo.ui.table(bms_summary, pagination=False),
+    ])
     return
 
 
@@ -1385,6 +1514,81 @@ def _(
     )
     pairwise_metrics
     return (pairwise_metric_deltas,)
+
+
+@app.cell
+def _(
+    mo,
+    pairwise_K_a,
+    pairwise_K_b,
+    pairwise_alias_a,
+    pairwise_alias_b,
+    pairwise_kind_a,
+    pairwise_kind_b,
+    pairwise_metric_deltas,
+    pd,
+    random_effects_bms,
+):
+    pairwise_bic = (
+        pairwise_metric_deltas
+        .select(["subject", "bic_a", "bic_b"])
+        .drop_nulls(["bic_a", "bic_b"])
+    )
+    mo.stop(
+        pairwise_bic.height < 2,
+        mo.md(
+            "Bayesian model selection needs BIC values from at least two "
+            "subjects for both selected models."
+        ),
+    )
+
+    # Conventional BIC is on a lower-is-better scale; -BIC / 2 approximates
+    # each subject's log model evidence on the paper's higher-is-better scale.
+    pairwise_log_evidence = -0.5 * pairwise_bic.select(
+        ["bic_a", "bic_b"]
+    ).to_numpy()
+    (
+        pairwise_bms_alpha,
+        pairwise_bms_frequency,
+        pairwise_bms_exceedance,
+        pairwise_bms_responsibility,
+    ) = random_effects_bms(pairwise_log_evidence)
+
+    pairwise_bms_summary = pd.DataFrame(
+        {
+            "model_slot": ["A", "B"],
+            "model_kind": [pairwise_kind_a, pairwise_kind_b],
+            "model_alias": [pairwise_alias_a, pairwise_alias_b],
+            "K": [pairwise_K_a, pairwise_K_b],
+            "dirichlet_alpha": pairwise_bms_alpha,
+            "expected_model_frequency": pairwise_bms_frequency,
+            "exceedance_probability": pairwise_bms_exceedance,
+        }
+    )
+    pairwise_bms_summary = pairwise_bms_summary.sort_values(
+        "exceedance_probability", ascending=False
+    )
+    pairwise_bms_dropped = pairwise_metric_deltas.height - pairwise_bic.height
+
+    mo.vstack([
+        mo.md(
+            f"""
+            ### Bayesian comparison of selected models A and B
+
+            This random-effects comparison uses the **{pairwise_bic.height}**
+            subjects with a BIC value for both selected models
+            ({pairwise_bms_dropped} excluded). The primary metric is the
+            exceedance probability: for two models, it is the probability that
+            the model is more frequent in the population than its competitor.
+
+            Subject-level log model evidence is approximated by `-BIC / 2`.
+            Expected model frequency estimates the proportion of the population
+            described by each model.
+            """
+        ),
+        mo.ui.table(pairwise_bms_summary, pagination=False),
+    ])
+    return
 
 
 @app.cell

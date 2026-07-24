@@ -587,13 +587,7 @@ def _(weights_df):
 
     state_order = ["Engaged", "Disengaged"]
     state_palette = {"Engaged": "tab:green", "Disengaged": "tab:gray"}
-    return (
-        feature_labeler,
-        features,
-        plot_feature_order,
-        state_order,
-        state_palette,
-    )
+    return feature_labeler, plot_feature_order, state_order, state_palette
 
 
 @app.cell(hide_code=True)
@@ -615,10 +609,8 @@ def _():
 
 @app.cell
 def _(
-    Annotator,
     BOXPLOT_STYLE,
     feature_labeler,
-    features,
     fig_size,
     mo,
     panel,
@@ -631,7 +623,7 @@ def _(
     weights_df,
 ):
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-    emissions_fig, emissions_ax = plt.subplots(figsize=fig_size(2, 1))
+    emissions_fig, emissions_ax = plt.subplots(figsize=fig_size(1, 2))
 
     sns.boxplot(
         data=weights_df,
@@ -655,27 +647,27 @@ def _(
         aggregate_function="first",
     )
 
-    for row in paired.iter_rows(named=True):
-        x = plot_feature_order.index(row["feature"])
-        emissions_ax.plot(
-            [x - 0.2, x + 0.2],
-            [row[state_order[0]], row[state_order[1]]],
-            color="0.75",
-            linewidth = 0.5,
-            zorder=0,
-        )
+    # for row in paired.iter_rows(named=True):
+    #     x = plot_feature_order.index(row["feature"])
+    #     emissions_ax.plot(
+    #         [x - 0.2, x + 0.2],
+    #         [row[state_order[0]], row[state_order[1]]],
+    #         color="0.75",
+    #         linewidth = 0.5,
+    #         zorder=0,
+    #     )
 
-    _pairs = [((f, state_order[0]), (f, state_order[1])) for f in features]
-    Annotator(
-        emissions_ax,
-        _pairs,
-        data=weights_df.to_pandas(),
-        x="feature",
-        y="weight",
-        hue="state_label",
-        order=plot_feature_order,
-        hue_order=state_order,
-    ).configure(test="t-test_paired", text_format="star", line_height=0, verbose=False).apply_and_annotate()
+    # _pairs = [((f, state_order[0]), (f, state_order[1])) for f in features]
+    # Annotator(
+    #     emissions_ax,
+    #     _pairs,
+    #     data=weights_df.to_pandas(),
+    #     x="feature",
+    #     y="weight",
+    #     hue="state_label",
+    #     order=plot_feature_order,
+    #     hue_order=state_order,
+    # ).configure(test="t-test_paired", text_format="star", line_height=0, verbose=False).apply_and_annotate()
 
 
     emissions_ax.legend(frameon=False)

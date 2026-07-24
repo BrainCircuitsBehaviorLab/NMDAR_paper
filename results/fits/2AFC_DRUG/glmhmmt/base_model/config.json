@@ -18,8 +18,7 @@
         "bias"
     ],
     "transition_cols": [
-        "filtered_reward",
-        "Drug"
+        "cumulative_reward"
     ],
     "frozen_emissions": {
         "1": {
@@ -31,6 +30,6 @@
         2
     ],
     "model_id": "base_model",
-    "cv_mode": "none",
+    "cv_mode": "balanced_session_holdout",
     "cv_repeats": 0
 }

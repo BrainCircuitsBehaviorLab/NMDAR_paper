@@ -40,7 +40,7 @@ def _():
     from glmhmmt.views import build_views
 
     from src.plots.common import boxplot_STYLE
-    from src.utils import fig_size
+    from src.plots.common import fig_size
 
     project_root = _PROJECT_ROOT
     configure_paths(config_path=project_root / "config.toml")
@@ -81,8 +81,13 @@ def _(plt, project_root):
 
 
 @app.cell
-def _(fig_size, project_root):
-    path_panels = project_root / "figures" / "panels_glmhmm_at_comparison"
+def _(TASK, fig_size, project_root):
+    _task_suffix = "" if TASK == "2AFC" else "_2adc"
+    path_panels = (
+        project_root
+        / "figures"
+        / f"panels_glmhmm_at_comparison{_task_suffix}"
+    )
     path_panels.mkdir(parents=True, exist_ok=True)
     figsize = fig_size(2, 1)
     state_palette = {
@@ -144,13 +149,19 @@ def _(Annotator, np, pd, ttest_1samp, ttest_rel):
         if not available_pairs or not paired_frames:
             return
 
+        annotation_df = pd.concat(paired_frames, ignore_index=True)
+        annotation_order = [
+            value
+            for value in order
+            if value in annotation_df[x].dropna().unique()
+        ]
         annotator = Annotator(
             ax,
             available_pairs,
-            data=pd.concat(paired_frames, ignore_index=True),
+            data=annotation_df,
             x=x,
             y=y,
-            order=order,
+            order=annotation_order,
         )
         annotator.configure(
             test="t-test_paired",
@@ -160,7 +171,7 @@ def _(Annotator, np, pd, ttest_1samp, ttest_rel):
             verbose=False,
         ).apply_and_annotate()
 
-    def add_one_sample_zero_annotations(ax, df, *, x, y, order):
+    def add_one_sample_zero_annotations(ax, df, *, x, y, order, show_ns=False):
         if df is None or df.empty or not {x, y}.issubset(df.columns):
             return
         y_values = pd.to_numeric(df[y], errors="coerce")
@@ -178,10 +189,10 @@ def _(Annotator, np, pd, ttest_1samp, ttest_rel):
             if len(values) < 2 or float(values.std()) == 0:
                 continue
             pvalue = float(ttest_1samp(values.to_numpy(dtype=float), popmean=0.0).pvalue)
-            stars = _stars(pvalue)
-            if stars:
+            label = _stars(pvalue) or ("ns" if show_ns else "")
+            if label:
                 text_x = x_value if isinstance(x_value, (int, float, np.integer, np.floating)) else x_idx
-                ax.text(text_x, text_y, stars, ha="center", va="bottom")
+                ax.text(text_x, text_y, label, ha="center", va="bottom")
 
     def add_numeric_pair_annotations(
         ax,
@@ -267,14 +278,20 @@ def _(Annotator, np, pd, ttest_1samp, ttest_rel):
         if not available_pairs or not paired_frames:
             return
 
+        annotation_df = pd.concat(paired_frames, ignore_index=True)
+        annotation_order = [
+            value
+            for value in order
+            if value in annotation_df[x].dropna().unique()
+        ]
         annotator = Annotator(
             ax,
             available_pairs,
-            data=pd.concat(paired_frames, ignore_index=True),
+            data=annotation_df,
             x=x,
             y=y,
             hue=hue,
-            order=order,
+            order=annotation_order,
             hue_order=list(hue_order),
         )
         annotator.configure(
@@ -332,9 +349,9 @@ def _(Annotator, np, pd, ttest_1samp, ttest_rel):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # 2AFC GLM-HMM: stimulus vs choice history
+    # 2AFC / 2ADC GLM-HMM: stimulus vs choice history
 
-    This notebook fits a small set of 2-state GLM-HMMs for 2AFC and compares:
+    This notebook fits a small set of 2-state GLM-HMMs for 2AFC or 2ADC and compares:
 
     1. whether the disengaged state is better described by frozen stimulus sensitivity or by frozen choice-history sensitivity;
     2. how much choice history adds beyond the previous choice.
@@ -345,63 +362,93 @@ def _(mo):
 
 
 @app.cell
-def _():
-    TASK = "2AFC"
+def _(mo):
+    TASK_CONFIGS = {
+        "2AFC": {
+            "label": "2AFC",
+            "model_prefix": "2afc",
+            "stim_feature": "stim_param",
+            "history_feature": "choice_lag_param",
+        },
+        "2AFC_delay": {
+            "label": "2ADC",
+            "model_prefix": "2adc",
+            "stim_feature": "stim_x_delay_param",
+            "history_feature": "choice_lag_param",
+        },
+    }
+    ui_task = mo.ui.dropdown(
+        options={
+            config["label"]: task_name
+            for task_name, config in TASK_CONFIGS.items()
+        },
+        value="2AFC",
+        label="Task",
+    )
+    ui_task
+    return TASK_CONFIGS, ui_task
+
+
+@app.cell
+def _(TASK_CONFIGS, ui_task):
+    TASK = ui_task.value
     K = 2
     TAU = 50
 
-    HISTORY_FEATURE = "choice_lag_param"
+    STIM_FEATURE = TASK_CONFIGS[TASK]["stim_feature"]
+    HISTORY_FEATURE = TASK_CONFIGS[TASK]["history_feature"]
     HISTORY_LABEL = "choice lag param"
-    FREEZE_MODEL_SPECS = []
-    core_cols = ["bias", "stim_param", HISTORY_FEATURE]
+    model_prefix = TASK_CONFIGS[TASK]["model_prefix"]
+    core_cols = ["bias", STIM_FEATURE, HISTORY_FEATURE]
     feature_id = HISTORY_FEATURE.replace("_", "-")
-    FREEZE_MODEL_SPECS.extend(
-        [
-            {
-                "model_id": f"2afc_bias-stim-{feature_id}_free",
-                "label": f"free stim + {HISTORY_LABEL}",
-                "short_label": "Free",
-                "history_feature": HISTORY_FEATURE,
-                "description": "Control: bias, stimulus and choice-history parameter free in both states.",
-                "emission_cols": core_cols,
-                "frozen_emissions": {},
+    FREEZE_MODEL_SPECS = [
+        {
+            "model_id": f"{model_prefix}_bias-stim-{feature_id}_free",
+            "label": f"free stim + {HISTORY_LABEL}",
+            "short_label": "Free",
+            "history_feature": HISTORY_FEATURE,
+            "description": "Control: bias, stimulus and choice-history parameter free in both states.",
+            "emission_cols": core_cols,
+            "frozen_emissions": {},
+        },
+        {
+            "model_id": f"{model_prefix}_bias-stimD0-{feature_id}E0",
+            "label": f"stim_D=0, {HISTORY_LABEL}_E=0",
+            "short_label": "Both0",
+            "history_feature": HISTORY_FEATURE,
+            "description": "Stimulus frozen in raw state 0, choice-history parameter frozen in raw state 1.",
+            "emission_cols": core_cols,
+            "frozen_emissions": {
+                "0": {STIM_FEATURE: 0.0},
+                "1": {HISTORY_FEATURE: 0.0},
             },
-            {
-                "model_id": f"2afc_bias-stimD0-{feature_id}E0",
-                "label": f"stim_D=0, {HISTORY_LABEL}_E=0",
-                "short_label": "Both0",
-                "history_feature": HISTORY_FEATURE,
-                "description": "Stimulus frozen in raw state 0, choice-history parameter frozen in raw state 1.",
-                "emission_cols": core_cols,
-                "frozen_emissions": {"0": {"stim_param": 0.0}, "1": {HISTORY_FEATURE: 0.0}},
-            },
-            {
-                "model_id": f"2afc_bias-stimD0-{feature_id}_free",
-                "label": f"stim_D=0 ({HISTORY_LABEL} free)",
-                "short_label": "Stim0",
-                "history_feature": HISTORY_FEATURE,
-                "description": "Stimulus frozen in raw state 0, choice-history parameter free in both states.",
-                "emission_cols": core_cols,
-                "frozen_emissions": {"0": {"stim_param": 0.0}},
-            },
-            {
-                "model_id": f"2afc_bias-stim_free-{feature_id}E0",
-                "label": f"{HISTORY_LABEL}_E=0",
-                "short_label": "Hist0",
-                "history_feature": HISTORY_FEATURE,
-                "description": "Choice-history parameter frozen in raw state 1, stimulus free in both states.",
-                "emission_cols": core_cols,
-                "frozen_emissions": {"1": {HISTORY_FEATURE: 0.0}},
-            },
-        ]
-    )
+        },
+        {
+            "model_id": f"{model_prefix}_bias-stimD0-{feature_id}_free",
+            "label": f"stim_D=0 ({HISTORY_LABEL} free)",
+            "short_label": "Stim0",
+            "history_feature": HISTORY_FEATURE,
+            "description": "Stimulus frozen in raw state 0, choice-history parameter free in both states.",
+            "emission_cols": core_cols,
+            "frozen_emissions": {"0": {STIM_FEATURE: 0.0}},
+        },
+        {
+            "model_id": f"{model_prefix}_bias-stim_free-{feature_id}E0",
+            "label": f"{HISTORY_LABEL}_E=0",
+            "short_label": "Hist0",
+            "history_feature": HISTORY_FEATURE,
+            "description": "Choice-history parameter frozen in raw state 1, stimulus free in both states.",
+            "emission_cols": core_cols,
+            "frozen_emissions": {"1": {HISTORY_FEATURE: 0.0}},
+        },
+    ]
 
     def choice_lag_cols(n_lags: int) -> list[str]:
         return [f"choice_lag_{lag:02d}" for lag in range(1, int(n_lags) + 1)]
 
     LAG_MODEL_SPECS = [
         {
-            "model_id": f"2afc_bias-stim-choice_lags_{n_lags:02d}",
+            "model_id": f"{model_prefix}_bias-stim-choice_lags_{n_lags:02d}",
             "label": "prev choice" if n_lags == 1 else f"choice lags 1-{n_lags}",
             "description": (
                 "Previous choice only"
@@ -409,12 +456,20 @@ def _():
                 else f"Nested choice-history model with lags 1-{n_lags}."
             ),
             "n_lags": n_lags,
-            "emission_cols": ["bias", "stim_param", *choice_lag_cols(n_lags)],
+            "emission_cols": ["bias", STIM_FEATURE, *choice_lag_cols(n_lags)],
             "frozen_emissions": {},
         }
         for n_lags in range(1, 11)
     ]
-    return FREEZE_MODEL_SPECS, K, LAG_MODEL_SPECS, TASK, TAU
+    return (
+        FREEZE_MODEL_SPECS,
+        HISTORY_FEATURE,
+        K,
+        LAG_MODEL_SPECS,
+        STIM_FEATURE,
+        TASK,
+        TAU,
+    )
 
 
 @app.cell
@@ -454,6 +509,11 @@ def _(TASK, get_adapter, pl):
     adapter = get_adapter(TASK)
     df_all = adapter.read_dataset()
     df_all = adapter.subject_filter(df_all)
+
+    _session_col = adapter.behavioral_cols["session"]
+    df_all = df_all.filter(
+        pl.col(_session_col).n_unique().over("subject") >= 5
+    )
     all_subjects = df_all["subject"].unique().sort().to_list()
     subject_trial_counts = (
         df_all
@@ -738,6 +798,26 @@ def _(freeze_model_order, freeze_trial_df, mo, np, pd):
         negative = label_text.eq("disengaged") | label_text.str.startswith("disengaged ")
         return positive.to_numpy(dtype=bool), (positive | negative).to_numpy(dtype=bool)
 
+    def correct_trial_mask(trial_df):
+        correct_col = next(
+            (
+                col
+                for col in ["correct_bool", "performance"]
+                if col in trial_df.columns
+            ),
+            None,
+        )
+        if correct_col is None:
+            raise ValueError(
+                "Lick ROC curves require a `correct_bool` or `performance` column."
+            )
+        return (
+            pd.to_numeric(trial_df[correct_col], errors="coerce")
+            .eq(1)
+            .fillna(False)
+            .to_numpy(dtype=bool)
+        )
+
     def roc_curve(target, score):
         target = np.asarray(target, dtype=bool)
         score = np.asarray(score, dtype=float)
@@ -778,9 +858,12 @@ def _(freeze_model_order, freeze_trial_df, mo, np, pd):
             ),
             None,
         )
-        freeze_aux_metric_specs = [("nLicks", "nLicks", "Higher lick count")]
+        freeze_aux_metric_specs = [
+            ("nLicks", "Licking (correct trials)", "Higher lick count")
+        ]
         if _rt_col is not None:
             freeze_aux_metric_specs.append((_rt_col, "RT", "Faster RT"))
+        freeze_aux_metric_specs.append(("ILI", "ILI", "Faster ILI"))
         freeze_aux_metric_specs = [
             spec for spec in freeze_aux_metric_specs if spec[0] in _trial_pdf.columns
         ]
@@ -793,10 +876,13 @@ def _(freeze_model_order, freeze_trial_df, mo, np, pd):
                 for _metric_col, _metric_label, _direction_label in freeze_aux_metric_specs:
                     _target, _valid_labels = binary_engaged_target(_subj_df[_state_col])
                     _score = pd.to_numeric(_subj_df[_metric_col], errors="coerce").to_numpy(dtype=float)
+                    _valid_trials = _valid_labels.copy()
+                    if _metric_col == "nLicks":
+                        _valid_trials &= correct_trial_mask(_subj_df)
                     if _metric_col != "nLicks":
                         _score = -_score
-                    _target = _target[_valid_labels]
-                    _score = _score[_valid_labels]
+                    _target = _target[_valid_trials]
+                    _score = _score[_valid_trials]
                     _result = roc_curve(_target, _score)
                     if _result is None:
                         continue
@@ -856,7 +942,7 @@ def _(mo):
     mo.md(r"""
     ## Freeze models: auxiliary behavior by state
 
-    These panels ask whether `nLicks` and RT discriminate the post-hoc `Engaged` state similarly across the four frozen-emission models. For RT the score is negated, so larger AUC means faster responses in `Engaged`.
+    These panels ask whether licks on correct trials, RT, and ILI discriminate the post-hoc `Engaged` state similarly across the four frozen-emission models. RT and ILI are negated, so larger AUC means faster behavior in `Engaged`. The combined comparison reports each subject's change in AUC from the `Free` model.
     """)
     return
 
@@ -969,6 +1055,142 @@ def _(figsize, freeze_aux_auc_df, mo, path_panels, plt, sns):
         plt.savefig(f"{path_panels}/freeze_rt_auc.svg")
         plt.savefig(f"{path_panels}/freeze_rt_auc.png")
         _output = freeze_rt_auc_ax
+    _output
+    return
+
+
+@app.cell
+def _(
+    add_one_sample_zero_annotations,
+    fig_size,
+    freeze_aux_auc_df,
+    freeze_model_order,
+    mo,
+    path_panels,
+    plt,
+    sns,
+):
+    _metric_panels = [
+        ("nLicks", "Licks"),
+        ("RT", "RT"),
+        ("ILI", "ILI"),
+    ]
+    _comparison_order = [
+        model for model in freeze_model_order if model != "Free"
+    ]
+    if freeze_aux_auc_df.empty:
+        _output = mo.md("No lick, RT, or ILI AUC rows to compare.")
+    else:
+        _fig, _axes = plt.subplots(
+            1,
+            len(_metric_panels),
+            figsize=fig_size(1, ratio=3),
+            sharey=True,
+            constrained_layout=True,
+        )
+        _annotation_data = []
+        for _ax, (_metric_label, _title) in zip(
+            _axes,
+            _metric_panels,
+            strict=True,
+        ):
+            if _metric_label == "nLicks":
+                _metric_df = freeze_aux_auc_df[
+                    freeze_aux_auc_df["metric"].eq(_metric_label)
+                ]
+            else:
+                _metric_df = freeze_aux_auc_df[
+                    freeze_aux_auc_df["metric_label"].eq(_metric_label)
+                ]
+            if _metric_df.empty:
+                _ax.text(0.5, 0.5, "No data", ha="center", va="center")
+                _ax.set_axis_off()
+                continue
+            _free_auc = (
+                _metric_df[_metric_df["short_label"].astype(str).eq("Free")]
+                [["subject", "auc"]]
+                .rename(columns={"auc": "free_auc"})
+            )
+            _metric_df = _metric_df.merge(
+                _free_auc,
+                on="subject",
+                how="inner",
+            )
+            _metric_df["auc_vs_free"] = (
+                _metric_df["auc"] - _metric_df["free_auc"]
+            )
+            _metric_df = (
+                _metric_df[
+                    _metric_df["short_label"].astype(str).ne("Free")
+                ]
+                .copy()
+                .sort_values(["model_order", "subject"])
+            )
+            if _metric_df.empty:
+                _ax.text(0.5, 0.5, "No data", ha="center", va="center")
+                _ax.set_axis_off()
+                continue
+            _metric_df["short_label"] = _metric_df["short_label"].astype(str)
+            sns.lineplot(
+                data=_metric_df,
+                x="short_label",
+                y="auc_vs_free",
+                units="subject",
+                estimator=None,
+                color="0.84",
+                linewidth=0.6,
+                sort=False,
+                ax=_ax,
+            )
+            sns.lineplot(
+                data=_metric_df,
+                x="short_label",
+                y="auc_vs_free",
+                marker="o",
+                markersize=3.5,
+                markeredgewidth=0,
+                markeredgecolor="none",
+                errorbar=("se", 1),
+                err_style="bars",
+                err_kws={
+                    "capsize": 3,
+                    "elinewidth": 0.8,
+                    "capthick": 0.8,
+                },
+                color="black",
+                linewidth=1,
+                sort=False,
+                ax=_ax,
+            )
+            _ax.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+            _ax.set(
+                title=_title,
+                xlabel="",
+                ylabel="Δ state AUC vs Free" if _ax is _axes[0] else "",
+            )
+            _ax.set_xticks(range(len(_comparison_order)))
+            _ax.set_xticklabels(_comparison_order, rotation=30, ha="right")
+            sns.despine(ax=_ax)
+            _annotation_data.append((_ax, _metric_df))
+
+        # ΔAUC against zero is the paired comparison with each subject's Free fit.
+        _annotation_tops = []
+        for _ax, _metric_df in _annotation_data:
+            add_one_sample_zero_annotations(
+                _ax,
+                _metric_df,
+                x="short_label",
+                y="auc_vs_free",
+                order=_comparison_order,
+                show_ns=True,
+            )
+            _annotation_tops.append(_ax.get_ylim()[1])
+        if _annotation_tops:
+            _axes[0].set_ylim(top=max(_annotation_tops))
+
+        _fig.savefig(path_panels / "freeze_behavior_auc.svg")
+        _fig.savefig(path_panels / "freeze_behavior_auc.png")
+        _output = _fig
     _output
     return
 
@@ -2038,6 +2260,7 @@ def _(adapter, mo):
 def _(
     FREEZE_MODEL_SPECS,
     K,
+    TASK,
     adapter,
     build_emission_weights_df,
     build_trial_df,
@@ -2059,7 +2282,7 @@ def _(
     _raw_rows = []
     _subjects = list(ui_subjects.value)
     for _model_order, spec in enumerate(FREEZE_MODEL_SPECS):
-        _out = paths.RESULTS / "fits" / "2AFC" / "glmhmm" / spec["model_id"]
+        _out = paths.RESULTS / "fits" / TASK / "glmhmm" / spec["model_id"]
         if not _out.exists() or not spec_matches_config(spec, _out):
             continue
         _matching_subjects = [
@@ -2163,6 +2386,9 @@ def _(
                 "nLicks": pl.Float64,
                 "RT": pl.Float64,
                 "RT2": pl.Float64,
+                "ILI": pl.Float64,
+                "performance": pl.Float64,
+                "correct_bool": pl.Boolean,
             }
         )
     if _raw_rows:
@@ -2185,7 +2411,13 @@ def _(
 
 
 @app.cell
-def _(freeze_raw_history_weights_df, freeze_weights_df, mo, pl):
+def _(
+    HISTORY_FEATURE,
+    freeze_raw_history_weights_df,
+    freeze_weights_df,
+    mo,
+    pl,
+):
     if freeze_raw_history_weights_df.is_empty() or freeze_weights_df.is_empty():
         hist0_choice_lag_audit = pl.DataFrame()
         _output = mo.md("No Hist0 choice-lag weights to audit.")
@@ -2194,7 +2426,7 @@ def _(freeze_raw_history_weights_df, freeze_weights_df, mo, pl):
             freeze_raw_history_weights_df
             .filter(
                 (pl.col("short_label") == "Hist0")
-                & (pl.col("feature") == "choice_lag_param")
+                & (pl.col("feature") == HISTORY_FEATURE)
             )
             .with_columns(
                 pl.format("raw {}", pl.col("raw_state")).alias("state"),
@@ -2213,7 +2445,7 @@ def _(freeze_raw_history_weights_df, freeze_weights_df, mo, pl):
             freeze_weights_df
             .filter(
                 (pl.col("short_label") == "Hist0")
-                & (pl.col("feature") == "choice_lag_param")
+                & (pl.col("feature") == HISTORY_FEATURE)
             )
             .with_columns(
                 pl.col("state_label").alias("state"),
@@ -2429,6 +2661,7 @@ def _(
 
 @app.cell
 def _(
+    STIM_FEATURE,
     add_paired_state_annotation,
     add_subject_pair_lines,
     boxplot_STYLE,
@@ -2447,7 +2680,7 @@ def _(
     else:
         _plot_df = (
             freeze_weights_df
-            .filter(pl.col("feature") == "stim_param")
+            .filter(pl.col("feature") == STIM_FEATURE)
             .to_pandas()
         )
         _order = ["Free", "Both0", "Stim0", "Hist0"]
@@ -2482,7 +2715,7 @@ def _(
             hue_order=state_hue_order,
         )
         freeze_stim_weight_ax.axhline(0, linestyle="--", color="0.6", linewidth=0.8, zorder=0)
-        freeze_stim_weight_ax.set_title("stim_param")
+        freeze_stim_weight_ax.set_title(STIM_FEATURE)
         freeze_stim_weight_ax.set_xlabel("")
         freeze_stim_weight_ax.set_ylabel("Emission weight")
         freeze_stim_weight_ax.legend(frameon=False, fontsize=7, title="")
@@ -2496,6 +2729,7 @@ def _(
 
 @app.cell
 def _(
+    HISTORY_FEATURE,
     add_paired_state_annotation,
     add_subject_pair_lines,
     boxplot_STYLE,
@@ -2514,7 +2748,7 @@ def _(
     else:
         _plot_df = (
             freeze_weights_df
-            .filter(pl.col("feature") == "choice_lag_param")
+            .filter(pl.col("feature") == HISTORY_FEATURE)
             .to_pandas()
         )
         _order = ["Free", "Both0", "Stim0", "Hist0"]
@@ -2549,7 +2783,7 @@ def _(
             hue_order=state_hue_order,
         )
         freeze_choice_lag_weight_ax.axhline(0, linestyle="--", color="0.6", linewidth=0.8, zorder=0)
-        freeze_choice_lag_weight_ax.set_title("choice_lag_param")
+        freeze_choice_lag_weight_ax.set_title(HISTORY_FEATURE)
         freeze_choice_lag_weight_ax.set_xlabel("")
         freeze_choice_lag_weight_ax.set_ylabel("Emission weight")
         freeze_choice_lag_weight_ax.legend(frameon=False, fontsize=7, title="")

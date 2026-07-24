@@ -2257,6 +2257,7 @@ def _(
     autocorrelograms_by_task,
     build_session_repetition_data,
     pd,
+    pl,
     plot_dfs,
     task_names,
 ):
@@ -2404,50 +2405,50 @@ def _(
             )
             _data_source_rows = _session_rows[_session_row_start:]
 
-            # if not {"subject", "session", _glm_trial_col, "response"}.issubset(_glm_pdf.columns):
-            #     continue
-            # _glm_session = (
-            #     _glm_pdf[
-            #         (_glm_pdf["subject"].astype(str) == f"{_subject}__closed_loop_000")
-            #         & (_glm_pdf["session"].astype(str) == str(_session))
-            #     ]
-            #     .sort_values(_glm_trial_col)
-            #     .copy()
-            # )
-            # if _glm_session.empty:
-            #     continue
+            if not {"subject", "session", _glm_trial_col, "response"}.issubset(_glm_pdf.columns):
+                continue
+            _glm_session = (
+                _glm_pdf[
+                    (_glm_pdf["subject"].astype(str) == f"{_subject}__closed_loop_000")
+                    & (_glm_pdf["session"].astype(str) == str(_session))
+                ]
+                .sort_values(_glm_trial_col)
+                .copy()
+            )
+            if _glm_session.empty:
+                continue
 
-            # _n_trials = min(len(_glm_session), len(_session_data))
-            # if _n_trials <= 0:
-            #     continue
-            # _glm_session = _glm_session.iloc[:_n_trials].copy()
-            # if _glm_trial_col == "trial_index":
-            #     _glm_session = _glm_session.rename(columns={"trial_index": "trial"})
-            # _glm_session["subject"] = str(_subject)
-            # _glm_session["session"] = str(_session)
-            # _glm_session["stimulus"] = _session_data["stimulus"].to_numpy()[:_n_trials]
+            _n_trials = min(len(_glm_session), len(_session_data))
+            if _n_trials <= 0:
+                continue
+            _glm_session = _glm_session.iloc[:_n_trials].copy()
+            if _glm_trial_col == "trial_index":
+                _glm_session = _glm_session.rename(columns={"trial_index": "trial"})
+            _glm_session["subject"] = str(_subject)
+            _glm_session["session"] = str(_session)
+            _glm_session["stimulus"] = _session_data["stimulus"].to_numpy()[:_n_trials]
 
-            # try:
-            #     _glm_session_data = build_session_repetition_data(
-            #         pl.from_pandas(_glm_session),
-            #         subject=_subject,
-            #         session=_session,
-            #         adapter=adapters[_task],
-            #         window=20,
-            #     )
-            # except ValueError:
-            #     continue
-            # _glm_source_rows = []
-            # _append_band_position_rows(
-            #     _glm_source_rows,
-            #     _glm_session_data,
-            #     _subject=_subject,
-            #     _session=_session,
-            #     _source="GLM closed-loop",
-            # )
-            # if _glm_source_rows:
-            #     _source_session_rows.extend(_data_source_rows)
-            #     _source_session_rows.extend(_glm_source_rows)
+            try:
+                _glm_session_data = build_session_repetition_data(
+                    pl.from_pandas(_glm_session),
+                    subject=_subject,
+                    session=_session,
+                    adapter=adapters[_task],
+                    window=20,
+                )
+            except ValueError:
+                continue
+            _glm_source_rows = []
+            _append_band_position_rows(
+                _glm_source_rows,
+                _glm_session_data,
+                _subject=_subject,
+                _session=_session,
+                _source="GLM closed-loop",
+            )
+            if _glm_source_rows:
+                _source_session_rows.extend(_data_source_rows)
+                _source_session_rows.extend(_glm_source_rows)
 
         if _session_rows:
             _subject_summary = (
@@ -2766,7 +2767,7 @@ def _(
     )
     fixed_band_position_2ADC_data_glm.set_xlabel("")
     fixed_band_position_2ADC_data_glm.set_ylabel("Proportion of trials")
-    fixed_band_position_2ADC_data_glm.set_ylim(0, 1)
+    fixed_band_position_2ADC_data_glm.set_ylim(0, 0.5)
     _paired_frames = []
     _available_pairs = []
     for _position in band_position_order:
@@ -3030,7 +3031,7 @@ def _(
     )
     fixed_band_position_2AFC_data_glm.set_xlabel("")
     fixed_band_position_2AFC_data_glm.set_ylabel("Proportion of trials")
-    fixed_band_position_2AFC_data_glm.set_ylim(0, 1)
+    fixed_band_position_2AFC_data_glm.set_ylim(0, 0.5)
     _paired_frames = []
     _available_pairs = []
     for _position in band_position_order:

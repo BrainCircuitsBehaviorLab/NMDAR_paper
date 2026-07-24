@@ -228,6 +228,7 @@ results/fits/**/*.npz
 !results/fits/**/param2/**
 !results/fits/**/param half-pure/**
 !results/fits/**/drug_transitions/**
+!results/fits/**/drug_transitions2/**
 !results/fits/**/drug_emissions/**
 
 data/raw/*.csv

@@ -1,7 +1,6 @@
 {
     "task": "2ADC_DRUG",
-    "model_id": "base_param",
-    "alias": "base_param",
+    "tau": 50,
     "subjects": [
         "C37",
         "C38",
@@ -14,20 +13,24 @@
         "N27",
         "N28"
     ],
-    "tau": 50,
-    "cv_mode": "none",
-    "cv_repeats": 0,
     "emission_cols": [
         "bias",
         "stim_x_delay_param",
         "choice_lag_param"
     ],
+    "transition_cols": [
+        "cumulative_reward"
+    ],
+    "frozen_emissions": {
+        "1": {
+            "stim_x_delay_param": 0.0
+        }
+    },
+    "baseline_class_idx": 1,
     "K_list": [
         2
     ],
-    "frozen_emissions": {},
-    "transition_cols": [
-        "drug_code",
-        "filtered_reward"
-    ]
+    "model_id": "base_param",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 0
 }
