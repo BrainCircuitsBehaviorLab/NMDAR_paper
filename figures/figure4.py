@@ -89,6 +89,7 @@ def _():
         glmhmmt_state_switch_histogram_df,
         glmhmmt_state_switches_df,
         glmhmmt_state_trace_df,
+        glmhmmt_transition_weights_df,
         json,
         load_app_config,
         load_fit_arrays,
@@ -144,7 +145,7 @@ def _(mo):
 @app.cell
 def _():
     mount_figure = True
-    format = "pdf"
+    format = "svg"
     return format, mount_figure
 
 
@@ -238,10 +239,10 @@ def _(ROOT, plt, sns):
         "filtered_choice": "Choice trace",
         "filtered_stim_side": "Stimulus trace",
         "prev_difficulty": "Previous difficulty",
-        "cumulative_reward": "Cumulative reward",
+        "cumulative_reward": "Cum.\nreward",
         "trial_index": "Trial index",
-        "Drug": "NMDAr block",
-        "drug_code": "NMDAr block",
+        "Drug": "Drug",
+        "drug_code": "Drug",
         "drug_x_filtered_reward": "NMDAr block : Rew trace",
     }
     delay_order = [-0.1, -1, -3, -10, 10, 3, 1, 0.1]
@@ -468,7 +469,7 @@ def _(MODEL_BY_TASK, get_adapter, pl):
 def _(MODEL_BY_TASK, adapters, dfs, json, paths):
     model_configs = {}
     for _task_name, _model_id in MODEL_BY_TASK.items():
-        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmm" / _model_id
+        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmmt" / _model_id
         _config_path = _model_dir / "config.json"
         if _config_path.exists():
             _cfg = json.loads(_config_path.read_text())
@@ -523,7 +524,7 @@ def _(
         _adapter = adapters[_task_name]
         _df_all = dfs[_task_name]
         _model_id = _cfg["model_id"]
-        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmm" / _model_id
+        _model_dir = paths.RESULTS / "fits" / _task_name / "glmhmmt" / _model_id
         _K = int((_cfg.get("K_list") or [2])[0])
         _subjects = [str(_subject) for _subject in (_cfg.get("subjects") or list(_df_all["subject"].unique()))]
         _emission_cols = _cfg.get("emission_cols") or None
@@ -531,7 +532,7 @@ def _(
 
         _arrays_store, _ = load_fit_arrays(
             out_dir=_model_dir,
-            arrays_suffix="glmhmm_arrays.npz",
+            arrays_suffix="glmhmmt_arrays.npz",
             adapter=_adapter,
             df_all=_df_all,
             subjects=_subjects,
@@ -570,7 +571,14 @@ def _(
         model_load_report.append(f"{_task_name}: loaded {len(_selected)} subjects from glmhmmt/{_model_id}")
 
     active_task_names = tuple(views)
-    return active_task_names, model_load_report, plot_dfs, weight_dfs
+    return (
+        active_task_names,
+        arrays_by_task,
+        model_load_report,
+        plot_dfs,
+        views,
+        weight_dfs,
+    )
 
 
 @app.cell
@@ -590,6 +598,7 @@ def _(mo):
 @app.cell
 def _(
     active_task_names,
+    arrays_by_task,
     delay_order,
     glmhmmt_change_triggered_posterior_df,
     glmhmmt_state_accuracy_df,
@@ -600,9 +609,11 @@ def _(
     glmhmmt_state_switch_histogram_df,
     glmhmmt_state_switches_df,
     glmhmmt_state_trace_df,
+    glmhmmt_transition_weights_df,
     pd,
     pl,
     plot_dfs,
+    views,
     weight_dfs,
     with_feature_labels,
 ):
@@ -751,10 +762,10 @@ def _(
 
     for _task_name in active_task_names:
         emission_plot_dfs[_task_name] = with_feature_labels(weight_dfs[_task_name].to_pandas())
-        # transition_plot_dfs[_task_name] = with_feature_labels(
-        #     glmhmmt_transition_weights_df(arrays_by_task[_task_name], views[_task_name])
-        # )
-        # transition_plot_dfs[_task_name] = transition_plot_dfs[_task_name][transition_plot_dfs[_task_name]["source_state_label"] != transition_plot_dfs[_task_name]["destination_state_label"]]
+        transition_plot_dfs[_task_name] = with_feature_labels(
+            glmhmmt_transition_weights_df(arrays_by_task[_task_name], views[_task_name])
+        )
+        transition_plot_dfs[_task_name] = transition_plot_dfs[_task_name][transition_plot_dfs[_task_name]["source_state_label"] != transition_plot_dfs[_task_name]["destination_state_label"]]
         _psychometric_source_df = plot_dfs[_task_name]
         if _task_name == "2ADC_DRUG":
             _psychometric_source_df = _psychometric_source_df.clone().with_columns(
@@ -1077,12 +1088,6 @@ def _(
     )
 
 
-@app.cell
-def _(metric_dfs):
-    metric_dfs
-    return
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -1096,12 +1101,12 @@ def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
-                [
-                    "Diagram",
-                    "Diagram",
-                    "Diagram",
-                    "Diagram",
-                ],
+                # [
+                #     "Diagram",
+                #     "Diagram",
+                #     "Diagram",
+                #     "Diagram",
+                # ],
                 [
                     "single_session_saline_2ADC",
                     "single_session_saline_2ADC",
@@ -1127,7 +1132,7 @@ def _(fig_size, mount_figure, plt):
                     "psychometric_2AFC",
                 ],
             ],
-            figsize=fig_size(1, 0.7),
+            figsize=fig_size(1, 1),
             constrained_layout=True,
         )
         fig.set_constrained_layout_pads(
@@ -1154,13 +1159,6 @@ def _(fig_size, mount_figure, plt):
     else:
         fig, axd = None, {}
     return axd, fig
-
-
-@app.cell
-def _(fig):
-
-    fig
-    return
 
 
 @app.cell(hide_code=True)
@@ -1318,6 +1316,7 @@ def _(transition_plot_dfs):
 
 @app.cell
 def _(
+    add_one_sample_zero_annotations,
     axd,
     boxplot_STYLE,
     fig_size,
@@ -1357,19 +1356,20 @@ def _(
             ax=transition_weights_2ADC,
             **boxplot_STYLE,
         )
-        transition_weights_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-        # add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
+        transition_weights_2ADC.axhline(0, color="0.5", linestyle="--")
+        add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
     # transition_weights_2ADC.set_title(task_labels["2ADC_DRUG"])
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_ylabel("Transition weight")
-    transition_weights_2ADC.tick_params(axis="x", labelrotation=30)
+    transition_weights_2ADC.tick_params(axis="x", labelrotation=0)
     transition_weights_2ADC.set_ylim(top = 10)
+    transition_weights_2ADC.set_ylim(top = 15)
     handles, _ = transition_weights_2ADC.get_legend_handles_labels()
 
     transition_weights_2ADC.legend(
         handles,
         [r"$E\rightarrow D$", r"$D\rightarrow E$"],
-        frameon=False, ncol = 2,  handlelength=0.8,handletextpad=0.4,columnspacing=0.8,
+        frameon=False, ncol=1, handlelength=1, handletextpad=0.5 ,columnspacing=0, loc='upper left', bbox_to_anchor=(0, 1)
     )
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
@@ -1386,12 +1386,8 @@ def _(mo):
 
 
 @app.cell
-def _():
-    return
-
-
-@app.cell
 def _(
+    add_one_sample_zero_annotations,
     axd,
     boxplot_STYLE,
     fig_size,
@@ -1427,15 +1423,15 @@ def _(
             **boxplot_STYLE,
         )
 
-        transition_weights_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+        transition_weights_2AFC.axhline(0, color="0.5", linestyle="--")
 
-        # add_one_sample_zero_annotations(
-        #     transition_weights_2AFC,
-        #     transition_plot_dfs["2AFC_DRUG"],
-        #     x="feature_label",
-        #     y="weight",
-        #     order=transition_orders["2AFC_DRUG"],
-        # )
+        add_one_sample_zero_annotations(
+            transition_weights_2AFC,
+            transition_plot_dfs["2AFC_DRUG"],
+            x="feature_label",
+            y="weight",
+            order=transition_orders["2AFC_DRUG"],
+        )
 
         _handles, _ = transition_weights_2AFC.get_legend_handles_labels()
         transition_weights_2AFC.legend(
@@ -1450,7 +1446,7 @@ def _(
     transition_weights_2AFC.set_xlabel("")
     transition_weights_2AFC.set_ylim(top = 10)
     transition_weights_2AFC.set_ylabel("Transition weight")
-    transition_weights_2AFC.tick_params(axis="x", rotation=30)
+    transition_weights_2AFC.tick_params(axis="x", rotation=0)
     if not mount_figure:
         transition_weights_2AFC.figure.savefig(
             (path_panels / "2AFC_glmhmmt_transition_weights").with_suffix(f".{format}")
@@ -1493,7 +1489,6 @@ def _(mo):
 @app.cell
 def _(
     axd,
-    fig_size,
     format,
     mount_figure,
     path_panels,
@@ -1505,7 +1500,7 @@ def _(
     treatment_palette,
     treatment_psychometric_dfs,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    # plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     psychometric_2ADC = plt.gca() if not mount_figure else axd["psychometric_2ADC"]
     psychometric_2ADC.clear()
     sns.lineplot(
@@ -1539,23 +1534,24 @@ def _(
         legend=False,
         ax=psychometric_2ADC,
     )
-    psychometric_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
+    # psychometric_2ADC.axhline(0.5, color="0.5", linestyle="--")
     psychometric_2ADC.set_title(task_labels["2ADC_DRUG"])
     psychometric_2ADC.set_xlabel("Stimulus evidence")
     psychometric_2ADC.set_ylabel(r"$p(\mathrm{right})$")
-    psychometric_2ADC.legend(
-        frameon=False,
-        title=None,
-        ncol=2,
-        fontsize=5,
-        handlelength=1.2,
-        handletextpad=0.3,
-        columnspacing=0.6,
-        loc="lower center",
-    )
+    # psychometric_2ADC.legend(
+    #     frameon=False,
+    #     title=None,
+    #     ncol=2,
+    #     fontsize=5,
+    #     handlelength=1.2,
+    #     handletextpad=0.3,
+    #     columnspacing=0.6,
+    #     loc="lower center",
+    # )
+    psychometric_2ADC.legend_.remove()
     psychometric_2ADC.set_xlim(*psychometric_limits["2ADC_DRUG"])
     psychometric_2ADC.set_ylim(0, 1)
-    psychometric_2ADC.set_yticks([0, 0.5, 1])
+    psychometric_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
     if not mount_figure:
         psychometric_2ADC.figure.savefig(
             (path_panels / "2ADC_drug_psychometric").with_suffix(
@@ -1623,7 +1619,7 @@ def _(
         legend=False,
         ax=psychometric_2AFC,
     )
-    psychometric_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
+    # psychometric_2AFC.axhline(0.5, color="0.5", linestyle="--")
     psychometric_2AFC.set_title(task_labels["2AFC_DRUG"])
     psychometric_2AFC.set_xlabel("Stimulus evidence")
     psychometric_2AFC.set_ylabel(r"$p(\mathrm{right})$")
@@ -1639,7 +1635,7 @@ def _(
     )
     psychometric_2AFC.set_xlim(*psychometric_limits["2AFC_DRUG"])
     psychometric_2AFC.set_ylim(0, 1)
-    psychometric_2AFC.set_yticks([0, 0.5, 1])
+    psychometric_2AFC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
     if not mount_figure:
         psychometric_2AFC.figure.savefig(
             (path_panels / "2AFC_drug_psychometric").with_suffix(
@@ -2404,6 +2400,7 @@ def _(
         legend = False,
         **BOXPLOT_STYLE,
     )
+    dwell_time_2ADC.set_yscale('log')
     add_paired_state_annotation(
         dwell_time_2ADC,
         treatment_dwell_dfs["2ADC_DRUG"],
@@ -2415,7 +2412,7 @@ def _(
     )
     dwell_time_2ADC.set_title(task_labels["2ADC_DRUG"])
     dwell_time_2ADC.set_xlabel("")
-    dwell_time_2ADC.set_ylabel("Mean dwell time (trials)")
+    dwell_time_2ADC.set_ylabel("Dwell time (trials)")
     dwell_time_2ADC.set_xticklabels(["Eng.", "Dis."])
     if not mount_figure:
         dwell_time_2ADC.figure.savefig(
@@ -2464,6 +2461,7 @@ def _(
         legend = False,
         **BOXPLOT_STYLE,
     )
+    dwell_time_2AFC.set_yscale('log')
     add_paired_state_annotation(
         dwell_time_2AFC,
         treatment_dwell_dfs["2AFC_DRUG"],
@@ -2475,7 +2473,7 @@ def _(
     )
     dwell_time_2AFC.set_title(task_labels["2AFC_DRUG"])
     dwell_time_2AFC.set_xlabel("")
-    dwell_time_2AFC.set_ylabel("Mean dwell time (trials)")
+    dwell_time_2AFC.set_ylabel("Dwell time (trials)")
     dwell_time_2AFC.set_xticklabels(["Eng.", "Dis."])
     dwell_time_2AFC.legend(frameon=False, title="")
     if not mount_figure:
@@ -2546,12 +2544,13 @@ def _(
         common_norm=False,
         element="step",
         multiple="layer",
-        alpha=0.45,
+        alpha=0.5,
         ax=histogram_transitions_2ADC,
     )
     _legend = histogram_transitions_2ADC.get_legend()
     _legend.set_frame_on(False)
     _legend.set_title(None)
+    _legend.set_loc("upper right")
     histogram_transitions_2ADC.set_title(task_labels["2ADC_DRUG"])
     histogram_transitions_2ADC.set_xlabel("State switches")
     histogram_transitions_2ADC.set_ylabel("Probability")
@@ -2603,7 +2602,7 @@ def _(
         common_norm=False,
         element="step",
         multiple="layer",
-        alpha=0.45,
+        alpha=0.5,
         ax=histogram_transitions_2AFC,
     )
     _legend = histogram_transitions_2AFC.get_legend()
@@ -3249,7 +3248,7 @@ def _(
     single_session_saline_2ADC.plot(
         _data["trial_x"],
         _data["p_engaged"],
-        color=state_palette["Engaged"],
+        color='tab:gray',#state_palette["Engaged"],
         label=r"$p$(Engaged)",
     )
     for _trial_x, _probability in zip(
@@ -3264,24 +3263,24 @@ def _(
             alpha=0.25,
             linewidth=0,
         )
-    single_session_saline_2ADC.plot(
-        "trial_x",
-        "accuracy_window_fraction",
-        data=_data["running"],
-        color="black",
-        linewidth=1,
-        alpha=0.5,
-        label="Accuracy",
-    )
+    # single_session_saline_2ADC.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     data=_data["running"],
+    #     color="black",
+    #     linewidth=1,
+    #     alpha=0.5,
+    #     label="Accuracy",
+    # )
     single_session_saline_2ADC.set(
-        title="2ADC · Saline",
+        title="Saline",
         xlabel="Trial",
-        ylabel="Probability",
+        ylabel="$p$(engaged)",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
-    single_session_saline_2ADC.set_yticks([0, 0.5, 1])
-    single_session_saline_2ADC.legend(frameon=False, loc="lower right")
+    single_session_saline_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    # single_session_saline_2ADC.legend(frameon=False, loc="lower right")
     if not mount_figure:
         single_session_saline_2ADC.figure.savefig(
             (path_panels / "2ADC_saline_single_session").with_suffix(
@@ -3320,7 +3319,7 @@ def _(
     single_session_saline_2AFC.plot(
         _data["trial_x"],
         _data["p_engaged"],
-        color=state_palette["Engaged"],
+        color='tab:gray',#state_palette["Engaged"],
         label=r"$p$(Engaged)",
     )
     for _trial_x, _probability in zip(
@@ -3335,24 +3334,24 @@ def _(
             alpha=0.25,
             linewidth=0,
         )
-    single_session_saline_2AFC.plot(
-        "trial_x",
-        "accuracy_window_fraction",
-        data=_data["running"],
-        color="black",
-        linewidth=1,
-        alpha=0.5,
-        label="Accuracy",
-    )
+    # single_session_saline_2AFC.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     data=_data["running"],
+    #     color="black",
+    #     linewidth=1,
+    #     alpha=0.5,
+    #     label="Accuracy",
+    # )
     single_session_saline_2AFC.set(
-        title="2AFC · Saline",
+        title="Saline",
         xlabel="Trial",
-        ylabel="Probability",
+        ylabel="$p$(engaged)",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
-    single_session_saline_2AFC.set_yticks([0, 0.5, 1])
-    single_session_saline_2AFC.legend(frameon=False, loc="lower right")
+    single_session_saline_2AFC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    # single_session_saline_2AFC.legend(frameon=False, loc="lower right")
     if not mount_figure:
         single_session_saline_2AFC.figure.savefig(
             (path_panels / "2AFC_saline_single_session").with_suffix(
@@ -3391,7 +3390,7 @@ def _(
     single_session_drug_2ADC.plot(
         _data["trial_x"],
         _data["p_engaged"],
-        color=state_palette["Engaged"],
+        color='tab:pink',#state_palette["Engaged"],
         label=r"$p$(Engaged)",
     )
     for _trial_x, _probability in zip(
@@ -3406,24 +3405,24 @@ def _(
             alpha=0.25,
             linewidth=0,
         )
-    single_session_drug_2ADC.plot(
-        "trial_x",
-        "accuracy_window_fraction",
-        data=_data["running"],
-        color="black",
-        linewidth=1,
-        alpha=0.5,
-        label="Accuracy",
-    )
+    # single_session_drug_2ADC.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     data=_data["running"],
+    #     color="black",
+    #     linewidth=1,
+    #     alpha=0.5,
+    #     label="Accuracy",
+    # )
     single_session_drug_2ADC.set(
-        title="2ADC · Drug",
+        title="Drug",
         xlabel="Trial",
-        ylabel="Probability",
+        ylabel="$p$(engaged)",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
-    single_session_drug_2ADC.set_yticks([0, 0.5, 1])
-    single_session_drug_2ADC.legend(frameon=False, loc="lower right")
+    single_session_drug_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    # single_session_drug_2ADC.legend(frameon=False, loc="lower right")
     if not mount_figure:
         single_session_drug_2ADC.figure.savefig(
             (path_panels / "2ADC_drug_single_session").with_suffix(
@@ -3462,7 +3461,7 @@ def _(
     single_session_drug_2AFC.plot(
         _data["trial_x"],
         _data["p_engaged"],
-        color=state_palette["Engaged"],
+        color='tab:pink',#state_palette["Engaged"],
         label=r"$p$(Engaged)",
     )
     for _trial_x, _probability in zip(
@@ -3477,24 +3476,24 @@ def _(
             alpha=0.25,
             linewidth=0,
         )
-    single_session_drug_2AFC.plot(
-        "trial_x",
-        "accuracy_window_fraction",
-        data=_data["running"],
-        color="black",
-        linewidth=1,
-        alpha=0.5,
-        label="Accuracy",
-    )
+    # single_session_drug_2AFC.plot(
+    #     "trial_x",
+    #     "accuracy_window_fraction",
+    #     data=_data["running"],
+    #     color="black",
+    #     linewidth=1,
+    #     alpha=0.5,
+    #     label="Accuracy",
+    # )
     single_session_drug_2AFC.set(
-        title="2AFC · Drug",
+        title="Drug",
         xlabel="Trial",
-        ylabel="Probability",
+        ylabel="$p$(engaged)",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
-    single_session_drug_2AFC.set_yticks([0, 0.5, 1])
-    single_session_drug_2AFC.legend(frameon=False, loc="lower right")
+    single_session_drug_2AFC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    # single_session_drug_2AFC.legend(frameon=False, loc="lower right")
     if not mount_figure:
         single_session_drug_2AFC.figure.savefig(
             (path_panels / "2AFC_drug_single_session").with_suffix(
@@ -4023,8 +4022,16 @@ def _(
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Mount figure
+    """)
+    return
+
+
 @app.cell
-def _(axd, fig, format, mount_figure, path_panels):
+def _(axd, fig, mount_figure):
     if mount_figure:
         for _name in (
             "single_session_drug_2ADC",
@@ -4039,26 +4046,34 @@ def _(axd, fig, format, mount_figure, path_panels):
             if _legend is not None:
                 _legend.remove()
 
+        # P(engaged)
+        # axd["single_session_saline_2ADC"].set_title("STM")
+        # axd["single_session_saline_2AFC"].set_title("EA")
+        # axd["single_session_drug_2ADC"].set_title("")
+        # axd["single_session_drug_2AFC"].set_title("")
+        axd["single_session_saline_2ADC"].set_xlabel("")
+        axd["single_session_saline_2AFC"].set_xlabel("")
+        axd["single_session_saline_2AFC"].set_ylabel("")
         axd["single_session_saline_2AFC"].set_yticklabels([])
-        axd["single_session_drug_2AFC"].set_yticklabels([])
-        axd["transition_weights_2AFC"].set_yticklabels([])
-        axd["psychometric_2AFC"].set_yticklabels([])
+        axd["single_session_drug_2AFC"].set_ylabel("")
+        axd["single_session_drug_2AFC"].set_yticklabels("")
 
-        axd["histogram_transitions_2ADC"].set_title("2ADC")
-        axd["histogram_transitions_2AFC"].set_title("2AFC")
-        axd["transition_weights_2ADC"].set_title("2ADC")
-        axd["transition_weights_2AFC"].set_title("2AFC")
-        axd["psychometric_2ADC"].set_title("2ADC")
-        axd["psychometric_2AFC"].set_title("2AFC")
+        # Transitions and dwell times
+        axd["histogram_transitions_2ADC"].set_title("")
+        axd["histogram_transitions_2AFC"].set_title("")
+        axd["dwell_time_2ADC"].set_title("")
+        axd["dwell_time_2AFC"].set_title("")
 
-        fig.savefig((path_panels / "figure4").with_suffix(f".{format}"))
-        fig.align_ylabels()
+        axd["transition_weights_2ADC"].set_title("")
+        axd["transition_weights_2AFC"].set_title("")
+        axd["psychometric_2ADC"].set_title("")
+        axd["psychometric_2AFC"].set_title("")
+
+        # fig.savefig((path_panels / "figure4").with_suffix(".pdf"))
+        # fig.savefig((path_panels / "figure4").with_suffix(".svg"))
+        # fig.savefig((path_panels / "figure4").with_suffix(".png"))
+        # fig.align_ylabels()
     fig
-    return
-
-
-@app.cell
-def _():
     return
 
 
