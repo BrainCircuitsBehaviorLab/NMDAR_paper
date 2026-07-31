@@ -20,13 +20,13 @@ def _(mo):
 
 @app.cell
 def _():
-    # Imports
     import json
     import os
     from pathlib import Path
 
     import marimo as mo
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
     from matplotlib.ticker import FuncFormatter
     import numpy as np
     import pandas as pd
@@ -71,6 +71,7 @@ def _():
         Annotator,
         BOXPLOT_STYLE,
         FuncFormatter,
+        Line2D,
         Path,
         add_choice_lag_summary_regressor,
         build_session_repetition_data,
@@ -109,12 +110,81 @@ def _():
 
 
 @app.cell
+def test_hue_annotation(Annotator, np, pd, ttest_1samp):
+    def add_one_sample_zero_annotations_test(ax, df, *, x, y, order, hue=None, hue_order=None, show_pvalue_if_ns=False):
+        """TEST version: hue-aware one-sample-vs-zero annotation, for validating against
+        add_one_sample_zero_annotations (defined later in the notebook) before editing it directly."""
+        if df is None or df.empty or not {x, y}.issubset(df.columns):
+            return
+
+        if hue is None:
+            groups = [(x_value, None) for x_value in order]
+        else:
+            groups = [(x_value, hue_value) for x_value in order for hue_value in hue_order]
+
+        pairs = []
+        pvalues = []
+        for x_value, hue_value in groups:
+            mask = df[x] == x_value
+            if hue_value is not None:
+                mask &= df[hue] == hue_value
+            values = pd.to_numeric(df.loc[mask, y], errors="coerce").dropna()
+            if len(values) < 2:
+                continue
+            pvalue = float(ttest_1samp(values.to_numpy(dtype=float), popmean=0.0).pvalue)
+            if not np.isfinite(pvalue):
+                continue
+            key = x_value if hue_value is None else (x_value, hue_value)
+            pairs.append((key, key))
+            pvalues.append(pvalue)
+
+        if not pairs:
+            return
+
+        annotator_kwargs = dict(x=x, y=y, order=order)
+        if hue is not None:
+            annotator_kwargs.update(hue=hue, hue_order=hue_order)
+
+        annotator = Annotator(ax, pairs, data=df, **annotator_kwargs)
+        annotator.configure(line_width=0, text_format="star", verbose=0)
+
+        texts_before = {id(t) for t in ax.texts}
+
+        if show_pvalue_if_ns:
+            def _label(pvalue):
+                if pvalue >= 0.05:
+                    return f"p={pvalue:.3f}"
+                    # return f"p={pvalue:.3f}".replace("p=0.", "p=.")
+                if pvalue < 0.001:
+                    return "***"
+                if pvalue < 0.01:
+                    return "**"
+                return "*"
+
+            annotator.set_custom_annotations([_label(p) for p in pvalues])
+            annotator.annotate()
+        else:
+            annotator.set_pvalues_and_annotate(pvalues)
+
+        # Pin all new annotation texts to a uniform y (the highest one wins).
+        new_texts = [t for t in ax.texts if id(t) not in texts_before]
+        if new_texts:
+            target_y = max(t.get_position()[1] for t in new_texts)
+            for t in new_texts:
+                t.set_position((t.get_position()[0], target_y))
+
+        return annotator
+
+    return (add_one_sample_zero_annotations_test,)
+
+
+@app.cell
 def _():
     boxplot_STYLE = dict(
         fill=False,
         boxprops={"color": "0.5"},
         whiskerprops={"color": "0.5"},
-        medianprops={"linewidth": 4},
+        medianprops={"linewidth": 3},
         showfliers=False,
         showcaps=False,
     )
@@ -160,6 +230,8 @@ def _():
     MODEL_BY_TASK = {
         "2AFC_DRUG": "drug_transitions2",
         "2ADC_DRUG": "drug_transitions2",
+        # "2AFC_DRUG": "drug_transitions3",
+        # "2ADC_DRUG": "drug_transitions3",
         # "MCDR": "param",
     }
     task_names = tuple(MODEL_BY_TASK)
@@ -276,7 +348,6 @@ def _(feature_labels):
 def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
     state_order = ["Engaged", "Disengaged"]
 
-
     def add_paired_state_annotation(
         ax,
         df,
@@ -287,6 +358,7 @@ def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
         hue="state_label",
         subject_col="subject",
         hue_order=state_order,
+        show_pvalue_if_ns=False,
     ):
         if df is None or df.empty or len(hue_order) != 2:
             return
@@ -332,7 +404,18 @@ def _(Annotator, FuncFormatter, np, pd, ttest_1samp):
             # loc="outside",
             line_height=0,
             verbose=False,
-        ).apply_and_annotate()
+        )
+
+        if show_pvalue_if_ns:
+            annotator.apply_test()
+            labels = [
+                f"p={_ann.data.pvalue:.3f}" if _ann.data.pvalue >= 0.05 else _ann.text
+                for _ann in annotator.annotations
+            ]
+            annotator.set_custom_annotations(labels)
+            annotator.annotate()
+        else:
+            annotator.apply_and_annotate()
 
 
     def add_subject_pair_lines(
@@ -1316,7 +1399,8 @@ def _(transition_plot_dfs):
 
 @app.cell
 def _(
-    add_one_sample_zero_annotations,
+    add_one_sample_zero_annotations_test,
+    add_subject_pair_lines,
     axd,
     boxplot_STYLE,
     fig_size,
@@ -1357,20 +1441,39 @@ def _(
             **boxplot_STYLE,
         )
         transition_weights_2ADC.axhline(0, color="0.5", linestyle="--")
-        add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
+        add_subject_pair_lines(
+            transition_weights_2ADC,
+            transition_plot_dfs["2ADC_DRUG"],
+            x="feature_label",
+            y="weight",
+            order=transition_orders["2ADC_DRUG"],
+            hue="transition_label",
+            hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+        )
+        # add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
+        add_one_sample_zero_annotations_test(
+            transition_weights_2ADC,
+            transition_plot_dfs["2ADC_DRUG"],
+            x="feature_label",
+            y="weight",
+            order=transition_orders["2ADC_DRUG"],
+            hue="transition_label",
+            hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+            show_pvalue_if_ns=False
+        )
     # transition_weights_2ADC.set_title(task_labels["2ADC_DRUG"])
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_ylabel("Transition weight")
     transition_weights_2ADC.tick_params(axis="x", labelrotation=0)
-    transition_weights_2ADC.set_ylim(top = 10)
-    transition_weights_2ADC.set_ylim(top = 15)
+    transition_weights_2ADC.set_ylim(top = 20)
     handles, _ = transition_weights_2ADC.get_legend_handles_labels()
 
     transition_weights_2ADC.legend(
         handles,
-        [r"$E\rightarrow D$", r"$D\rightarrow E$"],
-        frameon=False, ncol=1, handlelength=1, handletextpad=0.5 ,columnspacing=0, loc='upper left', bbox_to_anchor=(0, 1)
+        [r"E$\rightarrow$D", r"D$\rightarrow$E"],
+        frameon=False, ncol=1, handlelength=1, handletextpad=0.5 ,columnspacing=1, loc='upper left', bbox_to_anchor=(-0.05, 1.05)
     )
+    transition_weights_2ADC.legend_.remove()
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2ADC
@@ -1387,7 +1490,8 @@ def _(mo):
 
 @app.cell
 def _(
-    add_one_sample_zero_annotations,
+    add_one_sample_zero_annotations_test,
+    add_subject_pair_lines,
     axd,
     boxplot_STYLE,
     fig_size,
@@ -1425,12 +1529,32 @@ def _(
 
         transition_weights_2AFC.axhline(0, color="0.5", linestyle="--")
 
-        add_one_sample_zero_annotations(
+        add_subject_pair_lines(
             transition_weights_2AFC,
             transition_plot_dfs["2AFC_DRUG"],
             x="feature_label",
             y="weight",
             order=transition_orders["2AFC_DRUG"],
+            hue="transition_label",
+            hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+        )
+
+        # add_one_sample_zero_annotations(
+        #     transition_weights_2AFC,
+        #     transition_plot_dfs["2AFC_DRUG"],
+        #     x="feature_label",
+        #     y="weight",
+        #     order=transition_orders["2AFC_DRUG"],
+        # )
+        add_one_sample_zero_annotations_test(
+            transition_weights_2AFC,
+            transition_plot_dfs["2AFC_DRUG"],
+            x="feature_label",
+            y="weight",
+            order=transition_orders["2AFC_DRUG"],
+            hue="transition_label",
+            hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+            show_pvalue_if_ns=False
         )
 
         _handles, _ = transition_weights_2AFC.get_legend_handles_labels()
@@ -1441,10 +1565,10 @@ def _(
             frameon=False,
              handlelength=0.8,handletextpad=0.4,columnspacing=0.8,
         )
-
+    transition_weights_2AFC.legend_.remove()
     # transition_weights_2AFC.set_title(task_labels["2AFC_DRUG"])
     transition_weights_2AFC.set_xlabel("")
-    transition_weights_2AFC.set_ylim(top = 10)
+    transition_weights_2AFC.set_ylim(top = 15)
     transition_weights_2AFC.set_ylabel("Transition weight")
     transition_weights_2AFC.tick_params(axis="x", rotation=0)
     if not mount_figure:
@@ -1473,7 +1597,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Psychometrics
+    ## Psychometrics by stimulus evidence
     """)
     return
 
@@ -1488,6 +1612,7 @@ def _(mo):
 
 @app.cell
 def _(
+    Line2D,
     axd,
     format,
     mount_figure,
@@ -1538,17 +1663,11 @@ def _(
     psychometric_2ADC.set_title(task_labels["2ADC_DRUG"])
     psychometric_2ADC.set_xlabel("Stimulus evidence")
     psychometric_2ADC.set_ylabel(r"$p(\mathrm{right})$")
-    # psychometric_2ADC.legend(
-    #     frameon=False,
-    #     title=None,
-    #     ncol=2,
-    #     fontsize=5,
-    #     handlelength=1.2,
-    #     handletextpad=0.3,
-    #     columnspacing=0.6,
-    #     loc="lower center",
-    # )
-    psychometric_2ADC.legend_.remove()
+    _legend_handles = [
+        Line2D([0], [0], marker="o", color="black", linestyle="None", label="Data"),
+        Line2D([0], [0], color="black", label="Model"),
+    ]
+    psychometric_2ADC.legend(handles=_legend_handles, frameon=False, loc="upper left", bbox_to_anchor=(-0.05, 1.05), handlelength=0.5)
     psychometric_2ADC.set_xlim(*psychometric_limits["2ADC_DRUG"])
     psychometric_2ADC.set_ylim(0, 1)
     psychometric_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
@@ -1572,6 +1691,7 @@ def _(mo):
 
 @app.cell
 def _(
+    Line2D,
     axd,
     fig_size,
     format,
@@ -1623,16 +1743,11 @@ def _(
     psychometric_2AFC.set_title(task_labels["2AFC_DRUG"])
     psychometric_2AFC.set_xlabel("Stimulus evidence")
     psychometric_2AFC.set_ylabel(r"$p(\mathrm{right})$")
-    psychometric_2AFC.legend(
-        frameon=False,
-        title=None,
-        ncol=2,
-        fontsize=5,
-        handlelength=1.2,
-        handletextpad=0.3,
-        columnspacing=0.6,
-        loc="lower center",
-    )
+    _legend_handles = [
+        Line2D([0], [0], marker="o", color="black", linestyle="None", label="Data"),
+        Line2D([0], [0], color="black", label="Model"),
+    ]
+    psychometric_2AFC.legend(handles=_legend_handles, frameon=False, loc="upper left")
     psychometric_2AFC.set_xlim(*psychometric_limits["2AFC_DRUG"])
     psychometric_2AFC.set_ylim(0, 1)
     psychometric_2AFC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
@@ -2356,7 +2471,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Mean Dwell Time
+    ## Dwell time
     """)
     return
 
@@ -2373,6 +2488,7 @@ def _(mo):
 def _(
     BOXPLOT_STYLE,
     add_paired_state_annotation,
+    add_subject_pair_lines,
     axd,
     fig_size,
     format,
@@ -2401,6 +2517,15 @@ def _(
         **BOXPLOT_STYLE,
     )
     dwell_time_2ADC.set_yscale('log')
+    add_subject_pair_lines(
+        dwell_time_2ADC,
+        treatment_dwell_dfs["2ADC_DRUG"],
+        x="state_label",
+        y="mean_dwell_trials",
+        order=["Engaged", "Disengaged"],
+        hue="treatment",
+        hue_order=treatment_order,
+    )
     add_paired_state_annotation(
         dwell_time_2ADC,
         treatment_dwell_dfs["2ADC_DRUG"],
@@ -2409,6 +2534,7 @@ def _(
         order=["Engaged", "Disengaged"],
         hue="treatment",
         hue_order=treatment_order,
+        # show_pvalue_if_ns=True
     )
     dwell_time_2ADC.set_title(task_labels["2ADC_DRUG"])
     dwell_time_2ADC.set_xlabel("")
@@ -2434,6 +2560,7 @@ def _(mo):
 def _(
     BOXPLOT_STYLE,
     add_paired_state_annotation,
+    add_subject_pair_lines,
     axd,
     fig_size,
     format,
@@ -2462,6 +2589,15 @@ def _(
         **BOXPLOT_STYLE,
     )
     dwell_time_2AFC.set_yscale('log')
+    add_subject_pair_lines(
+        dwell_time_2AFC,
+        treatment_dwell_dfs["2AFC_DRUG"],
+        x="state_label",
+        y="mean_dwell_trials",
+        order=["Engaged", "Disengaged"],
+        hue="treatment",
+        hue_order=treatment_order,
+    )
     add_paired_state_annotation(
         dwell_time_2AFC,
         treatment_dwell_dfs["2AFC_DRUG"],
@@ -2470,6 +2606,7 @@ def _(
         order=["Engaged", "Disengaged"],
         hue="treatment",
         hue_order=treatment_order,
+        # show_pvalue_if_ns=True
     )
     dwell_time_2AFC.set_title(task_labels["2AFC_DRUG"])
     dwell_time_2AFC.set_xlabel("")
@@ -2842,7 +2979,7 @@ def _(
         _p_engaged,
         _p_disengaged + _p_engaged,
         color=state_palette.get("Disengaged", "tab:gray"),
-        alpha=0.20,
+        alpha=0.50,
         linewidth=0,
         label="Disengaged",
         zorder=0,
@@ -3260,7 +3397,7 @@ def _(
             color=state_palette[
                 "Engaged" if _probability > 0.5 else "Disengaged"
             ],
-            alpha=0.25,
+            alpha=0.5,
             linewidth=0,
         )
     # single_session_saline_2ADC.plot(
@@ -3331,7 +3468,7 @@ def _(
             color=state_palette[
                 "Engaged" if _probability > 0.5 else "Disengaged"
             ],
-            alpha=0.25,
+            alpha=0.5,
             linewidth=0,
         )
     # single_session_saline_2AFC.plot(
@@ -3402,7 +3539,7 @@ def _(
             color=state_palette[
                 "Engaged" if _probability > 0.5 else "Disengaged"
             ],
-            alpha=0.25,
+            alpha=0.5,
             linewidth=0,
         )
     # single_session_drug_2ADC.plot(
@@ -3473,7 +3610,7 @@ def _(
             color=state_palette[
                 "Engaged" if _probability > 0.5 else "Disengaged"
             ],
-            alpha=0.25,
+            alpha=0.5,
             linewidth=0,
         )
     # single_session_drug_2AFC.plot(
@@ -4031,7 +4168,7 @@ def _(mo):
 
 
 @app.cell
-def _(axd, fig, mount_figure):
+def _(axd, fig, mount_figure, path_panels):
     if mount_figure:
         for _name in (
             "single_session_drug_2ADC",
@@ -4069,9 +4206,9 @@ def _(axd, fig, mount_figure):
         axd["psychometric_2ADC"].set_title("")
         axd["psychometric_2AFC"].set_title("")
 
-        # fig.savefig((path_panels / "figure4").with_suffix(".pdf"))
-        # fig.savefig((path_panels / "figure4").with_suffix(".svg"))
-        # fig.savefig((path_panels / "figure4").with_suffix(".png"))
+        fig.savefig((path_panels / "figure4").with_suffix(".pdf"))
+        fig.savefig((path_panels / "figure4").with_suffix(".svg"))
+        fig.savefig((path_panels / "figure4").with_suffix(".png")) 
         # fig.align_ylabels()
     fig
     return

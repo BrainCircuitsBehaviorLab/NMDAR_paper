@@ -315,12 +315,6 @@ def _(current_hash, mo, save_plot, ui_model_manager):
 
 
 @app.cell
-def _(trial_df):
-    trial_df
-    return
-
-
-@app.cell
 def _(
     baseline_class_idx,
     current_hash,

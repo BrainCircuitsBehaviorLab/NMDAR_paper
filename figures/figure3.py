@@ -108,7 +108,7 @@ def _():
         fill=False,
         boxprops={"color": "0.5"},
         whiskerprops={"color": "0.5"},
-        medianprops={"linewidth": 4},
+        medianprops={"linewidth": 3},
         showfliers=False,
         showcaps=False,
     )
@@ -1169,33 +1169,49 @@ def _(mount_figure, plt):
             [
                 [
                     "emission_weights_2ADC",
+                    "emission_weights_2ADC",
+                    "emission_weights_2ADC",
                     "transition_weights_2ADC",
+                    "emission_weights_2AFC",
+                    "emission_weights_2AFC",
                     "emission_weights_2AFC",
                     "transition_weights_2AFC",
                 ],
                 [
                     "psychometric_by_state_2ADC",
+                    "psychometric_by_state_2ADC",
+                    "psychometric_by_action_trace_2ADC",
                     "psychometric_by_action_trace_2ADC",
                     "psychometric_by_state_2AFC",
+                    "psychometric_by_state_2AFC",
+                    "psychometric_by_action_trace_2AFC",
                     "psychometric_by_action_trace_2AFC",
                 ],
                 [
-                    "autocorrelograms_2ADC_repetition",
-                    "autocorrelograms_2ADC_outcome",
-                    "autocorrelograms_2AFC_repetition",
-                    "autocorrelograms_2AFC_outcome",
+                    "single_session_2ADC",
+                    "single_session_2ADC",
+                    "single_session_2ADC",
+                    "single_session_2ADC",
+                    "single_session_2AFC",
+                    "single_session_2AFC",
+                    "single_session_2AFC",
+                    "single_session_2AFC",
                 ],
                 [
-                    "single_session_2ADC",
-                    "single_session_2ADC",
-                    "single_session_2AFC",
-                    "single_session_2AFC",
+                    "autocorrelograms_2ADC_repetition",
+                    "autocorrelograms_2ADC_repetition",
+                    "autocorrelograms_2ADC_outcome",
+                    "autocorrelograms_2ADC_outcome",
+                    "autocorrelograms_2AFC_repetition",
+                    "autocorrelograms_2AFC_repetition",
+                    "autocorrelograms_2AFC_outcome",
+                    "autocorrelograms_2AFC_outcome",
                 ],
             ],
             figsize = (6.26771653543307, 6.26771653543307),
             constrained_layout=True,
             gridspec_kw={
-                "width_ratios": [1, 1, 1, 1],
+                "width_ratios": [1, 1, 1, 1, 1, 1, 1, 1],
                 "height_ratios": [1, 1, 1, 1],
             },
         )
@@ -1216,11 +1232,6 @@ def _(mount_figure, plt):
     else:
         fig, axd = None, {}
     return axd, fig
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell(hide_code=True)
@@ -1609,7 +1620,7 @@ def _(
     )
     # add_subject_pair_lines(emission_weights_2ADC, emission_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=emission_orders["2AFC_delay"])
     add_paired_state_annotation(emission_weights_2ADC, emission_plot_dfs["2AFC_delay"], x="feature_label", y="weight", order=emission_orders["2AFC_delay"])
-    emission_weights_2ADC.axhline(0, color="0.5", linestyle="--",alpha = 0.7)
+    emission_weights_2ADC.axhline(0, color="0.5", linestyle="--")
     # emission_weights_2ADC.set_title(task_labels["2AFC_delay"])
     emission_weights_2ADC.set_xlabel("")
     emission_weights_2ADC.set_ylabel("Emission weight")
@@ -1675,7 +1686,7 @@ def _(
     )
     # add_subject_pair_lines(emission_weights_2AFC, emission_plot_dfs["2AFC"], x="feature_label", y="weight", order=emission_orders["2AFC"])
     add_paired_state_annotation(emission_weights_2AFC, emission_plot_dfs["2AFC"], x="feature_label", y="weight", order=emission_orders["2AFC"])
-    emission_weights_2AFC.axhline(0, color="0.5", linestyle="--",alpha = 0.7)
+    emission_weights_2AFC.axhline(0, color="0.5", linestyle="--")
     # emission_weights_2AFC.set_title(task_labels["2AFC"])
     emission_weights_2AFC.set_xlabel("")
     emission_weights_2AFC.set_ylabel("Emission weight")
@@ -1801,6 +1812,7 @@ def _(
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_xticklabels(["E->E", "E->D", "D->E", "D->D"])
     transition_weights_2ADC.set_ylabel("Trans. weight")
+    transition_weights_2ADC.tick_params(axis='x', labelrotation=45)
     # transition_weights_2ADC.set_ylim(-7,7)
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
@@ -1856,6 +1868,7 @@ def _(
     transition_weights_2AFC.set_xticklabels(["E->D", "D->E"])
     transition_weights_2AFC.set_ylabel("Transition weight")
     transition_weights_2AFC.set_title("Cum. Rew")
+    transition_weights_2AFC.tick_params(axis='x', labelrotation=45)
     if not mount_figure:
         transition_weights_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2AFC
@@ -3798,7 +3811,7 @@ def _(
             ymin=0,
             ymax=1,
             color=_color,
-            alpha=0.25,
+            alpha=0.5,
             linewidth=0,
         )
     # single_session_2ADC.plot("trial_x", "response_repeat_window_fraction", color="tab:brown", linewidth=1.5, label="Rep. Choices", data=session_repetition_data_2ADC, zorder=2, alpha = 0.5)
@@ -3925,7 +3938,7 @@ def _(
             ymin=0,
             ymax=1,
             color=_color,
-            alpha=0.25,
+            alpha=0.5,
             linewidth=0,
             zorder=0,
         )
@@ -4529,7 +4542,7 @@ def _(axd, fig, mount_figure, project_path):
         # axd["model_comparison_ll_2ADC"].set_ylabel(r"$\Delta$ LL")
         # axd["model_comparison_ll_2AFC"].set_ylabel(r"$\Delta$ LL")
         axd["autocorrelograms_2ADC_repetition"].set_ylabel("Autocorrelation")
-        axd["single_session_2ADC"].set_ylabel("$p$(state)")
+        axd["single_session_2ADC"].set_ylabel("$p$(engaged)")
         axd["single_session_2AFC"].set_yticklabels([])
         axd["single_session_2ADC"].set_xlabel("Trial")
         axd["single_session_2AFC"].set_xlabel("Trial")
@@ -4549,19 +4562,8 @@ def _(axd, fig, mount_figure, project_path):
         fig.savefig((project_path / "figures" / "panels3" / "figure3.pdf"))
         fig.savefig((project_path / "figures" / "panels3" / "figure3.png"))
         fig.savefig((project_path / "figures" / "panels3" / "figure3.svg"))
-        fig.align_ylabels()
+        # fig.align_ylabels()
     fig
-    return
-
-
-@app.cell
-def _(path_panels):
-    path_panels
-    return
-
-
-@app.cell
-def _():
     return
 
 

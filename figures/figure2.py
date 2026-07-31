@@ -305,21 +305,20 @@ def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
-                ["a", "a", "b", "b"],
-                ["single_sess_acc_2ADC", "single_sess_acc_2ADC", "single_sess_acc_2AFC", "single_sess_acc_2AFC"],
+                ["a", "a", "a", "boxplot_band_2ADC", "b", "b", "b", "boxplot_band_2AFC"],
+                ["single_sess_acc_2ADC", "single_sess_acc_2ADC", "single_sess_acc_2ADC", "boxplot_acc_band_2ADC", "single_sess_acc_2AFC", "single_sess_acc_2AFC", "single_sess_acc_2AFC", "boxplot_acc_band_2AFC"],
                 # ["_running_legend", "_running_legend", "_running_legend", "_running_legend"],
                 # ["hist_correct_2ADC", "hist_repeat_2ADC", "hist_correct_2AFC", "hist_repeat_2AFC"], 
-                ["boxplot_band_2ADC", "boxplot_acc_band_2ADC", "boxplot_band_2AFC", "boxplot_acc_band_2AFC"],
-                ["pc_action_2ADC", "pc_evi_2ADC", "pc_action_2AFC", "pc_evi_2AFC"],
+                ["pc_action_2ADC", "pc_action_2ADC", "pc_evi_2ADC", "pc_evi_2ADC", "pc_action_2AFC", "pc_action_2AFC", "pc_evi_2AFC", "pc_evi_2AFC"],
                 # ["a", "a", "b", "b"],
-                ["e", "f", "g", "h"],
-                ["i", "k", "j", "l"]
+                ["e", "e", "f", "f", "g", "g", "h", "h"],
+                ["i", "i", "k", "k", "j", "j", "l", "l"]
                 # ["i", "i", "j", "j"],
                 # ["k", "k", "l", "l"],
             ],
-            figsize=fig_size(0),
+            figsize=fig_size(1, 0.75),
             constrained_layout=True,
-            gridspec_kw={"height_ratios": [1, 1, 1, 1, 1, 1]},
+            gridspec_kw={"height_ratios": [1, 1, 1, 1, 1]},
         )
         # fig.set_constrained_layout_pads(
         #         w_pad=0.01,
@@ -2582,11 +2581,11 @@ def _(
         x="position",
         y="proportion",
         order=band_position_order,
-        color="tab:blue",
+        color="tab:brown",
         ax=fixed_band_position_2ADC,
         **boxplot_STYLE,
     )
-    fixed_band_position_2ADC.axhline(0.025, ls = '--', color = "0.5")
+    fixed_band_position_2ADC.axhline(0.025, ls = '--', color = "tab:blue")
 
     fixed_band_position_2ADC.set_xlabel("")
     fixed_band_position_2ADC.set_ylabel("Proportion of trials")
@@ -2634,11 +2633,11 @@ def _(
         x="position",
         y="proportion",
         order=band_position_order,
-        color="tab:blue",
+        color="k",
         ax=stationary_accuracy_band_position_2ADC,
         **boxplot_STYLE,
     )
-    stationary_accuracy_band_position_2ADC.axhline(0.025, ls="--", color="0.5")
+    stationary_accuracy_band_position_2ADC.axhline(0.025, ls="--", color="tab:blue")
     stationary_accuracy_band_position_2ADC.set_xlabel("")
     stationary_accuracy_band_position_2ADC.set_ylabel("Proportion of trials")
     stationary_accuracy_band_position_2ADC.set_ylim(0, 0.15)
@@ -2849,11 +2848,11 @@ def _(
         x="position",
         y="proportion",
         order=band_position_order,
-        color="tab:blue",
+        color="tab:brown",
         ax=fixed_band_position_2AFC,
         **boxplot_STYLE,
     )
-    fixed_band_position_2AFC.axhline(0.025, ls = '--', color = "0.5")
+    fixed_band_position_2AFC.axhline(0.025, ls = '--', color = "tab:blue")
     fixed_band_position_2AFC.set_xlabel("")
     fixed_band_position_2AFC.set_ylabel("Proportion of trials")
     fixed_band_position_2AFC.set_ylim(0, 0.5)
@@ -2899,11 +2898,11 @@ def _(
         x="position",
         y="proportion",
         order=band_position_order,
-        color="tab:blue",
+        color="k",
         ax=stationary_accuracy_band_position_2AFC,
         **boxplot_STYLE,
     )
-    stationary_accuracy_band_position_2AFC.axhline(0.025, ls="--", color="0.5")
+    stationary_accuracy_band_position_2AFC.axhline(0.025, ls="--", color="tab:blue")
     stationary_accuracy_band_position_2AFC.set_xlabel("")
     stationary_accuracy_band_position_2AFC.set_ylabel("Proportion of trials")
     stationary_accuracy_band_position_2AFC.set_ylim(0, 0.15)
@@ -4322,7 +4321,7 @@ def _(mo):
 
 
 @app.cell
-def _(axd, fig, format, mount_figure, project_path):
+def _(axd, fig, mount_figure, project_path):
     if mount_figure:
         for _name, _ax in axd.items():
             _ax.set_title("")
@@ -4376,7 +4375,13 @@ def _(axd, fig, format, mount_figure, project_path):
         axd["pc_evi_2AFC"].set_xlabel("Action trace")
 
         # Proportion of trials above and below the bands of the traces
-        axd["boxplot_band_2ADC"].set_ylabel("Fraction of trials")
+        # axd["boxplot_band_2ADC"].set_ylabel("Fraction of trials")
+        axd["boxplot_band_2ADC"].set_xticklabels(["↓", "↑"])
+        axd["boxplot_acc_band_2ADC"].set_xticklabels(["↓", "↑"])
+        axd["boxplot_band_2AFC"].set_xticklabels(["↓", "↑"])
+        axd["boxplot_acc_band_2AFC"].set_xticklabels(["↓", "↑"])
+        axd["boxplot_acc_band_2ADC"].set_xlabel("Trial fraction") 
+        axd["boxplot_acc_band_2AFC"].set_xlabel("Trial fraction")  
 
         axd["e"].set_ylabel("Weight")
         axd["e"].set_xlabel("Delay (s)")
@@ -4410,9 +4415,13 @@ def _(axd, fig, format, mount_figure, project_path):
         #     _ax.set_ylim(top=1e3)
         for _ax in [axd["i"], axd["j"], axd["k"], axd["l"]]:
             _ax.set_xlim(0, 20.5)
+    
+        fig.savefig((project_path / "figures" / "panels2" / "figure2.pdf"))
+        fig.savefig((project_path / "figures" / "panels2" / "figure2.png"))
+        fig.savefig((project_path / "figures" / "panels2" / "figure2.svg"))
 
-        fig.align_ylabels()
-        fig.savefig((project_path / "figures" / "panels2" / "figure2").with_suffix(f".{format}"))
+        # fig.align_ylabels()
+        # fig.tight_layout()
 
     fig
     return
