@@ -230,5 +230,24 @@ results/fits/**/*.npz
 !results/fits/**/drug_transitions/**
 !results/fits/**/drug_transitions2/**
 !results/fits/**/drug_emissions/**
+!results/fits/**/2adc_bias-stim-choice_lags_*/**
+!results/fits/**/2afc_bias-stim-choice_lags_*/**
+!results/fits/**/2adc_bias-stim-choice-lag-param_free/**
+!results/fits/**/2adc_bias-stimD0-choice-lag-paramE0/**
+!results/fits/**/2adc_bias-stimD0-choice-lag-param_free/**
+!results/fits/**/2adc_bias-stim_free-choice-lag-paramE0/**
+!results/fits/**/2afc_bias-stim-choice-lag-param_free/**
+!results/fits/**/2afc_bias-stimD0-choice-lag-paramE0/**
+!results/fits/**/2afc_bias-stimD0-choice-lag-param_free/**
+!results/fits/**/2afc_bias-stim_free-choice-lag-paramE0/**
+!results/fits/**/ashwood/**
+!results/fits/model_comparison/2ADC/*
+!results/fits/model_comparison/2AFC/*
+!results/fits/**/param_half_frozen/**
+!results/fits/**/base_param/**
+!results/fits/**/base_model/**
 
 data/raw/*.csv
+
+
+tmp/

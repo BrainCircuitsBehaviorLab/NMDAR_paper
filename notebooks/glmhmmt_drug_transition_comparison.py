@@ -69,7 +69,7 @@ def _():
         pick_existing_column,
     )
     from src.plots.common import plot_mean_over_data
-    from src.utils import fig_size
+    from src.plots.common import fig_size
 
     configure_paths(config_path=Path(__file__).resolve().parents[1] / "config.toml")
     paths = get_runtime_paths()

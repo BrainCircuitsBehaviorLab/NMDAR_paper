@@ -1634,6 +1634,184 @@ def compute_rb_by_x(
     return pd.DataFrame(results)
 
 
+def prepare_treatment_accuracy_repetition_curves(
+    plot_df,
+    *,
+    task_name: str,
+    treatment_order: Sequence[str] = ("Saline", "Drug"),
+) -> tuple[dict[str, pd.DataFrame], dict]:
+    """Summarize observed and model-predicted accuracy and repetition bias.
+
+    Values are first computed within animal. Repetition bias is additionally
+    balanced over the previous left/right response before animals are averaged,
+    matching :func:`compute_rb_by_x`. Model repetition is the expected
+    probability of repeating the observed previous response.
+    """
+    df = to_pandas_df(plot_df)
+    required = {
+        "subject",
+        "session",
+        "condition",
+        "response",
+        "correct_bool",
+        "p_model_correct",
+    }
+    if df.empty or not required.issubset(df.columns):
+        return {"accuracy": pd.DataFrame(), "repetition_bias": pd.DataFrame()}, {}
+
+    task_key = str(task_name).upper()
+    if task_key in {"2ADC", "2ADC_DRUG", "2AFC_DELAY", "2AFC_DELAY_DRUG"}:
+        x_source = pick_existing_column(df, ("delays", "delay"))
+        x_label = "Delay (s)"
+        invert_x = False
+    elif task_key in {"2AFC", "2AFC_DRUG"}:
+        x_source = pick_existing_column(df, ("ILD", "stimulus"))
+        x_label = "|ILD| (dB)"
+        invert_x = True
+    else:
+        raise ValueError(f"Unsupported binary task for treatment curves: {task_name!r}.")
+    if x_source is None:
+        return {"accuracy": pd.DataFrame(), "repetition_bias": pd.DataFrame()}, {}
+
+    p_right_col = pick_existing_column(df, ("p_model_right", "p_pred", "pR"))
+    if p_right_col is None:
+        return {"accuracy": pd.DataFrame(), "repetition_bias": pd.DataFrame()}, {}
+
+    work = df.copy()
+    condition = work["condition"].astype("string").str.strip().str.lower()
+    treatment_map = {str(value).lower(): str(value) for value in treatment_order}
+    work["treatment"] = condition.map(treatment_map)
+    work["x_value"] = pd.to_numeric(work[x_source], errors="coerce")
+    if task_key in {"2AFC", "2AFC_DRUG"}:
+        work["x_value"] = work["x_value"].abs()
+
+    response = pd.to_numeric(work["response"], errors="coerce")
+    finite_response = response.dropna()
+    if not finite_response.empty and finite_response.min() < 0:
+        work["_response_right"] = (response > 0).astype(float)
+    else:
+        work["_response_right"] = response.where(response.isin([0.0, 1.0]))
+    work["_data_accuracy"] = _binary_indicator_series(work["correct_bool"])
+    work["_model_accuracy"] = pd.to_numeric(work["p_model_correct"], errors="coerce")
+    work["_model_p_right"] = pd.to_numeric(work[p_right_col], errors="coerce")
+
+    sort_cols = ["subject", "session"]
+    trial_col = pick_existing_column(work, ("trial_idx", "trial"))
+    if trial_col is not None:
+        sort_cols.append(trial_col)
+    work = work.sort_values(sort_cols).copy()
+    work["_previous_response_right"] = work.groupby(
+        ["subject", "session", "treatment"], observed=True
+    )["_response_right"].shift(1)
+    work["_data_repeat"] = (
+        work["_response_right"] == work["_previous_response_right"]
+    ).astype(float)
+    work.loc[work["_previous_response_right"].isna(), "_data_repeat"] = np.nan
+    work["_model_repeat"] = np.where(
+        np.isclose(work["_previous_response_right"], 1.0),
+        work["_model_p_right"],
+        1.0 - work["_model_p_right"],
+    )
+
+    accuracy_subject = (
+        work.dropna(
+            subset=[
+                "subject",
+                "treatment",
+                "x_value",
+                "_data_accuracy",
+                "_model_accuracy",
+            ]
+        )
+        .groupby(["subject", "treatment", "x_value"], observed=True)
+        .agg(
+            data_value=("_data_accuracy", "mean"),
+            model_value=("_model_accuracy", "mean"),
+        )
+        .reset_index()
+    )
+
+    repetition_by_side = (
+        work.dropna(
+            subset=[
+                "subject",
+                "treatment",
+                "x_value",
+                "_previous_response_right",
+                "_data_repeat",
+                "_model_repeat",
+            ]
+        )
+        .groupby(
+            [
+                "subject",
+                "treatment",
+                "x_value",
+                "_previous_response_right",
+            ],
+            observed=True,
+        )
+        .agg(
+            data_value=("_data_repeat", "mean"),
+            model_value=("_model_repeat", "mean"),
+        )
+        .reset_index()
+    )
+    repetition_subject = (
+        repetition_by_side.groupby(
+            ["subject", "treatment", "x_value"], observed=True
+        )[["data_value", "model_value"]]
+        .mean()
+        .reset_index()
+    )
+
+    def _summarize(subject_df: pd.DataFrame) -> pd.DataFrame:
+        if subject_df.empty:
+            return pd.DataFrame()
+        summary = (
+            subject_df.groupby(["treatment", "x_value"], observed=True)
+            .agg(
+                data_mean=("data_value", "mean"),
+                data_std=("data_value", "std"),
+                data_count=("data_value", "count"),
+                model_mean=("model_value", "mean"),
+                model_std=("model_value", "std"),
+                model_count=("model_value", "count"),
+            )
+            .reset_index()
+        )
+        summary["data_sem"] = summary["data_std"].fillna(0.0) / np.sqrt(
+            summary["data_count"].clip(lower=1)
+        )
+        summary["model_sem"] = summary["model_std"].fillna(0.0) / np.sqrt(
+            summary["model_count"].clip(lower=1)
+        )
+        summary["treatment"] = pd.Categorical(
+            summary["treatment"], categories=list(treatment_order), ordered=True
+        )
+        return summary.sort_values(["treatment", "x_value"]).reset_index(drop=True)
+
+    summaries = {
+        "accuracy": _summarize(accuracy_subject),
+        "repetition_bias": _summarize(repetition_subject),
+    }
+    x_values = sorted(
+        {
+            float(value)
+            for summary in summaries.values()
+            for value in summary.get("x_value", pd.Series(dtype=float)).dropna()
+        }
+    )
+    meta = {
+        "xlabel": x_label,
+        "baseline": 0.5,
+        "invert_x": invert_x,
+        "x_values": x_values,
+        "p_right_col": p_right_col,
+    }
+    return summaries, meta
+
+
 def prepare_right_integration_maps(
     plot_df,
     *,
@@ -1756,6 +1934,303 @@ def attach_signed_delay_columns(df_pd: pd.DataFrame) -> pd.DataFrame:
 
     df["_signed_delay_cat"] = pd.Categorical(cat, categories=existing + extras, ordered=True)
     return df
+
+
+def label_condition_session_windows(
+    df: pl.DataFrame,
+    *,
+    subject_col: str,
+    session_col: str,
+    condition_col: str,
+    order_col: str | None = None,
+    first_session: int = 1,
+    late_sessions: Sequence[int] | None = (3, 4, 5),
+    late_from_session: int | None = None,
+    exposure_col: str = "condition_session_number",
+    window_col: str = "session_window",
+    first_label: str = "First",
+    late_label: str = "Late (3–5)",
+) -> pl.DataFrame:
+    """Label first and late sessions within each subject and condition.
+
+    Session numbers are assigned after sorting each subject-condition pair by
+    ``order_col`` (or ``session_col`` when no separate ordering column is
+    supplied). Rows outside the requested windows receive a null label.
+    """
+    if not isinstance(df, pl.DataFrame):
+        raise TypeError("label_condition_session_windows expects a Polars DataFrame.")
+
+    order_col = order_col or session_col
+    required = {subject_col, session_col, condition_col, order_col}
+    missing = sorted(required.difference(df.columns))
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}.")
+    if first_session < 1:
+        raise ValueError("first_session must be at least 1.")
+
+    if late_from_session is not None and late_sessions is not None:
+        raise ValueError("Specify either late_sessions or late_from_session, not both.")
+    if late_from_session is not None:
+        late_from_session = int(late_from_session)
+        if late_from_session < 1:
+            raise ValueError("late_from_session must be at least 1.")
+        is_late = pl.col(exposure_col) >= late_from_session
+    else:
+        late_session_numbers = sorted({int(value) for value in late_sessions or ()})
+        if not late_session_numbers or late_session_numbers[0] < 1:
+            raise ValueError("late_sessions must contain positive session numbers.")
+        is_late = pl.col(exposure_col).is_in(late_session_numbers)
+
+    session_keys = [subject_col, condition_col, session_col]
+    selected_cols = list(dict.fromkeys([*session_keys, order_col]))
+    session_table = (
+        df.select(selected_cols)
+        .unique()
+        .sort([subject_col, condition_col, order_col, session_col])
+        .with_columns(
+            pl.int_range(1, pl.len() + 1)
+            .over([subject_col, condition_col])
+            .alias(exposure_col)
+        )
+        .with_columns(
+            pl.when(pl.col(exposure_col) == first_session)
+            .then(pl.lit(first_label))
+            .when(is_late)
+            .then(pl.lit(late_label))
+            .otherwise(pl.lit(None, dtype=pl.String))
+            .alias(window_col)
+        )
+    )
+
+    return df.join(
+        session_table.select([*session_keys, exposure_col, window_col]),
+        on=session_keys,
+        how="left",
+        validate="m:1",
+    )
+
+
+def prepare_session_rolling_accuracy(
+    df_like,
+    *,
+    subject_col: str,
+    session_col: str,
+    trial_col: str,
+    accuracy_col: str,
+    condition_col: str,
+    window_col: str = "session_window",
+    rolling_window: int = 20,
+    progress_points: int = 101,
+) -> dict:
+    """Compute session-wise rolling accuracy and its across-subject summary.
+
+    Accuracy is smoothed within each session with a centered rolling window,
+    interpolated onto normalized session progress, averaged across sessions
+    within each subject, and then summarized across subjects. The returned
+    summary includes the mean, variance, standard deviation, SEM, and number of
+    contributing subjects. Whole-session accuracy and the temporal variance of
+    rolling accuracy follow the same hierarchy.
+    """
+    df = to_pandas_df(df_like)
+    required = {
+        subject_col,
+        session_col,
+        trial_col,
+        accuracy_col,
+        condition_col,
+        window_col,
+    }
+    missing = sorted(required.difference(df.columns))
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}.")
+
+    rolling_window = int(rolling_window)
+    progress_points = int(progress_points)
+    if rolling_window < 2:
+        raise ValueError("rolling_window must be at least 2.")
+    if progress_points < 2:
+        raise ValueError("progress_points must be at least 2.")
+
+    min_periods = max(2, int(np.ceil(rolling_window / 2)))
+    progress_grid = np.linspace(0.0, 100.0, progress_points)
+    session_rows = []
+    session_accuracy_rows = []
+    group_cols = [subject_col, condition_col, window_col, session_col]
+    selected = df[df[window_col].notna()].copy()
+
+    for group_key, session_df in selected.groupby(group_cols, observed=True, sort=False):
+        session_df = session_df.copy()
+        session_df["_trial_numeric"] = pd.to_numeric(session_df[trial_col], errors="coerce")
+        session_df["_accuracy"] = _binary_indicator_series(session_df[accuracy_col])
+        session_df = session_df.sort_values("_trial_numeric", kind="mergesort")
+        if session_df["_accuracy"].notna().sum() < min_periods:
+            continue
+
+        rolling_accuracy = session_df["_accuracy"].rolling(
+            rolling_window,
+            min_periods=min_periods,
+            center=True,
+        ).mean()
+        session_progress = np.linspace(0.0, 100.0, len(session_df))
+        valid = rolling_accuracy.notna().to_numpy()
+        if valid.sum() < 2:
+            continue
+
+        interpolated = np.interp(
+            progress_grid,
+            session_progress[valid],
+            rolling_accuracy.to_numpy(dtype=float)[valid],
+            left=np.nan,
+            right=np.nan,
+        )
+        subject, condition, window, session = group_key
+        session_accuracy_rows.append(
+            {
+                "subject": subject,
+                "condition": condition,
+                "session_window": window,
+                "session": session,
+                "session_mean_accuracy": float(session_df["_accuracy"].mean()),
+                "session_rolling_variance": float(np.nanvar(interpolated, ddof=1)),
+            }
+        )
+        session_rows.append(
+            pd.DataFrame(
+                {
+                    "subject": subject,
+                    "condition": condition,
+                    "session_window": window,
+                    "session": session,
+                    "session_progress": progress_grid,
+                    "rolling_accuracy": interpolated,
+                }
+            )
+        )
+
+    session_traces = (
+        pd.concat(session_rows, ignore_index=True)
+        if session_rows
+        else pd.DataFrame(
+            columns=[
+                "subject",
+                "condition",
+                "session_window",
+                "session",
+                "session_progress",
+                "rolling_accuracy",
+            ]
+        )
+    )
+    session_accuracy = pd.DataFrame(
+        session_accuracy_rows,
+        columns=[
+            "subject",
+            "condition",
+            "session_window",
+            "session",
+            "session_mean_accuracy",
+            "session_rolling_variance",
+        ],
+    )
+    subject_traces = (
+        session_traces.groupby(
+            ["subject", "condition", "session_window", "session_progress"],
+            observed=True,
+        )["rolling_accuracy"]
+        .mean()
+        .reset_index()
+        if not session_traces.empty
+        else pd.DataFrame(
+            columns=[
+                "subject",
+                "condition",
+                "session_window",
+                "session_progress",
+                "rolling_accuracy",
+            ]
+        )
+    )
+    subject_session_accuracy = (
+        session_accuracy.groupby(
+            ["subject", "condition", "session_window"],
+            observed=True,
+        ).agg(
+            whole_session_accuracy=("session_mean_accuracy", "mean"),
+            whole_session_variance=("session_rolling_variance", "mean"),
+        )
+        .reset_index()
+        if not session_accuracy.empty
+        else pd.DataFrame(
+            columns=[
+                "subject",
+                "condition",
+                "session_window",
+                "whole_session_accuracy",
+                "whole_session_variance",
+            ]
+        )
+    )
+    if subject_traces.empty:
+        summary = pd.DataFrame(
+            columns=[
+                "condition",
+                "session_window",
+                "session_progress",
+                "mean_accuracy",
+                "variance_accuracy",
+                "std_accuracy",
+                "sem_accuracy",
+                "n_subjects",
+            ]
+        )
+    else:
+        summary = (
+            subject_traces.groupby(
+                ["condition", "session_window", "session_progress"],
+                observed=True,
+            )["rolling_accuracy"]
+            .agg(
+                mean_accuracy="mean",
+                variance_accuracy="var",
+                std_accuracy="std",
+                n_subjects="count",
+            )
+            .reset_index()
+        )
+        summary["sem_accuracy"] = summary["std_accuracy"] / np.sqrt(
+            summary["n_subjects"].clip(lower=1)
+        )
+
+    included_sessions = (
+        session_accuracy.groupby(["condition", "session_window"], observed=True)
+        .agg(
+            included_sessions=("session", "size"),
+            included_subjects=("subject", "nunique"),
+        )
+        .reset_index()
+        if not session_accuracy.empty
+        else pd.DataFrame(
+            columns=[
+                "condition",
+                "session_window",
+                "included_sessions",
+                "included_subjects",
+            ]
+        )
+    )
+    return {
+        "session_traces": session_traces,
+        "subject_traces": subject_traces,
+        "subject_session_accuracy": subject_session_accuracy,
+        "summary": summary,
+        "session_counts": included_sessions,
+        "meta": {
+            "rolling_window": rolling_window,
+            "rolling_min_periods": min_periods,
+            "progress_points": progress_points,
+            "aggregation_unit": "subject_after_session_mean",
+        },
+    }
 
 
 def build_bin_centers(

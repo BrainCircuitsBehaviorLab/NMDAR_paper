@@ -1,0 +1,53 @@
+{
+    "task": "2AFC",
+    "tau": 50,
+    "subjects": [
+        "325",
+        "327",
+        "329",
+        "330",
+        "332",
+        "333",
+        "335",
+        "337",
+        "419",
+        "420",
+        "422",
+        "561",
+        "616",
+        "617",
+        "619",
+        "623",
+        "807",
+        "820",
+        "821",
+        "873",
+        "875",
+        "907",
+        "909",
+        "911"
+    ],
+    "emission_cols": [
+        "stim_param",
+        "choice_lag_param",
+        "bias"
+    ],
+    "frozen_emissions": {
+        "1": {
+            "stim_param": 0.0
+        }
+    },
+    "baseline_class_idx": 0,
+    "K_list": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+    ],
+    "model_id": "param_half_frozen",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5,
+    "condition_filter": "all"
+}

@@ -547,7 +547,7 @@ def _():
         showfliers=False,
         showcaps=False,
     )
-    return (BOXPLOT_STYLE,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -576,8 +576,8 @@ def _(weights_df):
     features = weights_df["feature"].unique()
     preferred_feature_order = []
     for _feature_group in (
-        ["bias_param", "biasparam", "bias"],
         ["stim_param", "stim", "stim_x_delay_param"],
+        ["bias_param", "biasparam", "bias"],
         ["at_choice_param", "choice_lag_param", "at_choice", "prev_choice"],
     ):
         preferred_feature_order.extend(
@@ -587,6 +587,8 @@ def _(weights_df):
 
     state_order = ["Engaged", "Disengaged"]
     state_palette = {"Engaged": "tab:green", "Disengaged": "tab:gray"}
+    state_order = ["Engaged", "Biased L", "Biased R"]
+    state_palette = {"Engaged": "tab:orange", "Biased L": "tab:green",  "Biased R": "tab:blue"}
     return feature_labeler, plot_feature_order, state_order, state_palette
 
 
@@ -609,11 +611,11 @@ def _():
 
 @app.cell
 def _(
-    BOXPLOT_STYLE,
     feature_labeler,
     fig_size,
     mo,
     panel,
+    pl,
     plot_feature_order,
     plt,
     selected,
@@ -623,18 +625,41 @@ def _(
     weights_df,
 ):
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-    emissions_fig, emissions_ax = plt.subplots(figsize=fig_size(1, 2))
+    emissions_fig, emissions_ax = plt.subplots(figsize=fig_size(2, 1))
 
-    sns.boxplot(
-        data=weights_df,
+    # sns.boxplot(
+    #     data=weights_df,
+    #     ax=emissions_ax,
+    #     x="feature",
+    #     y="weight",
+    #     hue="state_label",
+    #     order=plot_feature_order,
+    #     hue_order=state_order,
+    #     palette=state_palette,
+    #     **BOXPLOT_STYLE,
+    # )
+    weights_df_ordered = weights_df.with_columns(
+        pl.col("feature").cast(pl.Enum(plot_feature_order))
+    )
+    sns.lineplot(
+        data=weights_df_ordered,
         ax=emissions_ax,
         x="feature",
         y="weight",
         hue="state_label",
-        order=plot_feature_order,
         hue_order=state_order,
         palette=state_palette,
-        **BOXPLOT_STYLE,
+        estimator="mean",
+        errorbar="se",
+        err_style="bars",
+        err_kws={
+            "capsize": 0,
+            "elinewidth": 1.5,
+        },
+        marker="o",
+        markersize=10,
+        markeredgecolor="none",
+        alpha=0.7,
     )
     emissions_ax.axhline(0, linestyle="--", color="0.5", zorder=0)
 

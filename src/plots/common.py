@@ -1391,8 +1391,9 @@ def plot_mean_over_data(
             ax.invert_xaxis()
             ax._x_inverted_marker = True
 
-    # Add legend if labels are present
-    if label is not None or ax.get_lines():
+    # Add a legend only when at least one artist has an explicit label.
+    _legend_handles, _legend_labels = ax.get_legend_handles_labels()
+    if _legend_handles and _legend_labels:
         ax.legend(frameon=False)
 
     return fig

@@ -531,7 +531,7 @@ def _(TASK, get_adapter, pl):
 
 
 @app.cell
-def _(all_subjects, mo):
+def _(TASK, TASK_CONFIGS, all_subjects, mo):
     ui_subjects = mo.ui.multiselect(
         options=all_subjects,
         value=all_subjects,
@@ -545,7 +545,9 @@ def _(all_subjects, mo):
         label="Fit score",
     )
     ui_run_freeze = mo.ui.run_button(label="Fit freeze battery")
-    ui_run_lags = mo.ui.run_button(label="Fit lag curve")
+    ui_run_lags = mo.ui.run_button(
+        label=f'Fit {TASK_CONFIGS[TASK]["label"]} lag curve (1–10 regressors)'
+    )
     mo.vstack(
         [
             mo.hstack([ui_subjects]),
@@ -1198,6 +1200,8 @@ def _(
 @app.cell
 def _(
     LAG_MODEL_SPECS,
+    TASK,
+    TASK_CONFIGS,
     fit_suite,
     mo,
     ui_cv_mode,
@@ -1214,9 +1218,12 @@ def _(
             num_iters=int(ui_num_iters.value),
             n_restarts=int(ui_n_restarts.value),
         )
-        _output = mo.md("Lag curve fitted.")
+        _output = mo.md(f'{TASK_CONFIGS[TASK]["label"]} lag curve fitted.')
     else:
-        _output = mo.md("Run the lag curve when you want to create or refresh those fits.")
+        _output = mo.md(
+            f'Run the {TASK_CONFIGS[TASK]["label"]} lag curve when you want '
+            "to create or refresh the 1–10 regressor fits."
+        )
     _output
     return
 

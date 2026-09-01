@@ -332,7 +332,6 @@
 
     % =====================================================
     % INTERMEDIATE ARROWS
-    % S.E. and A now occupy the schematic column position
     % =====================================================
 
     % Stimulus arrow
@@ -351,12 +350,13 @@
     --
     (\xSmallArrowEnd,\yHist);
 
-    % Regressor names at the schematic column
+    % Regressor names after the arrows
     \node[
-      font=\Large
+      font=\Large,
+      align=center
     ]
     at (\xRegC,\yStim)
-    {S.\ E.};
+    {\shortstack{$Stim$\\$Evidence$}};
 
     \node[
       font=\Large
@@ -370,7 +370,7 @@
 
     % -----------------------------------------------------
     % STIMULUS EVIDENCE SCHEMATIC
-    % No outer box
+    % First quadrant only
     % y label = S.E.
     % x label = DV
     % -----------------------------------------------------
@@ -378,64 +378,56 @@
     \def\xStimScheme{8.95}
     \def\yStimScheme{2.55}
 
-    % axes only
+    % First-quadrant axes:
+    % the origin is placed at the lower-left corner
     \draw[
       black,
-      line width=0.7pt
+      line width=0.7pt,
+      ->
     ]
-    (\xStimScheme-0.52,\yStimScheme)
+    (\xStimScheme-0.52,\yStimScheme-0.42)
     --
-    (\xStimScheme+0.52,\yStimScheme);
+    (\xStimScheme+0.52,\yStimScheme-0.42);
 
     \draw[
       black,
-      line width=0.7pt
+      line width=0.7pt,
+      ->
     ]
-    (\xStimScheme,\yStimScheme-0.42)
+    (\xStimScheme-0.52,\yStimScheme-0.42)
     --
-    (\xStimScheme,\yStimScheme+0.42);
+    (\xStimScheme-0.52,\yStimScheme+0.42);
 
-    % positive points
+    % Positive points only
     \foreach \dx/\dy in {
-      0.08/0.07,
-      0.18/0.17,
-      0.31/0.27,
-      0.45/0.35
+      0.14/0.09,
+      0.33/0.20,
+      0.57/0.36,
+      0.82/0.58
     }{
       \fill[
         red!60!black
       ]
-      (\xStimScheme+\dx,\yStimScheme+\dy)
+      (
+        {\xStimScheme-0.52+\dx},
+        {\yStimScheme-0.42+\dy}
+      )
       circle (1.4pt);
     }
 
-    % negative points
-    \foreach \dx/\dy in {
-      0.08/0.07,
-      0.20/0.17,
-      0.33/0.27,
-      0.47/0.35
-    }{
-      \fill[
-        red!35!gray
-      ]
-      (\xStimScheme-\dx,\yStimScheme-\dy)
-      circle (1.4pt);
-    }
-
-    % S.E. / DV labels
+    % S.E. label remains unchanged in this diagram
     \node[
       font=\scriptsize\bfseries,
       anchor=south east
     ]
-    at (\xStimScheme-0.06,\yStimScheme+0.43)
+    at (\xStimScheme-0.56,\yStimScheme+0.40)
     {S.E.};
 
     \node[
       font=\scriptsize\bfseries,
-      anchor=north west
+      anchor=north
     ]
-    at (\xStimScheme+0.08,\yStimScheme-0.06)
+    at (\xStimScheme,\yStimScheme-0.49)
     {DV};
 
     % -----------------------------------------------------
