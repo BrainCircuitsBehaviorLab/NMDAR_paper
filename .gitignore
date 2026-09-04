@@ -229,6 +229,7 @@ results/fits/**/*.npz
 !results/fits/**/param half-pure/**
 !results/fits/**/drug_transitions/**
 !results/fits/**/drug_transitions2/**
+!results/fits/**/drug_transitions2_nocv/**
 !results/fits/**/drug_emissions/**
 !results/fits/**/2adc_bias-stim-choice_lags_*/**
 !results/fits/**/2afc_bias-stim-choice_lags_*/**
