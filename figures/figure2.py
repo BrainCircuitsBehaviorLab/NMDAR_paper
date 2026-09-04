@@ -312,7 +312,7 @@ def _(fig_size, mount_figure, plt):
                 ["pc_action_2ADC", "pc_action_2ADC", "pc_evi_2ADC", "pc_evi_2ADC", "pc_action_2AFC", "pc_action_2AFC", "pc_evi_2AFC", "pc_evi_2AFC"],
                 # ["a", "a", "b", "b"],
                 ["e", "e", "f", "f", "g", "g", "h", "h"],
-                ["i", "i", "k", "k", "j", "j", "l", "l"]
+                ["k", "k", "i", "i", "l", "l", "j", "j",]
                 # ["i", "i", "j", "j"],
                 # ["k", "k", "l", "l"],
             ],
@@ -4329,7 +4329,7 @@ def _(axd, fig, mount_figure, project_path):
             if not _name.startswith("_model_comparison_parent"):
                 _ax.set_ylabel("")
             _legend = _ax.get_legend()
-            if _legend is not None and not _ax in [ axd["i"], axd["pc_action_2ADC"]]:
+            if _legend is not None and not _ax in [axd["pc_action_2ADC"]]:
                 _legend.remove()
 
         # Running frations
@@ -4337,7 +4337,7 @@ def _(axd, fig, mount_figure, project_path):
         axd["a"].set_title("2ADC")
         axd["a"].set_xticklabels([])
         axd["a"].set_ylabel("Repeat fraction")
-        axd["a"].legend(*axd["a"].get_legend_handles_labels(), handlelength=1, ncol=2, frameon=False, loc="lower right")
+        axd["a"].legend(*axd["a"].get_legend_handles_labels(), handlelength=1, ncol=2, columnspacing=0.5, frameon=False, loc="lower right")
 
         axd["b"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["b"].set_title("2AFC")
@@ -4355,7 +4355,7 @@ def _(axd, fig, mount_figure, project_path):
         # Psychometric curves
         axd["pc_action_2ADC"].set_xticks([0, 7], ["-0.1", "0.1"])
         axd["pc_action_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-        axd["pc_action_2ADC"].set_ylabel("p(right)")
+        axd["pc_action_2ADC"].set_ylabel("$p$(right)")
         axd["pc_action_2ADC"].set_xlabel("Stim. evidence")
         axd["pc_action_2ADC"].legend(
             *axd["pc_action_2ADC"].get_legend_handles_labels()[:3], handlelength=0.5, ncol=1, frameon=False, loc="upper left", bbox_to_anchor=(-0.05, 1.1),
@@ -4395,18 +4395,20 @@ def _(axd, fig, mount_figure, project_path):
 
         axd["h"].set_title("Prev. Choice")
         axd["h"].set_xlabel("Trial lag")
-
-        axd["i"].set_ylabel("Autocorrelation")
+    
+        axd["k"].set_ylabel("Autocorrelation")
         axd["i"].set_xlabel("Trial lag")
         axd["i"].set_title("Outcome")
-        axd["i"].legend(
-            *axd["i"].get_legend_handles_labels(), handlelength=0.5, ncol=2, frameon=False, loc="lower left", bbox_to_anchor=(0, -0.05), columnspacing=0.5, handletextpad=0.5)
+        # axd["k"].legend(
+        #     *axd["k"].get_legend_handles_labels(), handlelength=0.5, ncol=2, frameon=False, loc="upper right", bbox_to_anchor=(0, -0.05), columnspacing=0.5, handletextpad=0.5)
+
+        axd["k"].legend(*axd["k"].get_legend_handles_labels(), frameon=False)
 
         axd["j"].set_title("Outcome")
         axd["j"].set_xlabel("Trial lag")
 
-        axd["k"].set_xlabel("Trial lag")
         axd["k"].set_title("Repetition")
+        axd["k"].set_xlabel("Trial lag")
 
         axd["l"].set_title("Repetition")
         axd["l"].set_xlabel("Trial lag")
@@ -4415,12 +4417,13 @@ def _(axd, fig, mount_figure, project_path):
         #     _ax.set_ylim(top=1e3)
         for _ax in [axd["i"], axd["j"], axd["k"], axd["l"]]:
             _ax.set_xlim(0, 20.5)
-    
+
         fig.savefig((project_path / "figures" / "panels2" / "figure2.pdf"))
         fig.savefig((project_path / "figures" / "panels2" / "figure2.png"))
         fig.savefig((project_path / "figures" / "panels2" / "figure2.svg"))
 
-        # fig.align_ylabels()
+        fig.align_xlabels()
+        fig.align_ylabels()
         # fig.tight_layout()
 
     fig

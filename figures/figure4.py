@@ -33,6 +33,8 @@ def _():
     import polars as pl
     import seaborn as sns
     from scipy.stats import ttest_1samp
+    import statsmodels.formula.api as smf
+    import warnings
 
     from glmhmmt.notebook_support.analysis_common import (
         build_trial_and_weights_df,
@@ -104,8 +106,10 @@ def _():
         process_mcdr,
         process_two_adc,
         process_two_afc,
+        smf,
         sns,
         ttest_1samp,
+        warnings,
     )
 
 
@@ -591,6 +595,7 @@ def _(
     load_fit_arrays,
     model_configs,
     paths,
+    pl,
     prepare_predictions_df,
     task_names,
 ):
@@ -654,6 +659,68 @@ def _(
         model_load_report.append(f"{_task_name}: loaded {len(_selected)} subjects from glmhmmt/{_model_id}")
 
     active_task_names = tuple(views)
+
+    # Sessions excluded from 2AFC plotting (post model-alignment, so unaffected
+    # subjects/sessions keep their full trial counts).
+    EXCLUDED_2AFC_SESSIONS = []
+    # EXCLUDED_2AFC_SESSIONS = [
+    #     "014_stage_training_v6_20250807-125619",
+    #     "014_stage_training_v6_20250808-125208",
+    #     "014_stage_training_v6_20250811-153532",
+    #     "014_stage_training_v6_20250812-155158",
+    #     "014_stage_training_v6_20250825-154658",
+    #     "014_stage_training_v6_20250826-152243",
+    #     "014_stage_training_v6_20250901-162853",
+    #     "014_stage_training_v6_20250902-161341",
+    #     "018_stage_training_v6_20250825-134808",
+    #     "018_stage_training_v6_20250826-124313",
+    #     "018_stage_training_v6_20250828-131642",
+    #     "018_stage_training_v6_20250829-150237",
+    #     "018_stage_training_v6_20250901-132021",
+    #     "018_stage_training_v6_20250902-142629",
+    #     "019_stage_training_v6_20250821-131115",
+    #     "019_stage_training_v6_20250822-130647",
+    #     "019_stage_training_v6_20250825-134843",
+    #     "019_stage_training_v6_20250826-124419",
+    #     "019_stage_training_v6_20250828-131740",
+    #     "019_stage_training_v6_20250829-150337",
+    #     "019_stage_training_v6_20250901-132211",
+    #     "019_stage_training_v6_20250902-142734",
+    #     "022_stage_training_v6_20250901-103734",
+    #     "022_stage_training_v6_20250902-113857",
+    #     "023_stage_training_v6_20250825-111959",
+    #     "023_stage_training_v6_20250826-104647",
+    #     "023_stage_training_v6_20250901-103937",
+    #     "023_stage_training_v6_20250902-114127",
+    #     "024_stage_training_v6_20250825-111813",
+    #     "024_stage_training_v6_20250826-104449",
+    #     "024_stage_training_v6_20250828-110015",
+    #     "024_stage_training_v6_20250829-113729",
+    #     "024_stage_training_v6_20250901-103848",
+    #     "024_stage_training_v6_20250902-114012",
+    #     "025_stage_training_v6_20250901-104055",
+    #     "025_stage_training_v6_20250902-114251",
+
+    #     '014_stage_training_v6_20250715-105103',
+    #     '014_stage_training_v6_20250716-115311',
+    #     '014_stage_training_v6_20250821-155044',
+    #     '014_stage_training_v6_20250822-160103',
+    #     '014_stage_training_v6_20250828-154415',
+    #     '014_stage_training_v6_20250829-171601',
+    
+    #     '018_stage_training_v6_20250813-132232',
+    #     '018_stage_training_v6_20250814-133427',
+    #     '018_stage_training_v6_20250821-130830',
+    #     '018_stage_training_v6_20250822-130529'
+    # ]
+
+    if "2AFC_DRUG" in trial_dfs:
+        trial_dfs["2AFC_DRUG"] = trial_dfs["2AFC_DRUG"].filter(
+            ~pl.col("session").is_in(EXCLUDED_2AFC_SESSIONS)
+        )
+        plot_dfs["2AFC_DRUG"] = plot_dfs["2AFC_DRUG"].filter(
+            ~pl.col("session").is_in(EXCLUDED_2AFC_SESSIONS)
+        )
     return (
         active_task_names,
         arrays_by_task,
@@ -2485,6 +2552,148 @@ def _(mo):
 
 
 @app.cell
+def dwell_lmm_2ADC(
+    adapters,
+    build_trial_and_weights_df,
+    dfs,
+    glmhmmt_state_dwell_df,
+    np,
+    prepare_predictions_df,
+    smf,
+    views,
+    warnings,
+):
+    # Linear mixed model on individual dwell bouts, all sessions, all animals
+    # (no session exclusions) for the 2ADC drug/saline cohort, run separately
+    # for the Engaged and Disengaged states, plus a within-animal
+    # session-label permutation test (same approach as the 2AFC cell below).
+    # log(dwell_trials) ~ treatment, with mouse as a random intercept and a
+    # random slope on treatment. Session is ignored as a grouping factor since
+    # there are too few dwell bouts per session to estimate it separately.
+    _adapter_2ADC = adapters["2ADC_DRUG"]
+    _trial_df_2ADC_all, _ = build_trial_and_weights_df(
+        dfs["2ADC_DRUG"],
+        views=views["2ADC_DRUG"],
+        adapter=_adapter_2ADC,
+        min_session_length=2,
+    )
+    _plot_df_2ADC_all = prepare_predictions_df("2ADC_DRUG", _trial_df_2ADC_all)
+    dwell_df_2ADC_all = glmhmmt_state_dwell_df(_plot_df_2ADC_all)
+    dwell_df_2ADC_all["subject"] = dwell_df_2ADC_all["subject"].astype(str)
+    dwell_df_2ADC_all["session"] = dwell_df_2ADC_all["session"].astype(str)
+
+    _trials_pd_2ADC = _plot_df_2ADC_all.to_pandas().copy()
+    _trials_pd_2ADC["subject"] = _trials_pd_2ADC["subject"].astype(str)
+    _trials_pd_2ADC["session"] = _trials_pd_2ADC["session"].astype(str)
+    _condition_2ADC = _trials_pd_2ADC["condition"].astype("string").str.lower()
+    _trials_pd_2ADC["treatment"] = _condition_2ADC.map({"saline": "Saline", "drug": "Drug"})
+    _session_treatments_2ADC = (
+        _trials_pd_2ADC.dropna(subset=["subject", "session", "treatment"])
+        [["subject", "session", "treatment"]]
+        .drop_duplicates()
+    )
+
+    dwell_lmm_df_2ADC = dwell_df_2ADC_all.merge(
+        _session_treatments_2ADC, on=["subject", "session"], how="inner"
+    )
+    dwell_lmm_df_2ADC["log_dwell"] = np.log(dwell_lmm_df_2ADC["dwell_trials"])
+    dwell_lmm_df_2ADC["treatment_drug"] = (dwell_lmm_df_2ADC["treatment"] == "Drug").astype(float)
+
+    N_SHUF_2ADC = 1000
+    _perm_rng_2ADC = np.random.default_rng(0)
+
+    dwell_lmm_results_2ADC = {}
+    dwell_lmm_perm_2ADC = {}
+
+    for _state_label in ["Engaged", "Disengaged"]:
+        _state_df = dwell_lmm_df_2ADC[dwell_lmm_df_2ADC["state_label"] == _state_label].copy()
+        _model = smf.mixedlm(
+            "log_dwell ~ treatment_drug",
+            data=_state_df,
+            groups=_state_df["subject"],
+            re_formula="~1 + treatment_drug",
+        )
+        _result = _model.fit(reml=True)
+        dwell_lmm_results_2ADC[_state_label] = _result
+        print(f"=== {_state_label} ===")
+        print(_result.summary())
+        print(f"n bouts = {len(_state_df)}, n mice = {_state_df['subject'].nunique()}")
+        _observed_beta = _result.params["treatment_drug"]
+        print(f"Observed treatment_drug beta = {_observed_beta:.4f}")
+        print(f"Treatment (Drug vs Saline) LMM Wald p-value: {_result.pvalues['treatment_drug']:.4f}")
+
+        # Permutation test: shuffle the drug/saline session labels within each
+        # animal (each animal keeps its own number of drug/saline sessions),
+        # refit the same LMM, and build a null distribution of treatment_drug beta.
+        _session_info = (
+            _state_df[["subject", "session", "treatment_drug"]]
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
+        _session_key_to_idx = {
+            (row.subject, row.session): idx
+            for idx, row in enumerate(_session_info.itertuples())
+        }
+        _bout_session_idx = np.array([
+            _session_key_to_idx[(subject, session)]
+            for subject, session in zip(_state_df["subject"], _state_df["session"])
+        ])
+        _session_subject = _session_info["subject"].to_numpy()
+        _session_treatment = _session_info["treatment_drug"].to_numpy()
+        _subject_positions = {}
+        for _idx, _subject in enumerate(_session_subject):
+            _subject_positions.setdefault(_subject, []).append(_idx)
+        _subject_positions = {
+            _subject: np.array(_positions)
+            for _subject, _positions in _subject_positions.items()
+        }
+
+        _null_betas = np.full(N_SHUF_2ADC, np.nan)
+        _n_failed = 0
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for _shuf_idx in range(N_SHUF_2ADC):
+                _shuffled_treatment = _session_treatment.copy()
+                for _subject, _positions in _subject_positions.items():
+                    _shuffled_treatment[_positions] = _perm_rng_2ADC.permutation(
+                        _session_treatment[_positions]
+                    )
+                _state_df["treatment_drug_shuf"] = _shuffled_treatment[_bout_session_idx]
+                try:
+                    _shuf_model = smf.mixedlm(
+                        "log_dwell ~ treatment_drug_shuf",
+                        data=_state_df,
+                        groups=_state_df["subject"],
+                        re_formula="~1 + treatment_drug_shuf",
+                    )
+                    _shuf_result = _shuf_model.fit(reml=True)
+                    _null_betas[_shuf_idx] = _shuf_result.params["treatment_drug_shuf"]
+                except Exception:
+                    _n_failed += 1
+
+        _valid_null_betas = _null_betas[~np.isnan(_null_betas)]
+        _lo, _hi = np.percentile(_valid_null_betas, [2.5, 97.5])
+        _null_center = np.mean(_valid_null_betas)
+        _perm_p = (
+            np.sum(np.abs(_valid_null_betas - _null_center) >= abs(_observed_beta - _null_center)) + 1
+        ) / (len(_valid_null_betas) + 1)
+        dwell_lmm_perm_2ADC[_state_label] = {
+            "null_betas": _valid_null_betas,
+            "lo_2p5": _lo,
+            "hi_97p5": _hi,
+            "perm_p": _perm_p,
+            "n_failed": _n_failed,
+        }
+        print(f"Permutation null (N={len(_valid_null_betas)}/{N_SHUF_2ADC} valid fits, {_n_failed} failed to fit):")
+        print(f"  Null beta 95% interval (2.5% / 97.5% percentiles): [{_lo:.4f}, {_hi:.4f}]")
+        _outside = _observed_beta < _lo or _observed_beta > _hi
+        print(f"  Observed beta ({_observed_beta:.4f}) is {'OUTSIDE' if _outside else 'inside'} the null 95% interval")
+        print(f"  Permutation p-value: {_perm_p:.4f}   (compare to LMM Wald p-value: {_result.pvalues['treatment_drug']:.4f})")
+        print()
+    return (dwell_lmm_perm_2ADC,)
+
+
+@app.cell
 def _(
     BOXPLOT_STYLE,
     add_paired_state_annotation,
@@ -2496,7 +2705,6 @@ def _(
     path_panels,
     plt,
     sns,
-    task_labels,
     treatment_dwell_dfs,
     treatment_order,
     treatment_palette,
@@ -2536,8 +2744,8 @@ def _(
         hue_order=treatment_order,
         # show_pvalue_if_ns=True
     )
-    dwell_time_2ADC.set_title(task_labels["2ADC_DRUG"])
-    dwell_time_2ADC.set_xlabel("")
+    # dwell_time_2ADC.set_title(task_labels["2ADC_DRUG"])
+    dwell_time_2ADC.set_xlabel("State")
     dwell_time_2ADC.set_ylabel("Dwell time (trials)")
     dwell_time_2ADC.set_xticklabels(["Eng.", "Dis."])
     if not mount_figure:
@@ -2545,7 +2753,7 @@ def _(
             (path_panels / "2ADC_drug_dwell_time").with_suffix(f".{format}")
         )
     dwell_time_2ADC
-    return
+    return (dwell_time_2ADC,)
 
 
 @app.cell(hide_code=True)
@@ -2554,6 +2762,147 @@ def _(mo):
     ### 2AFC
     """)
     return
+
+
+@app.cell
+def dwell_lmm_2AFC(
+    adapters,
+    build_trial_and_weights_df,
+    dfs,
+    glmhmmt_state_dwell_df,
+    np,
+    prepare_predictions_df,
+    smf,
+    views,
+    warnings,
+):
+    # Linear mixed model on individual dwell bouts, all sessions, all animals
+    # (no session exclusions) for the 2AFC drug/saline cohort, run separately
+    # for the Engaged and Disengaged states.
+    # log(dwell_trials) ~ treatment, with mouse as a random intercept and a
+    # random slope on treatment. Session is ignored as a grouping factor since
+    # there are too few dwell bouts per session to estimate it separately.
+    _adapter_2AFC = adapters["2AFC_DRUG"]
+    _trial_df_2AFC_all, _ = build_trial_and_weights_df(
+        dfs["2AFC_DRUG"],
+        views=views["2AFC_DRUG"],
+        adapter=_adapter_2AFC,
+        min_session_length=2,
+    )
+    _plot_df_2AFC_all = prepare_predictions_df("2AFC_DRUG", _trial_df_2AFC_all)
+    dwell_df_2AFC_all = glmhmmt_state_dwell_df(_plot_df_2AFC_all)
+    dwell_df_2AFC_all["subject"] = dwell_df_2AFC_all["subject"].astype(str)
+    dwell_df_2AFC_all["session"] = dwell_df_2AFC_all["session"].astype(str)
+
+    _trials_pd = _plot_df_2AFC_all.to_pandas().copy()
+    _trials_pd["subject"] = _trials_pd["subject"].astype(str)
+    _trials_pd["session"] = _trials_pd["session"].astype(str)
+    _condition = _trials_pd["condition"].astype("string").str.lower()
+    _trials_pd["treatment"] = _condition.map({"saline": "Saline", "drug": "Drug"})
+    _session_treatments_2AFC = (
+        _trials_pd.dropna(subset=["subject", "session", "treatment"])
+        [["subject", "session", "treatment"]]
+        .drop_duplicates()
+    )
+
+    dwell_lmm_df_2AFC = dwell_df_2AFC_all.merge(
+        _session_treatments_2AFC, on=["subject", "session"], how="inner"
+    )
+    dwell_lmm_df_2AFC["log_dwell"] = np.log(dwell_lmm_df_2AFC["dwell_trials"])
+    dwell_lmm_df_2AFC["treatment_drug"] = (dwell_lmm_df_2AFC["treatment"] == "Drug").astype(float)
+
+    N_SHUF_2AFC = 1000
+    _perm_rng_2AFC = np.random.default_rng(0)
+
+    dwell_lmm_results_2AFC = {}
+    dwell_lmm_perm_2AFC = {}
+
+    for _state_label in ["Engaged", "Disengaged"]:
+        _state_df = dwell_lmm_df_2AFC[dwell_lmm_df_2AFC["state_label"] == _state_label].copy()
+        _model = smf.mixedlm(
+            "log_dwell ~ treatment_drug",
+            data=_state_df,
+            groups=_state_df["subject"],
+            re_formula="~1 + treatment_drug",
+        )
+        _result = _model.fit(reml=True)
+        dwell_lmm_results_2AFC[_state_label] = _result
+        print(f"=== {_state_label} ===")
+        print(_result.summary())
+        print(f"n bouts = {len(_state_df)}, n mice = {_state_df['subject'].nunique()}")
+        _observed_beta = _result.params["treatment_drug"]
+        print(f"Observed treatment_drug beta = {_observed_beta:.4f}")
+        print(f"Treatment (Drug vs Saline) LMM Wald p-value: {_result.pvalues['treatment_drug']:.4f}")
+
+        # Permutation test: shuffle the drug/saline session labels within each
+        # animal (each animal keeps its own number of drug/saline sessions),
+        # refit the same LMM, and build a null distribution of treatment_drug beta.
+        _session_info = (
+            _state_df[["subject", "session", "treatment_drug"]]
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
+        _session_key_to_idx = {
+            (row.subject, row.session): idx
+            for idx, row in enumerate(_session_info.itertuples())
+        }
+        _bout_session_idx = np.array([
+            _session_key_to_idx[(subject, session)]
+            for subject, session in zip(_state_df["subject"], _state_df["session"])
+        ])
+        _session_subject = _session_info["subject"].to_numpy()
+        _session_treatment = _session_info["treatment_drug"].to_numpy()
+        _subject_positions = {}
+        for _idx, _subject in enumerate(_session_subject):
+            _subject_positions.setdefault(_subject, []).append(_idx)
+        _subject_positions = {
+            _subject: np.array(_positions)
+            for _subject, _positions in _subject_positions.items()
+        }
+
+        _null_betas = np.full(N_SHUF_2AFC, np.nan)
+        _n_failed = 0
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for _shuf_idx in range(N_SHUF_2AFC):
+                _shuffled_treatment = _session_treatment.copy()
+                for _subject, _positions in _subject_positions.items():
+                    _shuffled_treatment[_positions] = _perm_rng_2AFC.permutation(
+                        _session_treatment[_positions]
+                    )
+                _state_df["treatment_drug_shuf"] = _shuffled_treatment[_bout_session_idx]
+                try:
+                    _shuf_model = smf.mixedlm(
+                        "log_dwell ~ treatment_drug_shuf",
+                        data=_state_df,
+                        groups=_state_df["subject"],
+                        re_formula="~1 + treatment_drug_shuf",
+                    )
+                    _shuf_result = _shuf_model.fit(reml=True)
+                    _null_betas[_shuf_idx] = _shuf_result.params["treatment_drug_shuf"]
+                except Exception:
+                    _n_failed += 1
+
+        _valid_null_betas = _null_betas[~np.isnan(_null_betas)]
+        _lo, _hi = np.percentile(_valid_null_betas, [2.5, 97.5])
+        _null_center = np.mean(_valid_null_betas)
+        _perm_p = (
+            np.sum(np.abs(_valid_null_betas - _null_center) >= abs(_observed_beta - _null_center)) + 1
+        ) / (len(_valid_null_betas) + 1)
+        dwell_lmm_perm_2AFC[_state_label] = {
+            "null_betas": _valid_null_betas,
+            "lo_2p5": _lo,
+            "hi_97p5": _hi,
+            "perm_p": _perm_p,
+            "n_failed": _n_failed,
+        }
+        print(f"Permutation null (N={len(_valid_null_betas)}/{N_SHUF_2AFC} valid fits, {_n_failed} failed to fit):")
+        print(f"  Null beta 95% interval (2.5% / 97.5% percentiles): [{_lo:.4f}, {_hi:.4f}]")
+        _outside = _observed_beta < _lo or _observed_beta > _hi
+        print(f"  Observed beta ({_observed_beta:.4f}) is {'OUTSIDE' if _outside else 'inside'} the null 95% interval")
+        print(f"  Permutation p-value: {_perm_p:.4f}   (compare to LMM Wald p-value: {_result.pvalues['treatment_drug']:.4f})")
+        print()
+    return (dwell_lmm_perm_2AFC,)
 
 
 @app.cell
@@ -2568,7 +2917,6 @@ def _(
     path_panels,
     plt,
     sns,
-    task_labels,
     treatment_dwell_dfs,
     treatment_order,
     treatment_palette,
@@ -2608,6 +2956,130 @@ def _(
         hue_order=treatment_order,
         # show_pvalue_if_ns=True
     )
+    # dwell_time_2AFC.set_title(task_labels["2AFC_DRUG"])
+    dwell_time_2AFC.set_xlabel("State")
+    dwell_time_2AFC.set_ylabel("Dwell time (trials)")
+    dwell_time_2AFC.set_xticklabels(["Eng.", "Dis."])
+    dwell_time_2AFC.legend(frameon=False, title="")
+    if not mount_figure:
+        dwell_time_2AFC.figure.savefig(
+            (path_panels / "2AFC_drug_dwell_time").with_suffix(f".{format}")
+        )
+    dwell_time_2AFC
+    return (dwell_time_2AFC,)
+
+
+@app.cell
+def dwell_time_permutation_annotations(
+    Annotator,
+    BOXPLOT_STYLE,
+    add_subject_pair_lines,
+    dwell_lmm_perm_2ADC,
+    dwell_lmm_perm_2AFC,
+    dwell_time_2ADC,
+    dwell_time_2AFC,
+    format,
+    mount_figure,
+    path_panels,
+    sns,
+    task_labels,
+    treatment_dwell_dfs,
+    treatment_order,
+    treatment_palette,
+):
+    # Swap the dwell-time panels' significance annotation from a paired
+    # t-test on the 10 per-animal mean dwell times (add_paired_state_annotation,
+    # used by the original dwell_time_2AFC / dwell_time_2ADC cells) to the more
+    # reliable within-animal session-label permutation p-value computed above
+    # (dwell_lmm_perm_2AFC / dwell_lmm_perm_2ADC).
+    #
+    # We fully clear and redraw dwell_time_2AFC / dwell_time_2ADC (the same
+    # Axes objects the original cells created) rather than drawing a second
+    # annotation layer on top, so the panels end up showing only the
+    # permutation-based stats, with no leftover t-test brackets.
+
+
+    def _stars_from_pvalue(p_value):
+        # Same star thresholds statannotations uses by default (text_format="star").
+        if p_value <= 1e-4:
+            return "****"
+        if p_value <= 1e-3:
+            return "***"
+        if p_value <= 1e-2:
+            return "**"
+        if p_value <= 5e-2:
+            return "*"
+        return "ns"
+
+
+    def _add_permutation_state_annotation(ax, df, perm_results, *, x, y, order, hue="treatment", hue_order=treatment_order):
+        """Draw the same paired Saline-vs-Drug brackets as add_paired_state_annotation,
+        but label each one with the permutation p-value from perm_results[state]["perm_p"]
+        (dwell_lmm_perm_2AFC / dwell_lmm_perm_2ADC) instead of running a fresh paired t-test.
+        """
+        pairs = []
+        labels = []
+        for state in order:
+            if state not in perm_results:
+                continue
+            pairs.append(((state, hue_order[0]), (state, hue_order[1])))
+            p_value = perm_results[state]["perm_p"]
+            labels.append(_stars_from_pvalue(p_value))
+
+        if not pairs:
+            return
+
+        annotator = Annotator(
+            ax,
+            pairs,
+            data=df,
+            x=x,
+            y=y,
+            hue=hue,
+            order=order,
+            hue_order=hue_order,
+        )
+        # configure() + apply_test() is only run to let statannotations lay out
+        # the bracket positions/geometry; the displayed text is then fully
+        # overridden by set_custom_annotations with our own permutation p-values.
+        annotator.configure(test="t-test_paired", text_format="star", line_height=0, verbose=False)
+        annotator.apply_test()
+        annotator.set_custom_annotations(labels)
+        annotator.annotate()
+
+
+    # --- 2AFC dwell-time panel: clear and redraw with the permutation annotation ---
+    dwell_time_2AFC.clear()
+    sns.boxplot(
+        data=treatment_dwell_dfs["2AFC_DRUG"],
+        x="state_label",
+        y="mean_dwell_trials",
+        hue="treatment",
+        order=["Engaged", "Disengaged"],
+        hue_order=treatment_order,
+        palette=treatment_palette,
+        ax=dwell_time_2AFC,
+        legend=False,
+        **BOXPLOT_STYLE,
+    )
+    dwell_time_2AFC.set_yscale("log")
+    add_subject_pair_lines(
+        dwell_time_2AFC,
+        treatment_dwell_dfs["2AFC_DRUG"],
+        x="state_label",
+        y="mean_dwell_trials",
+        order=["Engaged", "Disengaged"],
+        hue="treatment",
+        hue_order=treatment_order,
+    )
+    _add_permutation_state_annotation(
+        dwell_time_2AFC,
+        treatment_dwell_dfs["2AFC_DRUG"],
+        dwell_lmm_perm_2AFC,
+        x="state_label",
+        y="mean_dwell_trials",
+        order=["Engaged", "Disengaged"],
+    )
     dwell_time_2AFC.set_title(task_labels["2AFC_DRUG"])
     dwell_time_2AFC.set_xlabel("")
     dwell_time_2AFC.set_ylabel("Dwell time (trials)")
@@ -2617,7 +3089,47 @@ def _(
         dwell_time_2AFC.figure.savefig(
             (path_panels / "2AFC_drug_dwell_time").with_suffix(f".{format}")
         )
-    dwell_time_2AFC
+
+    # --- 2ADC dwell-time panel: same treatment ---
+    dwell_time_2ADC.clear()
+    sns.boxplot(
+        data=treatment_dwell_dfs["2ADC_DRUG"],
+        x="state_label",
+        y="mean_dwell_trials",
+        hue="treatment",
+        order=["Engaged", "Disengaged"],
+        hue_order=treatment_order,
+        palette=treatment_palette,
+        ax=dwell_time_2ADC,
+        legend=False,
+        **BOXPLOT_STYLE,
+    )
+    dwell_time_2ADC.set_yscale("log")
+    add_subject_pair_lines(
+        dwell_time_2ADC,
+        treatment_dwell_dfs["2ADC_DRUG"],
+        x="state_label",
+        y="mean_dwell_trials",
+        order=["Engaged", "Disengaged"],
+        hue="treatment",
+        hue_order=treatment_order,
+    )
+    _add_permutation_state_annotation(
+        dwell_time_2ADC,
+        treatment_dwell_dfs["2ADC_DRUG"],
+        dwell_lmm_perm_2ADC,
+        x="state_label",
+        y="mean_dwell_trials",
+        order=["Engaged", "Disengaged"],
+    )
+    dwell_time_2ADC.set_title(task_labels["2ADC_DRUG"])
+    dwell_time_2ADC.set_xlabel("")
+    dwell_time_2ADC.set_ylabel("Dwell time (trials)")
+    dwell_time_2ADC.set_xticklabels(["Eng.", "Dis."])
+    if not mount_figure:
+        dwell_time_2ADC.figure.savefig(
+            (path_panels / "2ADC_drug_dwell_time").with_suffix(f".{format}")
+        )
     return
 
 
@@ -3410,9 +3922,10 @@ def _(
     #     label="Accuracy",
     # )
     single_session_saline_2ADC.set(
-        title="Saline",
+        # title="Saline",
+        title="STM",
         xlabel="Trial",
-        ylabel="$p$(engaged)",
+        ylabel="$p$(eng.) | Saline",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
@@ -3481,7 +3994,8 @@ def _(
     #     label="Accuracy",
     # )
     single_session_saline_2AFC.set(
-        title="Saline",
+        # title="Saline",
+        title="EA",
         xlabel="Trial",
         ylabel="$p$(engaged)",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
@@ -3552,9 +4066,9 @@ def _(
     #     label="Accuracy",
     # )
     single_session_drug_2ADC.set(
-        title="Drug",
+        # title="Drug",
         xlabel="Trial",
-        ylabel="$p$(engaged)",
+        ylabel="$p$(eng.) | Drug",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
@@ -3623,7 +4137,7 @@ def _(
     #     label="Accuracy",
     # )
     single_session_drug_2AFC.set(
-        title="Drug",
+        # title="Drug",
         xlabel="Trial",
         ylabel="$p$(engaged)",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
@@ -4200,6 +4714,8 @@ def _(axd, fig, mount_figure, path_panels):
         axd["histogram_transitions_2AFC"].set_title("")
         axd["dwell_time_2ADC"].set_title("")
         axd["dwell_time_2AFC"].set_title("")
+        axd["dwell_time_2ADC"].set_xlabel("State")
+        axd["dwell_time_2AFC"].set_xlabel("State")
 
         axd["transition_weights_2ADC"].set_title("")
         axd["transition_weights_2AFC"].set_title("")
