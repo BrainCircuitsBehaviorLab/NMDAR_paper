@@ -132,7 +132,7 @@ def _():
         fill=False,
         boxprops={"color": "0.5"},
         whiskerprops={"color": "0.5"},
-        medianprops={"linewidth": 3},
+        # medianprops={"linewidth": 3},
         showfliers=False,
         showcaps=False,
     )
@@ -305,27 +305,16 @@ def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
-                ["a", "a", "a", "boxplot_band_2ADC", "b", "b", "b", "boxplot_band_2AFC"],
-                ["single_sess_acc_2ADC", "single_sess_acc_2ADC", "single_sess_acc_2ADC", "boxplot_acc_band_2ADC", "single_sess_acc_2AFC", "single_sess_acc_2AFC", "single_sess_acc_2AFC", "boxplot_acc_band_2AFC"],
-                # ["_running_legend", "_running_legend", "_running_legend", "_running_legend"],
-                # ["hist_correct_2ADC", "hist_repeat_2ADC", "hist_correct_2AFC", "hist_repeat_2AFC"], 
                 ["pc_action_2ADC", "pc_action_2ADC", "pc_evi_2ADC", "pc_evi_2ADC", "pc_action_2AFC", "pc_action_2AFC", "pc_evi_2AFC", "pc_evi_2AFC"],
-                # ["a", "a", "b", "b"],
-                ["e", "e", "f", "f", "g", "g", "h", "h"],
-                ["k", "k", "i", "i", "l", "l", "j", "j",]
-                # ["i", "i", "j", "j"],
-                # ["k", "k", "l", "l"],
+                ["stim_2ADC", "stim_2ADC", "prev_choices_2ADC", "prev_choices_2ADC", "stim_2AFC", "stim_2AFC", "prev_choices_2AFC", "prev_choices_2AFC"],
+                ["single_session_2ADC_repetition", "single_session_2ADC_repetition", "single_session_2ADC_repetition", "boxplot_band_2ADC", "single_session_2AFC_repetition", "single_session_2AFC_repetition", "single_session_2AFC_repetition", "boxplot_band_2AFC"],
+                ["single_sess_acc_2ADC", "single_sess_acc_2ADC", "single_sess_acc_2ADC", "boxplot_acc_band_2ADC", "single_sess_acc_2AFC", "single_sess_acc_2AFC", "single_sess_acc_2AFC", "boxplot_acc_band_2AFC"],
+                ["ax_autocorrelograms_2ADC_repetition", "ax_autocorrelograms_2ADC_repetition", "ax_autocorrelograms_2ADC_outcome", "ax_autocorrelograms_2ADC_outcome", "ax_autocorrelograms_2AFC_repetition", "ax_autocorrelograms_2AFC_repetition", "ax_autocorrelograms_2AFC_outcome", "ax_autocorrelograms_2AFC_outcome"]
             ],
             figsize=fig_size(1, 0.75),
             constrained_layout=True,
-            gridspec_kw={"height_ratios": [1, 1, 1, 1, 1]},
+            gridspec_kw={"height_ratios": [1, 1, 1, 1, 1], "width_ratios": [1, 1, 1, 1, 1, 1, 1, 1]},
         )
-        # fig.set_constrained_layout_pads(
-        #         w_pad=0.01,
-        #         h_pad=0.01,
-        #         wspace=0.01,
-        #         hspace=0.07,
-        #     )
     else:
         fig, axd = None, {}
     return axd, fig
@@ -413,17 +402,19 @@ def _(
     plt,
 ):
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure or "i" not in axd else axd["i"]
+    ax_autocorrelograms_2ADC_outcome = plt.gca() if not mount_figure or "ax_autocorrelograms_2ADC_outcome" not in axd else axd["ax_autocorrelograms_2ADC_outcome"]
     ax_autocorrelograms_2ADC_outcome.clear()
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure or "k" not in axd else axd["k"]
+    ax_autocorrelograms_2ADC_repetition = plt.gca() if not mount_figure or "ax_autocorrelograms_2ADC_repetition" not in axd else axd["ax_autocorrelograms_2ADC_repetition"]
     ax_autocorrelograms_2ADC_repetition.clear()
-
 
     _data_ac = autocorrelograms_by_task["2AFC_delay"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["2AFC_delay"]["glm"]["autocorr"]
+    _signal_colors = {
+        "Outcome": "tab:cyan",
+        "Repetition": "tab:brown",
+    }
     _colors = {
-        "data": "tab:blue",
         "glm": "tab:gray",
     }
     for _signal, _ax in (
@@ -438,8 +429,8 @@ def _(
             fmt="o",
             capsize=0,
             ms = 3,
-            color=_colors["data"],
-            ecolor=_colors["data"],
+            color=_signal_colors[_signal],
+            ecolor=_signal_colors[_signal],
             label="Data",
             zorder=4,
         )
@@ -466,7 +457,7 @@ def _(
             _ax.set_ylim(top=0.15)
         else:
             _ax.set_ylim(top=0.05)
-        _ax.legend(frameon=False)
+        _ax.legend(frameon=False, loc="upper right", handlelength=1)
         if not mount_figure:
             _fig.savefig((path_panels / f"2ADC_autocorrelogram_{_signal.lower()}").with_suffix(f".{format}"))
 
@@ -500,16 +491,19 @@ def _(
     plt,
 ):
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure or "j" not in axd else axd["j"]
+    ax_autocorrelograms_2AFC_outcome = plt.gca() if not mount_figure or "ax_autocorrelograms_2AFC_outcome" not in axd else axd["ax_autocorrelograms_2AFC_outcome"]
     ax_autocorrelograms_2AFC_outcome.clear()
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure or "l" not in axd else axd["l"]
+    ax_autocorrelograms_2AFC_repetition = plt.gca() if not mount_figure or "ax_autocorrelograms_2AFC_repetition" not in axd else axd["ax_autocorrelograms_2AFC_repetition"]
     ax_autocorrelograms_2AFC_repetition.clear()
 
     _data_ac = autocorrelograms_by_task["2AFC"]["data"]["autocorr"]
     _glm_ac = autocorrelograms_by_task["2AFC"]["glm"]["autocorr"]
+    _signal_colors = {
+        "Outcome": "tab:cyan",
+        "Repetition": "tab:brown",
+    }
     _colors = {
-        "data": "tab:blue",
         "glm": "tab:gray",
     }
     for _signal, _ax in (
@@ -524,8 +518,8 @@ def _(
             fmt="o",
             capsize=0,
             ms=3,
-            color=_colors["data"],
-            ecolor=_colors["data"],
+            color=_signal_colors[_signal],
+            ecolor=_signal_colors[_signal],
             label="Data",
             zorder=4,
         )
@@ -595,7 +589,8 @@ def _(autocorrelograms_by_task, fig_size, format, mo, path_panels, plt):
             yerr=_data_sub.get("autocorr_sem"),
             fmt="o",
             capsize=0,
-            ms=3,        color=_colors["data"],
+            ms=3,        
+            color=_colors["data"],
             ecolor=_colors["data"],
             label="Data",
             zorder=4,
@@ -661,7 +656,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    prev_choices_2ADC = plt.gca() if not mount_figure or "f" not in axd else axd["f"]
+    prev_choices_2ADC = plt.gca() if not mount_figure or "prev_choices_2ADC" not in axd else axd["prev_choices_2ADC"]
     prev_choices_2ADC.clear()
 
     # Filter to just have lagged choices
@@ -675,6 +670,7 @@ def _(
         color="tab:gray",
         ax=prev_choices_2ADC,
         **boxplot_STYLE,
+        medianprops={"color": "tab:brown"}
     )
     prev_choices_2ADC.axhline(0, color="0.5", linestyle="--")
     # prev_choices_2ADC.set_title("2ADC")
@@ -720,7 +716,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    stim_2ADC = plt.gca() if not mount_figure or "e" not in axd else axd["e"]
+    stim_2ADC = plt.gca() if not mount_figure or "stim_2ADC" not in axd else axd["stim_2ADC"]
     stim_2ADC.clear()
 
     # Filter to just have lagged choices
@@ -740,6 +736,7 @@ def _(
         color="tab:gray",
         ax=stim_2ADC,
         **boxplot_STYLE,
+        medianprops={"color": "tab:orange"}
     )
     stim_2ADC.axhline(0, color="0.5", linestyle="--")
     stim_2ADC.set_xlabel("")
@@ -785,7 +782,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    prev_choices_2AFC = plt.gca() if not mount_figure or "h" not in axd else axd["h"]
+    prev_choices_2AFC = plt.gca() if not mount_figure or "prev_choices_2AFC" not in axd else axd["prev_choices_2AFC"]
     prev_choices_2AFC.clear()
 
     # Filter to just have lagged choices
@@ -799,6 +796,7 @@ def _(
         color="tab:gray",
         ax=prev_choices_2AFC,
         **boxplot_STYLE,
+        medianprops={"color": "tab:brown"}
     )
     prev_choices_2AFC.axhline(0, color="0.5", linestyle="--")
     # prev_choices_2AFC.set_title("2AFC")
@@ -842,7 +840,7 @@ def _(
     weight_dfs,
 ):
     plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    stim_2AFC = plt.gca() if not mount_figure or "g" not in axd else axd["g"]
+    stim_2AFC = plt.gca() if not mount_figure or "stim_2AFC" not in axd else axd["stim_2AFC"]
     stim_2AFC.clear()
 
     # Filter to just have stimulus
@@ -856,6 +854,7 @@ def _(
         color="tab:gray",
         ax=stim_2AFC,
         **boxplot_STYLE,
+        medianprops={"color": "tab:orange"}
     )
     stim_2AFC.axhline(0, color="0.5", linestyle="--")
     # stim_2AFC.set_title("2AFC")
@@ -1873,16 +1872,17 @@ def _(
     session_repetition_data_2ADC,
 ):
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    single_session_2ADC_repetition = plt.gca() if not mount_figure or "a" not in axd else axd["a"]
+    single_session_2ADC_repetition = plt.gca() if not mount_figure or "single_session_2ADC_repetition" not in axd else axd["single_session_2ADC_repetition"]
     single_session_2ADC_repetition.clear()
 
     single_session_2ADC_repetition.fill_between(
         session_repetition_data_2ADC["trial_x"].to_numpy(),
         session_repetition_data_2ADC["fixed_accuracy_repeat_low"].to_numpy(),
         session_repetition_data_2ADC["fixed_accuracy_repeat_high"].to_numpy(),
-        color="tab:blue",
+        color="tab:gray",
         alpha=0.1,
         linewidth=0,
+        label="Stim. rep."
     )
     # single_session_2ADC_repetition.fill_between(
     #     session_repetition_data_2ADC["trial_x"].to_numpy(),
@@ -1910,19 +1910,20 @@ def _(
     single_session_2ADC_repetition.plot(
         session_repetition_data_2ADC["trial_x"].to_numpy(),
         np.ma.masked_where(~_choice_outside_band, _choice_repeat),
-        color="tab:brown",
-        linewidth=2,
-        solid_capstyle="round",
-        zorder=3,
+        color="tab:red",
+        # linewidth=2,
+        # solid_capstyle="round",
+        # zorder=3,
         label="_nolegend_",
     )
-    single_session_2ADC_repetition.plot(
-        "trial_x",
-        "stimulus_repeat_window_fraction",
-        color="tab:blue",
-        label="Stim. rep.",
-        data=session_repetition_data_2ADC
-    )
+    # Remove mean and leave band only
+    # single_session_2ADC_repetition.plot(
+    #     "trial_x",
+    #     "stimulus_repeat_window_fraction",
+    #     color="tab:blue",
+    #     label="Stim. rep.",
+    #     data=session_repetition_data_2ADC
+    # )
     # single_session_2ADC_repetition.plot(
     #     "trial_x",
     #     "accuracy_window_fraction",
@@ -1936,7 +1937,7 @@ def _(
     single_session_2ADC_repetition.set_ylabel("Running fraction")
     single_session_2ADC_repetition.set_ylim(0, 1)
     single_session_2ADC_repetition.set_xlim(19, len(session_repetition_data_2ADC) - 0.5)
-    single_session_2ADC_repetition.legend(frameon=False, ncols=3, handlelength=0.5,    handletextpad=0.4,columnspacing=0.4,loc="upper center", bbox_to_anchor=(0.5, 0.3))
+    single_session_2ADC_repetition.legend(frameon=False, loc="lower left", handlelength=1)
     if not mount_figure:
         single_session_2ADC_repetition.figure.savefig(
             (path_panels / "2ADC_single_session_repetition").with_suffix(f".{format}"), transparent=True,
@@ -1966,17 +1967,20 @@ def _(
         session_repetition_data_2ADC["trial_x"].to_numpy(),
         session_repetition_data_2ADC["stationary_accuracy_low"].to_numpy(),
         session_repetition_data_2ADC["stationary_accuracy_high"].to_numpy(),
-        color="tab:blue",
+        color="tab:gray",
         alpha=0.1,
         linewidth=0,
+        label="Stationary"
     )
-    single_session_2ADC_accuracy.plot(
-        "trial_x",
-        "stationary_accuracy_fraction",
-        color="tab:blue",
-        label="Stationary",
-        data=session_repetition_data_2ADC
-    )
+
+    # Remove mean and leave band only
+    # single_session_2ADC_accuracy.plot(
+    #     "trial_x",
+    #     "stationary_accuracy_fraction",
+    #     color="tab:blue",
+    #     label="Stationary",
+    #     data=session_repetition_data_2ADC
+    # )
     # single_session_2ADC_accuracy.plot(
     #     "trial_x",
     #     "accuracy_window_fraction",
@@ -2001,17 +2005,17 @@ def _(
     single_session_2ADC_accuracy.plot(
         session_repetition_data_2ADC["trial_x"].to_numpy(),
         np.ma.masked_where(~_accuracy_outside_band, _accuracy),
-        color="black",
-        linewidth=2,
-        solid_capstyle="round",
-        zorder=3,
+        color="tab:red",
+        # linewidth=2,
+        # solid_capstyle="round",
+        # zorder=3,
         label="_nolegend_",
     )
     single_session_2ADC_accuracy.set_xlabel("Trial")
     single_session_2ADC_accuracy.set_ylabel("Running accuracy")
     single_session_2ADC_accuracy.set_ylim(0, 1)
     single_session_2ADC_accuracy.set_xlim(19, len(session_repetition_data_2ADC) - 0.5)
-    single_session_2ADC_accuracy.legend(frameon=False, loc="best")
+    single_session_2ADC_accuracy.legend(frameon=False, loc="lower left", handlelength=1)
     if not mount_figure or "a_accuracy" in axd:
         single_session_2ADC_accuracy.figure.savefig(
             (path_panels / "2ADC_single_session_accuracy").with_suffix(f".{format}")
@@ -2091,14 +2095,14 @@ def _(
     session_repetition_data_2AFC,
 ):
     plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    single_session_2AFC_repetition = plt.gca() if not mount_figure or "b" not in axd else axd["b"]
+    single_session_2AFC_repetition = plt.gca() if not mount_figure or "single_session_2AFC_repetition" not in axd else axd["single_session_2AFC_repetition"]
     single_session_2AFC_repetition.clear()
 
     single_session_2AFC_repetition.fill_between(
         session_repetition_data_2AFC["trial_x"].to_numpy(),
         session_repetition_data_2AFC["fixed_accuracy_repeat_low"].to_numpy(),
         session_repetition_data_2AFC["fixed_accuracy_repeat_high"].to_numpy(),
-        color="tab:blue",
+        color="tab:gray",
         alpha=0.1,
         linewidth=0,
     )
@@ -2128,19 +2132,21 @@ def _(
     single_session_2AFC_repetition.plot(
         session_repetition_data_2AFC["trial_x"].to_numpy(),
         np.ma.masked_where(~_choice_outside_band, _choice_repeat),
-        color="tab:brown",
-        linewidth=2,
-        solid_capstyle="round",
-        zorder=3,
+        color="tab:red",
+        # linewidth=2,
+        # solid_capstyle="round",
+        # zorder=3,
         label="_nolegend_",
     )
-    single_session_2AFC_repetition.plot(
-        "trial_x",
-        "stimulus_repeat_window_fraction",
-        color="tab:blue",
-        label="Stim. Rep.",
-        data=session_repetition_data_2AFC
-    )
+
+    # Remove mean and leave band only
+    # single_session_2AFC_repetition.plot(
+    #     "trial_x",
+    #     "stimulus_repeat_window_fraction",
+    #     color="tab:blue",
+    #     label="Stim. Rep.",
+    #     data=session_repetition_data_2AFC
+    # )
 
     # single_session_2AFC_repetition.plot(
     #     "trial_x",
@@ -2155,7 +2161,7 @@ def _(
     single_session_2AFC_repetition.set_ylabel("Running fraction")
     single_session_2AFC_repetition.set_ylim(0, 1)
     single_session_2AFC_repetition.set_xlim(19, len(session_repetition_data_2AFC) - 0.5)
-    single_session_2AFC_repetition.legend(frameon=False, ncols=3, handlelength=0.5,    handletextpad=0.4,columnspacing=0.4,loc="upper center", bbox_to_anchor=(0.5, 0.3))
+    # single_session_2AFC_repetition.legend(frameon=False, loc="lower left", handlelength=1)
 
     if not mount_figure:
         single_session_2AFC_repetition.figure.savefig(
@@ -2186,17 +2192,19 @@ def _(
         session_repetition_data_2AFC["trial_x"].to_numpy(),
         session_repetition_data_2AFC["stationary_accuracy_low"].to_numpy(),
         session_repetition_data_2AFC["stationary_accuracy_high"].to_numpy(),
-        color="tab:blue",
+        color="tab:gray",
         alpha=0.1,
         linewidth=0,
     )
-    single_session_2AFC_accuracy.plot(
-        "trial_x",
-        "stationary_accuracy_fraction",
-        color="tab:blue",
-        label="Stationary",
-        data=session_repetition_data_2AFC
-    )
+
+    # Remove mean and leave band only
+    # single_session_2AFC_accuracy.plot(
+    #     "trial_x",
+    #     "stationary_accuracy_fraction",
+    #     color="tab:blue",
+    #     label="Stationary",
+    #     data=session_repetition_data_2AFC
+    # )
     # single_session_2AFC_accuracy.plot(
     #     "trial_x",
     #     "accuracy_window_fraction",
@@ -2221,17 +2229,17 @@ def _(
     single_session_2AFC_accuracy.plot(
         session_repetition_data_2AFC["trial_x"].to_numpy(),
         np.ma.masked_where(~_accuracy_outside_band, _accuracy),
-        color="black",
-        linewidth=2,
-        solid_capstyle="round",
-        zorder=3,
+        color="tab:red",
+        # linewidth=2,
+        # solid_capstyle="round",
+        # zorder=3,
         label="_nolegend_",
     )
     single_session_2AFC_accuracy.set_xlabel("Trial")
     single_session_2AFC_accuracy.set_ylabel("Running accuracy")
     single_session_2AFC_accuracy.set_ylim(0, 1)
     single_session_2AFC_accuracy.set_xlim(19, len(session_repetition_data_2AFC) - 0.5)
-    single_session_2AFC_accuracy.legend(frameon=False, loc="best")
+    # single_session_2AFC_accuracy.legend(frameon=False, loc="best")
     if not mount_figure:
         single_session_2AFC_accuracy.figure.savefig(
             (path_panels / "2AFC_single_session_accuracy").with_suffix(f".{format}")
@@ -2576,6 +2584,8 @@ def _(
 
     _plot_df = band_position_by_task["2AFC_delay"] 
     _plot_df = _plot_df[_plot_df["position"] != "In"]
+
+    fixed_band_position_2ADC.axhline(0.025, ls = '--', color = "tab:gray")
     sns.boxplot(
         data=_plot_df,
         x="position",
@@ -2585,8 +2595,6 @@ def _(
         ax=fixed_band_position_2ADC,
         **boxplot_STYLE,
     )
-    fixed_band_position_2ADC.axhline(0.025, ls = '--', color = "tab:blue")
-
     fixed_band_position_2ADC.set_xlabel("")
     fixed_band_position_2ADC.set_ylabel("Proportion of trials")
     fixed_band_position_2ADC.set_ylim(0, 0.5)
@@ -2628,16 +2636,17 @@ def _(
     stationary_accuracy_band_position_2ADC = plt.gca() if not mount_figure or "boxplot_acc_band_2ADC" not in axd else axd["boxplot_acc_band_2ADC"]
 
     _plot_df = accuracy_band_position_by_task["2AFC_delay"]
+
+    stationary_accuracy_band_position_2ADC.axhline(0.025, ls="--", color="tab:gray")
     sns.boxplot(
         data=_plot_df,
         x="position",
         y="proportion",
         order=band_position_order,
-        color="k",
+        color="black",
         ax=stationary_accuracy_band_position_2ADC,
         **boxplot_STYLE,
     )
-    stationary_accuracy_band_position_2ADC.axhline(0.025, ls="--", color="tab:blue")
     stationary_accuracy_band_position_2ADC.set_xlabel("")
     stationary_accuracy_band_position_2ADC.set_ylabel("Proportion of trials")
     stationary_accuracy_band_position_2ADC.set_ylim(0, 0.15)
@@ -2843,6 +2852,8 @@ def _(
     fixed_band_position_2AFC = plt.gca() if not mount_figure or "boxplot_band_2AFC" not in axd else axd["boxplot_band_2AFC"]
 
     _plot_df = band_position_by_task["2AFC"]
+
+    fixed_band_position_2AFC.axhline(0.025, ls = '--', color = "tab:gray")
     sns.boxplot(
         data=_plot_df,
         x="position",
@@ -2852,7 +2863,6 @@ def _(
         ax=fixed_band_position_2AFC,
         **boxplot_STYLE,
     )
-    fixed_band_position_2AFC.axhline(0.025, ls = '--', color = "tab:blue")
     fixed_band_position_2AFC.set_xlabel("")
     fixed_band_position_2AFC.set_ylabel("Proportion of trials")
     fixed_band_position_2AFC.set_ylim(0, 0.5)
@@ -2893,16 +2903,17 @@ def _(
     stationary_accuracy_band_position_2AFC = plt.gca() if not mount_figure or "boxplot_acc_band_2AFC" not in axd else axd["boxplot_acc_band_2AFC"]
 
     _plot_df = accuracy_band_position_by_task["2AFC"]
+
+    stationary_accuracy_band_position_2AFC.axhline(0.025, ls="--", color="tab:gray")
     sns.boxplot(
         data=_plot_df,
         x="position",
         y="proportion",
         order=band_position_order,
-        color="k",
+        color="black",
         ax=stationary_accuracy_band_position_2AFC,
         **boxplot_STYLE,
     )
-    stationary_accuracy_band_position_2AFC.axhline(0.025, ls="--", color="tab:blue")
     stationary_accuracy_band_position_2AFC.set_xlabel("")
     stationary_accuracy_band_position_2AFC.set_ylabel("Proportion of trials")
     stationary_accuracy_band_position_2AFC.set_ylim(0, 0.15)
@@ -4315,7 +4326,7 @@ def _(chi2, np, pd, transition_chunk_lengths_by_task):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Full figure
+    # Mount figure
     """)
     return
 
@@ -4333,21 +4344,19 @@ def _(axd, fig, mount_figure, project_path):
                 _legend.remove()
 
         # Running frations
-        axd["a"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-        axd["a"].set_title("2ADC")
-        axd["a"].set_xticklabels([])
-        axd["a"].set_ylabel("Repeat fraction")
-        axd["a"].legend(*axd["a"].get_legend_handles_labels(), handlelength=1, ncol=2, columnspacing=0.5, frameon=False, loc="lower right")
+        axd["single_session_2ADC_repetition"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+        axd["single_session_2ADC_repetition"].set_xticklabels([])
+        axd["single_session_2ADC_repetition"].set_ylabel("Repeat fraction")
+        axd["single_session_2ADC_repetition"].legend(*axd["single_session_2ADC_repetition"].get_legend_handles_labels(), handlelength=1, ncol=2, columnspacing=0.5, frameon=False, loc="lower center")
 
-        axd["b"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-        axd["b"].set_title("2AFC")
-        axd["b"].set_xticklabels([])
-        axd["b"].set_yticklabels([])
+        axd["single_session_2AFC_repetition"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+        axd["single_session_2AFC_repetition"].set_xticklabels([])
+        axd["single_session_2AFC_repetition"].set_yticklabels([])
 
         axd["single_sess_acc_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["single_sess_acc_2ADC"].set_ylabel("Accuracy")
         axd["single_sess_acc_2ADC"].set_xlabel("Trial")
-        axd["single_sess_acc_2ADC"].legend(*axd["single_sess_acc_2ADC"].get_legend_handles_labels(), handlelength=1, ncol=2, frameon=False, loc="lower right")
+        axd["single_sess_acc_2ADC"].legend(*axd["single_sess_acc_2ADC"].get_legend_handles_labels(), handlelength=1, ncol=2, columnspacing=0.5, frameon=False, loc="lower center")
         axd["single_sess_acc_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["single_sess_acc_2AFC"].set_xlabel("Trial")
         axd["single_sess_acc_2AFC"].set_yticklabels([])
@@ -4360,19 +4369,37 @@ def _(axd, fig, mount_figure, project_path):
         axd["pc_action_2ADC"].legend(
             *axd["pc_action_2ADC"].get_legend_handles_labels()[:3], handlelength=0.5, ncol=1, frameon=False, loc="upper left", bbox_to_anchor=(-0.05, 1.1),
             columnspacing=0.5, handletextpad=0.5, labelspacing = 0.25)
+        axd["pc_action_2ADC"].set_title("STM")
 
         axd["pc_evi_2ADC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2ADC"].set_yticklabels([])
         axd["pc_evi_2ADC"].set_xlabel("Action trace")
+        axd["pc_evi_2ADC"].set_title("STM")
 
         axd["pc_action_2AFC"].set_xticks([0, 4, 8], ["-20", "0", "20"])
         axd["pc_action_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_action_2AFC"].set_yticklabels([])
         axd["pc_action_2AFC"].set_xlabel("Stim. evidence")
+        axd["pc_action_2AFC"].set_title("EA")
 
         axd["pc_evi_2AFC"].set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
         axd["pc_evi_2AFC"].set_yticklabels([])
         axd["pc_evi_2AFC"].set_xlabel("Action trace")
+        axd["pc_evi_2AFC"].set_title("EA")
+
+        # _pair_titles = [
+        #     (("pc_action_2ADC", "pc_evi_2ADC"), "STM"),
+        #     (("pc_action_2AFC", "pc_evi_2AFC"), "EA"),
+        # ]
+        # for (_left_key, _right_key), _label in _pair_titles:
+        #     _left_ax = axd[_left_key]
+        #     _right_ax = axd[_right_key]
+        #     _left_pos = _left_ax.get_position()
+        #     _right_pos = _right_ax.get_position()
+        #     _center_x_fig = (_left_pos.x0 + _right_pos.x1) / 2
+        #     _center_x_axes = (_center_x_fig - _left_pos.x0) / _left_pos.width
+        #     _left_ax.set_title(_label)
+        #     _left_ax.title.set_position((_center_x_axes, 1))
 
         # Proportion of trials above and below the bands of the traces
         # axd["boxplot_band_2ADC"].set_ylabel("Fraction of trials")
@@ -4383,39 +4410,36 @@ def _(axd, fig, mount_figure, project_path):
         axd["boxplot_acc_band_2ADC"].set_xlabel("Trial fraction") 
         axd["boxplot_acc_band_2AFC"].set_xlabel("Trial fraction")  
 
-        axd["e"].set_ylabel("Weight")
-        axd["e"].set_xlabel("Delay (s)")
-        axd["e"].set_title("Stimulus")
+        axd["stim_2ADC"].set_ylabel("Weight")
+        axd["stim_2ADC"].set_xlabel("Delay (s)")
+        axd["stim_2ADC"].set_title("Stimulus")
 
-        axd["f"].set_title("Prev. Choice")
-        axd["f"].set_xlabel("Trial lag")
+        axd["prev_choices_2ADC"].set_title("Previous choice")
+        axd["prev_choices_2ADC"].set_xlabel("Trial lag")
 
-        axd["g"].set_xlabel("Stim. |ILD| (dB)")
-        axd["g"].set_title("Stimulus")
+        axd["stim_2AFC"].set_xlabel("Stim. |ILD| (dB)")
+        axd["stim_2AFC"].set_title("Stimulus")
 
-        axd["h"].set_title("Prev. Choice")
-        axd["h"].set_xlabel("Trial lag")
-    
-        axd["k"].set_ylabel("Autocorrelation")
-        axd["i"].set_xlabel("Trial lag")
-        axd["i"].set_title("Outcome")
-        # axd["k"].legend(
-        #     *axd["k"].get_legend_handles_labels(), handlelength=0.5, ncol=2, frameon=False, loc="upper right", bbox_to_anchor=(0, -0.05), columnspacing=0.5, handletextpad=0.5)
+        axd["prev_choices_2AFC"].set_title("Previous choice")
+        axd["prev_choices_2AFC"].set_xlabel("Trial lag")
 
-        axd["k"].legend(*axd["k"].get_legend_handles_labels(), frameon=False)
+        axd["ax_autocorrelograms_2ADC_repetition"].set_ylabel("Autocorrelation")
+        axd["ax_autocorrelograms_2ADC_repetition"].legend(*axd["ax_autocorrelograms_2ADC_repetition"].get_legend_handles_labels(), frameon=False, handlelength=1)
+        axd["ax_autocorrelograms_2ADC_outcome"].set_xlabel("Trial lag")
+        axd["ax_autocorrelograms_2ADC_outcome"].set_title("Outcome")
 
-        axd["j"].set_title("Outcome")
-        axd["j"].set_xlabel("Trial lag")
+        axd["ax_autocorrelograms_2AFC_outcome"].set_title("Outcome")
+        axd["ax_autocorrelograms_2AFC_outcome"].set_xlabel("Trial lag")
 
-        axd["k"].set_title("Repetition")
-        axd["k"].set_xlabel("Trial lag")
+        axd["ax_autocorrelograms_2ADC_repetition"].set_title("Repetition")
+        axd["ax_autocorrelograms_2ADC_repetition"].set_xlabel("Trial lag")
 
-        axd["l"].set_title("Repetition")
-        axd["l"].set_xlabel("Trial lag")
+        axd["ax_autocorrelograms_2AFC_repetition"].set_title("Repetition")
+        axd["ax_autocorrelograms_2AFC_repetition"].set_xlabel("Trial lag")
 
         # for _ax in [axd["hist_repeat_2ADC"], axd["hist_repeat_2AFC"]]:
         #     _ax.set_ylim(top=1e3)
-        for _ax in [axd["i"], axd["j"], axd["k"], axd["l"]]:
+        for _ax in [axd["ax_autocorrelograms_2ADC_outcome"], axd["ax_autocorrelograms_2AFC_outcome"], axd["ax_autocorrelograms_2ADC_repetition"], axd["ax_autocorrelograms_2AFC_repetition"]]:
             _ax.set_xlim(0, 20.5)
 
         fig.savefig((project_path / "figures" / "panels2" / "figure2.pdf"))

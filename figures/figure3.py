@@ -108,7 +108,7 @@ def _():
         fill=False,
         boxprops={"color": "0.5"},
         whiskerprops={"color": "0.5"},
-        medianprops={"linewidth": 3},
+        # medianprops={"linewidth": 3},
         showfliers=False,
         showcaps=False,
     )
@@ -1275,8 +1275,8 @@ def _(
         fmt="o",
         capsize=0,
         ms=3,
-        color="tab:blue",
-        ecolor="tab:blue",
+        color="tab:cyan",
+        ecolor="tab:cyan",
         label="Data",
         zorder=3,
     )
@@ -1292,7 +1292,7 @@ def _(
     autocorrelograms_2ADC_outcome.plot(
         _model_sub["lag"],
         _model_sub["autocorr"],
-        color="tab:red",
+        color="tab:gray",
         label="GLM-HMM-T",
         zorder=4,
     )
@@ -1339,8 +1339,8 @@ def _(
         fmt="o",
         capsize=0,
         ms=3,
-        color="tab:blue",
-        ecolor="tab:blue",
+        color="tab:brown",
+        ecolor="tab:brown",
         label="Data",
         zorder=3,
     )
@@ -1350,12 +1350,12 @@ def _(
     autocorrelograms_2ADC_repetition.plot(
         _model_sub["lag"],
         _model_sub["autocorr"],
-        color="tab:red",
+        color="tab:gray",
         label="GLM-HMM-T",
         zorder=4,
     )
 
-    autocorrelograms_2ADC_repetition.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
+    autocorrelograms_2ADC_repetition.axhline(0.0, color="0.5", linestyle="--")
     autocorrelograms_2ADC_repetition.set_title("Repetition")
     autocorrelograms_2ADC_repetition.set_xlabel("Lag")
     _major_pos = [i for i in range(1, 21) if i % 5 == 0 or i == 1]
@@ -1410,8 +1410,8 @@ def _(
         fmt="o",
         capsize=0,
         ms=3,
-        color="tab:blue",
-        ecolor="tab:blue",
+        color="tab:cyan",
+        ecolor="tab:cyan",
         label="Data",
         zorder=3,
     )
@@ -1420,7 +1420,7 @@ def _(
     autocorrelograms_2AFC_outcome.plot(
         _model_sub["lag"],
         _model_sub["autocorr"],
-        color="tab:red",
+        color="tab:gray",
         label="GLM-HMM-T",
         zorder=4,
     )
@@ -1469,8 +1469,8 @@ def _(
         fmt="o",
         capsize=0,
         ms=3,
-        color="tab:blue",
-        ecolor="tab:blue",
+        color="tab:brown",
+        ecolor="tab:brown",
         label="Data",
         zorder=3,
     )
@@ -1479,12 +1479,12 @@ def _(
     autocorrelograms_2AFC_repetition.plot(
         _model_sub["lag"],
         _model_sub["autocorr"],
-        color="tab:red",
+        color="tab:gray",
         label="GLM-HMM-T",
         zorder=4,
     )
 
-    autocorrelograms_2AFC_repetition.axhline(0.0, color="0.5", linestyle="--", linewidth=0.8)
+    autocorrelograms_2AFC_repetition.axhline(0.0, color="0.5", linestyle="--")
     autocorrelograms_2AFC_repetition.set_title("Repetition")
     autocorrelograms_2AFC_repetition.set_xlabel("Lag")
     _major_pos = [i for i in range(1, 21) if i % 5 == 0 or i == 1]
@@ -1810,7 +1810,7 @@ def _(
     # transition_weights_2ADC.set_title(task_labels["2AFC_delay"])
     transition_weights_2ADC.set_title("Prev. Rew")
     transition_weights_2ADC.set_xlabel("")
-    transition_weights_2ADC.set_xticklabels(["E->E", "E->D", "D->E", "D->D"])
+    transition_weights_2ADC.set_xticklabels(["E→D", "D→E"])
     transition_weights_2ADC.set_ylabel("Trans. weight")
     transition_weights_2ADC.tick_params(axis='x', labelrotation=45)
     # transition_weights_2ADC.set_ylim(-7,7)
@@ -1865,7 +1865,7 @@ def _(
                                         order=transition_orders["2AFC"])
     # transition_weights_2AFC.set_title(task_labels["2AFC"])
     transition_weights_2AFC.set_xlabel("")
-    transition_weights_2AFC.set_xticklabels(["E->D", "D->E"])
+    transition_weights_2AFC.set_xticklabels(["E→D", "D→E"])
     transition_weights_2AFC.set_ylabel("Transition weight")
     transition_weights_2AFC.set_title("Cum. Rew")
     transition_weights_2AFC.tick_params(axis='x', labelrotation=45)
@@ -3797,7 +3797,7 @@ def _(
         _p_engaged,
         color=state_palette.get("Engaged", "tab:green"),
         alpha=1,
-        label="Engaged",
+        label="$p$(engaged)",
     )
     for _trial_x, _prob in zip(_x, _p_engaged, strict=False):
         if _prob > 0.5:
@@ -3822,7 +3822,7 @@ def _(
     single_session_2ADC.set_ylabel("Running fraction")
     single_session_2ADC.set_ylim(0, 1)
     single_session_2ADC.set_xlim(-0.5, len(session_repetition_data_2ADC) - 0.5)
-    single_session_2ADC.legend(frameon=False, loc="lower right")
+    single_session_2ADC.legend(frameon=False, loc="lower left", handlelength=1)
     single_session_2ADC.set_yticks([0, 0.5, 1], [0, 0.5, 1])
     if not mount_figure:
         single_session_2ADC.figure.savefig((path_panels / "2AFC_delay_single_session").with_suffix(f".{format}"))
@@ -4478,7 +4478,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Full figure
+    ## Mount figure
     """)
     return
 
@@ -4507,6 +4507,7 @@ def _(axd, fig, mount_figure, project_path):
                 "emission_weights_2ADC",
                 "psychometric_by_state_2ADC",
                 "autocorrelograms_2ADC_repetition",
+                "single_session_2ADC",
             }:
                 _legend.remove()
 
@@ -4542,7 +4543,7 @@ def _(axd, fig, mount_figure, project_path):
         # axd["model_comparison_ll_2ADC"].set_ylabel(r"$\Delta$ LL")
         # axd["model_comparison_ll_2AFC"].set_ylabel(r"$\Delta$ LL")
         axd["autocorrelograms_2ADC_repetition"].set_ylabel("Autocorrelation")
-        axd["single_session_2ADC"].set_ylabel("$p$(engaged)")
+        axd["single_session_2ADC"].set_ylabel("Running fraction")
         axd["single_session_2AFC"].set_yticklabels([])
         axd["single_session_2ADC"].set_xlabel("Trial")
         axd["single_session_2AFC"].set_xlabel("Trial")
@@ -4562,7 +4563,10 @@ def _(axd, fig, mount_figure, project_path):
         fig.savefig((project_path / "figures" / "panels3" / "figure3.pdf"))
         fig.savefig((project_path / "figures" / "panels3" / "figure3.png"))
         fig.savefig((project_path / "figures" / "panels3" / "figure3.svg"))
-        # fig.align_ylabels()
+
+        fig.align_xlabels()
+        fig.align_ylabels()
+        # fig.tight_layout()
     fig
     return
 

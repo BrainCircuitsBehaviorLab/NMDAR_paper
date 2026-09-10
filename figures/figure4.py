@@ -1270,18 +1270,23 @@ def _(fig_size, mount_figure, plt):
                     "single_session_drug_2AFC",
                     "single_session_drug_2AFC",
                 ],
-                # [
-                #     "histogram_transitions_2ADC",
-                #     "dwell_time_2ADC",
-                #     "histogram_transitions_2AFC",
-                #     "dwell_time_2AFC",
-                # ],
                 [
-                    "state_switch_histogram_pooled",
-                    "state_switch_histogram_pooled",
-                    "dwell_time_pooled",
-                    "transition_weights_pooled",
+                    "histogram_transitions_2ADC",
+                    "dwell_time_2ADC",
+                    "histogram_transitions_2AFC",
+                    "dwell_time_2AFC",
                 ],
+                # Pooled row (2AFC_DRUG + 2ADC_DRUG combined) -- reverted back to
+                # the per-task row above for now. Transition weights are left
+                # out of row 3 entirely for the moment (neither pooled nor
+                # per-task); uncomment this block + comment the one above to
+                # restore the pooled layout.
+                # [
+                #     "state_switch_histogram_pooled",
+                #     "state_switch_histogram_pooled",
+                #     "dwell_time_pooled",
+                #     "transition_weights_pooled",
+                # ],
                 [
                     "accuracy_treatment_2ADC",  # was: "transition_weights_2ADC" (placeholder ".")
                     "psychometric_2ADC_engaged",
@@ -1671,106 +1676,95 @@ def _(mo):
 
 
 @app.cell
-def transition_weights_pooled(
-    add_one_sample_zero_annotations_test,
-    add_subject_pair_lines,
-    axd,
-    boxplot_STYLE,
-    fig_size,
-    format,
-    mount_figure,
-    palette,
-    path_panels,
-    pd,
-    plt,
-    sns,
-    task_labels,
-    transition_orders,
-    transition_plot_dfs,
-):
-    # Pool transition weights from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
-    # single plot, instead of one panel per task, to gain plotting space and
-    # statistical power (more animals per feature/transition-direction group).
-    # Feature/transition categories match exactly between the two tasks
-    # ("Drug" and "Cum. reward" x "Engaged -> Disengaged", "Disengaged -> Engaged"),
-    # and subject ids don't collide, so pooling is unambiguous
-
-    pooled_transition_df = pd.concat(
-        [
-            transition_plot_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
-            transition_plot_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
-        ],
-        ignore_index=True,
-    )
-
-    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    transition_weights_pooled = (
-        plt.gca() if not mount_figure else axd["transition_weights_pooled"]
-    )
-    transition_weights_pooled.clear()
-    sns.boxplot(
-        data=pooled_transition_df,
-        x="feature_label",
-        y="weight",
-        hue="transition_label",
-        order=transition_orders["2AFC_DRUG"],
-        palette=palette,
-        ax=transition_weights_pooled,
-        **boxplot_STYLE,
-    )
-    transition_weights_pooled.axhline(0, color="0.5", linestyle="--")
-    add_subject_pair_lines(
-        transition_weights_pooled,
-        pooled_transition_df,
-        x="feature_label",
-        y="weight",
-        order=transition_orders["2AFC_DRUG"],
-        hue="transition_label",
-        hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
-    )
-    # NOTE: the one-sample annotation helper computes each label's pixel
-    # position from the axes' y-scale at call time, and (within the real
-    # multi-axes mounted mosaic specifically) can end up expanding the ylim
-    # well past our intended range, leaving a near-blank panel with floating
-    # annotation text. Clamping set_ylim both BEFORE and AFTER the annotation
-    # call makes the final range deterministic regardless of what the
-    # annotation helper does internally.
-    transition_weights_pooled.set_ylim(-15, 15)
-    # Original one-sample-vs-zero annotation (same function/call the per-task
-    # transition_weights_2AFC / transition_weights_2ADC panels use), just run
-    # on the pooled data.
-    add_one_sample_zero_annotations_test(
-        transition_weights_pooled,
-        pooled_transition_df,
-        x="feature_label",
-        y="weight",
-        order=transition_orders["2AFC_DRUG"],
-        hue="transition_label",
-        hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
-        show_pvalue_if_ns=False,
-    )
-    transition_weights_pooled.set_ylim(-15, 15)
-
-    _handles, _ = transition_weights_pooled.get_legend_handles_labels()
-    transition_weights_pooled.legend(
-        _handles,
-        ["E→D", "D→E"],
-        ncols=2,
-        frameon=False,
-        handlelength=0.25,
-        handletextpad=0.25, 
-        columnspacing=0.25,
-        loc="lower right"
-    )
-    # transition_weights_pooled.set_title("2AFC + 2ADC (pooled)")
-    transition_weights_pooled.set_xlabel("")
-    transition_weights_pooled.set_ylabel("Transition weight")
-    transition_weights_pooled.tick_params(axis="x", rotation=0)
-    if not mount_figure:
-        transition_weights_pooled.figure.savefig(
-            (path_panels / "transition_weights_pooled").with_suffix(f".{format}")
-        )
-    transition_weights_pooled
+def transition_weights_pooled():
+    # Commented out: reverted row 3 back to per-task histogram/dwell
+    # panels (see aLJB mosaic cell). This transition_weights_pooled panel directly
+    # indexes axd["...pooled"], which no longer exists in the mosaic,
+    # so it would raise KeyError if left active. Uncomment together
+    # with the pooled row in aLJB to restore.
+    # # Pool transition weights from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
+    # # single plot, instead of one panel per task, to gain plotting space and
+    # # statistical power (more animals per feature/transition-direction group).
+    # # Feature/transition categories match exactly between the two tasks
+    # # ("Drug" and "Cum. reward" x "Engaged -> Disengaged", "Disengaged -> Engaged"),
+    # # and subject ids don't collide, so pooling is unambiguous
+    #
+    # pooled_transition_df = pd.concat(
+    #     [
+    #         transition_plot_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
+    #         transition_plot_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
+    #     ],
+    #     ignore_index=True,
+    # )
+    #
+    # plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    # transition_weights_pooled = (
+    #     plt.gca() if not mount_figure else axd["transition_weights_pooled"]
+    # )
+    # transition_weights_pooled.clear()
+    # sns.boxplot(
+    #     data=pooled_transition_df,
+    #     x="feature_label",
+    #     y="weight",
+    #     hue="transition_label",
+    #     order=transition_orders["2AFC_DRUG"],
+    #     palette=palette,
+    #     ax=transition_weights_pooled,
+    #     **boxplot_STYLE,
+    # )
+    # transition_weights_pooled.axhline(0, color="0.5", linestyle="--")
+    # add_subject_pair_lines(
+    #     transition_weights_pooled,
+    #     pooled_transition_df,
+    #     x="feature_label",
+    #     y="weight",
+    #     order=transition_orders["2AFC_DRUG"],
+    #     hue="transition_label",
+    #     hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+    # )
+    # # NOTE: the one-sample annotation helper computes each label's pixel
+    # # position from the axes' y-scale at call time, and (within the real
+    # # multi-axes mounted mosaic specifically) can end up expanding the ylim
+    # # well past our intended range, leaving a near-blank panel with floating
+    # # annotation text. Clamping set_ylim both BEFORE and AFTER the annotation
+    # # call makes the final range deterministic regardless of what the
+    # # annotation helper does internally.
+    # transition_weights_pooled.set_ylim(-15, 15)
+    # # Original one-sample-vs-zero annotation (same function/call the per-task
+    # # transition_weights_2AFC / transition_weights_2ADC panels use), just run
+    # # on the pooled data.
+    # add_one_sample_zero_annotations_test(
+    #     transition_weights_pooled,
+    #     pooled_transition_df,
+    #     x="feature_label",
+    #     y="weight",
+    #     order=transition_orders["2AFC_DRUG"],
+    #     hue="transition_label",
+    #     hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+    #     show_pvalue_if_ns=False,
+    # )
+    # transition_weights_pooled.set_ylim(-15, 15)
+    #
+    # _handles, _ = transition_weights_pooled.get_legend_handles_labels()
+    # transition_weights_pooled.legend(
+    #     _handles,
+    #     ["E→D", "D→E"],
+    #     ncols=2,
+    #     frameon=False,
+    #     handlelength=0.25,
+    #     handletextpad=0.25, 
+    #     columnspacing=0.25,
+    #     loc="lower right"
+    # )
+    # # transition_weights_pooled.set_title("2AFC + 2ADC (pooled)")
+    # transition_weights_pooled.set_xlabel("")
+    # transition_weights_pooled.set_ylabel("Transition weight")
+    # transition_weights_pooled.tick_params(axis="x", rotation=0)
+    # if not mount_figure:
+    #     transition_weights_pooled.figure.savefig(
+    #         (path_panels / "transition_weights_pooled").with_suffix(f".{format}")
+    #     )
+    # transition_weights_pooled
     return
 
 
@@ -2000,6 +1994,7 @@ def _(
     axd,
     format,
     mount_figure,
+    np,
     path_panels,
     pd,
     plt,
@@ -2048,15 +2043,27 @@ def _(
     #     ax=psychometric_2ADC,
     # )
 
-    # --- Engaged-only psychometric curve. Exactly the same computation as
-    # treatment_psychometric_dfs["2ADC_DRUG"] (ecfG cell) -- 9 quantile bins,
-    # per-subject averaging within each bin -- just filtered to
-    # state_label == "Engaged" first.
-    _engaged_trials_2ADC_mounted = treatment_trial_dfs["2ADC_DRUG"][
-        treatment_trial_dfs["2ADC_DRUG"]["state_label"] == "Engaged"
+    # --- Engaged-only psychometric curve. Same as treatment_psychometric_dfs
+    # (9 quantile bins, per-subject averaging), but the model column is the
+    # STATE-CONDITIONAL prediction p_right_state = pR_state_<state_idx> (per
+    # the colleague's reference implementation in
+    # "supplementary figures/figure42.py", the engaged_psychometric_dfs cell
+    # just before "## 2ADC PC") rather than the marginal p_right_model/pR
+    # column -- using the marginal (posterior-state-weighted) prediction here
+    # was what made our engaged-only model curve diverge between Saline/Drug;
+    # the state-conditional one matches almost exactly.
+    _engaged_trials_2ADC_mounted = treatment_trial_dfs["2ADC_DRUG"].copy()
+    _state_idx_2ADC_mounted = pd.to_numeric(_engaged_trials_2ADC_mounted["state_idx"], errors="coerce")
+    _engaged_trials_2ADC_mounted["p_right_state"] = np.where(
+        _state_idx_2ADC_mounted.eq(0),
+        pd.to_numeric(_engaged_trials_2ADC_mounted["pR_state_0"], errors="coerce"),
+        pd.to_numeric(_engaged_trials_2ADC_mounted["pR_state_1"], errors="coerce"),
+    )
+    _engaged_trials_2ADC_mounted = _engaged_trials_2ADC_mounted[
+        _engaged_trials_2ADC_mounted["state_label"] == "Engaged"
     ].copy()
     _psychometric_engaged_2ADC_mounted = _engaged_trials_2ADC_mounted.dropna(
-        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_model"]
+        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_state"]
     ).copy()
     _psychometric_engaged_2ADC_mounted["_evidence_bin"] = pd.qcut(
         _psychometric_engaged_2ADC_mounted["stimulus_evidence"], q=9, duplicates="drop"
@@ -2069,7 +2076,7 @@ def _(
         _psychometric_engaged_2ADC_mounted.groupby(
             ["subject", "treatment", "stimulus_evidence"], as_index=False, observed=True
         )
-        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_model", "mean"))
+        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_state", "mean"))
         .sort_values(["treatment", "stimulus_evidence", "subject"])
     )
 
@@ -2138,6 +2145,7 @@ def _(mo):
 def psychometric_2ADC_engaged(
     Line2D,
     fig_size,
+    np,
     pd,
     plt,
     psychometric_limits,
@@ -2147,15 +2155,29 @@ def psychometric_2ADC_engaged(
     treatment_palette,
     treatment_trial_dfs,
 ):
-    # Same as psychometric_dfs["2ADC_DRUG"] (treatment_psychometric_dfs / ecfG
-    # cell), just filtered to Engaged-state trials before binning -- otherwise
-    # identical: 9 quantile bins of stimulus_evidence, then mean p_right_data /
-    # p_right_model per subject x treatment x bin.
-    _engaged_trials_2ADC = treatment_trial_dfs["2ADC_DRUG"][
-        treatment_trial_dfs["2ADC_DRUG"]["state_label"] == "Engaged"
+    # Same as treatment_psychometric_dfs["2ADC_DRUG"] (ecfG cell), filtered to
+    # Engaged-state trials -- EXCEPT for the model column. Per the colleague's
+    # reference implementation (supplementary figures/figure42.py, the cell
+    # building engaged_psychometric_dfs, just before "## 2ADC PC"): for a
+    # state-restricted curve the model prediction should be the STATE-
+    # CONDITIONAL prediction p_right_state = pR_state_<state_idx> (the model's
+    # "as if fully in this state" probability, using that state's own emission
+    # weights), not the general p_right_model/pR column (which is a marginal,
+    # posterior-state-weighted blend across both states). That marginal blend is
+    # what was making our engaged-only model curve noisier/more divergent for
+    # 2ADC than the colleague's version.
+    _engaged_trials_2ADC = treatment_trial_dfs["2ADC_DRUG"].copy()
+    _state_idx_2ADC = pd.to_numeric(_engaged_trials_2ADC["state_idx"], errors="coerce")
+    _engaged_trials_2ADC["p_right_state"] = np.where(
+        _state_idx_2ADC.eq(0),
+        pd.to_numeric(_engaged_trials_2ADC["pR_state_0"], errors="coerce"),
+        pd.to_numeric(_engaged_trials_2ADC["pR_state_1"], errors="coerce"),
+    )
+    _engaged_trials_2ADC = _engaged_trials_2ADC[
+        _engaged_trials_2ADC["state_label"] == "Engaged"
     ].copy()
     _psychometric_engaged_2ADC = _engaged_trials_2ADC.dropna(
-        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_model"]
+        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_state"]
     ).copy()
     _psychometric_engaged_2ADC["_evidence_bin"] = pd.qcut(
         _psychometric_engaged_2ADC["stimulus_evidence"], q=9, duplicates="drop"
@@ -2168,7 +2190,7 @@ def psychometric_2ADC_engaged(
         _psychometric_engaged_2ADC.groupby(
             ["subject", "treatment", "stimulus_evidence"], as_index=False, observed=True
         )
-        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_model", "mean"))
+        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_state", "mean"))
         .sort_values(["treatment", "stimulus_evidence", "subject"])
     )
 
@@ -2208,7 +2230,7 @@ def psychometric_2ADC_engaged(
     )
     psychometric_2ADC_engaged.set_title(task_labels["2ADC_DRUG"] + " (Engaged only)")
     psychometric_2ADC_engaged.set_xlabel("Stimulus evidence")
-    psychometric_2ADC_engaged.set_ylabel("$p$(right | eng.)")
+    psychometric_2ADC_engaged.set_ylabel(r"$p(\mathrm{right})$")
     _legend_handles = [
         Line2D([0], [0], marker="o", color="black", linestyle="None", label="Data"),
         Line2D([0], [0], color="black", label="Model"),
@@ -2235,6 +2257,7 @@ def _(
     axd,
     format,
     mount_figure,
+    np,
     path_panels,
     pd,
     plt,
@@ -2283,15 +2306,25 @@ def _(
     #     ax=psychometric_2AFC,
     # )
 
-    # --- Engaged-only psychometric curve. Exactly the same computation as
-    # treatment_psychometric_dfs["2AFC_DRUG"] (ecfG cell) -- 9 quantile bins,
-    # per-subject averaging within each bin -- just filtered to
-    # state_label == "Engaged" first.
-    _engaged_trials_2AFC_mounted = treatment_trial_dfs["2AFC_DRUG"][
-        treatment_trial_dfs["2AFC_DRUG"]["state_label"] == "Engaged"
+    # --- Engaged-only psychometric curve. Same as treatment_psychometric_dfs
+    # (9 quantile bins, per-subject averaging), but the model column is the
+    # STATE-CONDITIONAL prediction p_right_state = pR_state_<state_idx> (per
+    # the colleague's reference implementation in
+    # "supplementary figures/figure42.py", the engaged_psychometric_dfs cell
+    # just before "## 2ADC PC") rather than the marginal p_right_model/pR
+    # column. See psychometric_2ADC for the full rationale.
+    _engaged_trials_2AFC_mounted = treatment_trial_dfs["2AFC_DRUG"].copy()
+    _state_idx_2AFC_mounted = pd.to_numeric(_engaged_trials_2AFC_mounted["state_idx"], errors="coerce")
+    _engaged_trials_2AFC_mounted["p_right_state"] = np.where(
+        _state_idx_2AFC_mounted.eq(0),
+        pd.to_numeric(_engaged_trials_2AFC_mounted["pR_state_0"], errors="coerce"),
+        pd.to_numeric(_engaged_trials_2AFC_mounted["pR_state_1"], errors="coerce"),
+    )
+    _engaged_trials_2AFC_mounted = _engaged_trials_2AFC_mounted[
+        _engaged_trials_2AFC_mounted["state_label"] == "Engaged"
     ].copy()
     _psychometric_engaged_2AFC_mounted = _engaged_trials_2AFC_mounted.dropna(
-        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_model"]
+        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_state"]
     ).copy()
     _psychometric_engaged_2AFC_mounted["_evidence_bin"] = pd.qcut(
         _psychometric_engaged_2AFC_mounted["stimulus_evidence"], q=9, duplicates="drop"
@@ -2304,7 +2337,7 @@ def _(
         _psychometric_engaged_2AFC_mounted.groupby(
             ["subject", "treatment", "stimulus_evidence"], as_index=False, observed=True
         )
-        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_model", "mean"))
+        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_state", "mean"))
         .sort_values(["treatment", "stimulus_evidence", "subject"])
     )
 
@@ -2373,6 +2406,7 @@ def _(mo):
 def psychometric_2AFC_engaged(
     Line2D,
     fig_size,
+    np,
     pd,
     plt,
     psychometric_limits,
@@ -2382,15 +2416,27 @@ def psychometric_2AFC_engaged(
     treatment_palette,
     treatment_trial_dfs,
 ):
-    # Same as psychometric_dfs["2AFC_DRUG"] (treatment_psychometric_dfs / ecfG
-    # cell), just filtered to Engaged-state trials before binning -- otherwise
-    # identical: 9 quantile bins of stimulus_evidence, then mean p_right_data /
-    # p_right_model per subject x treatment x bin.
-    _engaged_trials_2AFC = treatment_trial_dfs["2AFC_DRUG"][
-        treatment_trial_dfs["2AFC_DRUG"]["state_label"] == "Engaged"
+    # Same as treatment_psychometric_dfs["2AFC_DRUG"] (ecfG cell), filtered to
+    # Engaged-state trials -- EXCEPT for the model column. Per the colleague's
+    # reference implementation (supplementary figures/figure42.py, the cell
+    # building engaged_psychometric_dfs, just before "## 2ADC PC"): for a
+    # state-restricted curve the model prediction should be the STATE-
+    # CONDITIONAL prediction p_right_state = pR_state_<state_idx> (the model's
+    # "as if fully in this state" probability, using that state's own emission
+    # weights), not the general p_right_model/pR column (which is a marginal,
+    # posterior-state-weighted blend across both states).
+    _engaged_trials_2AFC = treatment_trial_dfs["2AFC_DRUG"].copy()
+    _state_idx_2AFC = pd.to_numeric(_engaged_trials_2AFC["state_idx"], errors="coerce")
+    _engaged_trials_2AFC["p_right_state"] = np.where(
+        _state_idx_2AFC.eq(0),
+        pd.to_numeric(_engaged_trials_2AFC["pR_state_0"], errors="coerce"),
+        pd.to_numeric(_engaged_trials_2AFC["pR_state_1"], errors="coerce"),
+    )
+    _engaged_trials_2AFC = _engaged_trials_2AFC[
+        _engaged_trials_2AFC["state_label"] == "Engaged"
     ].copy()
     _psychometric_engaged_2AFC = _engaged_trials_2AFC.dropna(
-        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_model"]
+        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_state"]
     ).copy()
     _psychometric_engaged_2AFC["_evidence_bin"] = pd.qcut(
         _psychometric_engaged_2AFC["stimulus_evidence"], q=9, duplicates="drop"
@@ -2403,7 +2449,7 @@ def psychometric_2AFC_engaged(
         _psychometric_engaged_2AFC.groupby(
             ["subject", "treatment", "stimulus_evidence"], as_index=False, observed=True
         )
-        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_model", "mean"))
+        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_state", "mean"))
         .sort_values(["treatment", "stimulus_evidence", "subject"])
     )
 
@@ -2443,7 +2489,7 @@ def psychometric_2AFC_engaged(
     )
     psychometric_2AFC_engaged.set_title(task_labels["2AFC_DRUG"] + " (Engaged only)")
     psychometric_2AFC_engaged.set_xlabel("Stimulus evidence")
-    psychometric_2AFC_engaged.set_ylabel("$p$(right | eng.)")
+    psychometric_2AFC_engaged.set_ylabel(r"$p(\mathrm{right})$")
     _legend_handles = [
         Line2D([0], [0], marker="o", color="black", linestyle="None", label="Data"),
         Line2D([0], [0], color="black", label="Model"),
@@ -3250,43 +3296,43 @@ def dwell_lmm_2ADC(
         print(f"Observed treatment_drug beta = {_observed_beta:.4f}")
         print(f"Treatment (Drug vs Saline) LMM Wald p-value: {_result.pvalues['treatment_drug']:.4f}")
 
-        # Permutation test: shuffle the drug/saline session labels within each
-        # animal (each animal keeps its own number of drug/saline sessions),
-        # refit the same LMM, and build a null distribution of treatment_drug beta.
-        _session_info = (
-            _state_df[["subject", "session", "treatment_drug"]]
-            .drop_duplicates()
-            .reset_index(drop=True)
-        )
-        _session_key_to_idx = {
-            (row.subject, row.session): idx
-            for idx, row in enumerate(_session_info.itertuples())
-        }
-        _bout_session_idx = np.array([
-            _session_key_to_idx[(subject, session)]
-            for subject, session in zip(_state_df["subject"], _state_df["session"])
-        ])
-        _session_subject = _session_info["subject"].to_numpy()
-        _session_treatment = _session_info["treatment_drug"].to_numpy()
-        _subject_positions = {}
-        for _idx, _subject in enumerate(_session_subject):
-            _subject_positions.setdefault(_subject, []).append(_idx)
-        _subject_positions = {
-            _subject: np.array(_positions)
-            for _subject, _positions in _subject_positions.items()
-        }
+        # Permutation test: for each animal, flip (or not) its Drug/Saline
+        # label as a WHOLE UNIT -- either keep the animal's real session
+        # labels, or swap Drug<->Saline for every one of its sessions/bouts.
+        #
+        # This replaces an earlier version that shuffled session labels
+        # independently WITHIN each animal. That scrambled the real pairing
+        # between specific (often bout-count-imbalanced) sessions and their
+        # treatment label -- e.g. one animal could have 80 Drug bouts vs 1
+        # Saline bout -- which let the real fit's between-animal random-slope
+        # variance on treatment collapse under permutation (from ~2 down to
+        # ~0.1-0.2 in a spot check) and produced an artificially narrow,
+        # anti-conservative null. That version gave 2AFC dwell times a *** in
+        # both states despite a 5/5 (Engaged) and 8/2 (Disengaged) per-animal
+        # split and non-significant paired t-test / Wilcoxon / LMM Wald test.
+        #
+        # Flipping whole animals keeps each animal's own session/bout-count
+        # structure completely intact in every permutation, only relabeling
+        # which physical condition counts as "Drug" for that animal -- the
+        # standard paired/sign-flip permutation unit for a within-subject
+        # design. With N animals there are 2**N possible flip patterns;
+        # N_SHUF_2ADC draws are a Monte Carlo sample of that space.
+        _subjects_2ADC = _state_df["subject"].unique()
+        _subject_to_pos_2ADC = {_s: _i for _i, _s in enumerate(_subjects_2ADC)}
+        _subject_idx_2ADC = _state_df["subject"].map(_subject_to_pos_2ADC).to_numpy()
+        _treatment_drug_arr_2ADC = _state_df["treatment_drug"].to_numpy()
 
         _null_betas = np.full(N_SHUF_2ADC, np.nan)
         _n_failed = 0
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             for _shuf_idx in range(N_SHUF_2ADC):
-                _shuffled_treatment = _session_treatment.copy()
-                for _subject, _positions in _subject_positions.items():
-                    _shuffled_treatment[_positions] = _perm_rng_2ADC.permutation(
-                        _session_treatment[_positions]
-                    )
-                _state_df["treatment_drug_shuf"] = _shuffled_treatment[_bout_session_idx]
+                _flip = _perm_rng_2ADC.integers(0, 2, size=len(_subjects_2ADC))
+                _state_df["treatment_drug_shuf"] = np.where(
+                    _flip[_subject_idx_2ADC] == 1,
+                    1 - _treatment_drug_arr_2ADC,
+                    _treatment_drug_arr_2ADC,
+                )
                 try:
                     _shuf_model = smf.mixedlm(
                         "log_dwell ~ treatment_drug_shuf",
@@ -3462,43 +3508,43 @@ def dwell_lmm_2AFC(
         print(f"Observed treatment_drug beta = {_observed_beta:.4f}")
         print(f"Treatment (Drug vs Saline) LMM Wald p-value: {_result.pvalues['treatment_drug']:.4f}")
 
-        # Permutation test: shuffle the drug/saline session labels within each
-        # animal (each animal keeps its own number of drug/saline sessions),
-        # refit the same LMM, and build a null distribution of treatment_drug beta.
-        _session_info = (
-            _state_df[["subject", "session", "treatment_drug"]]
-            .drop_duplicates()
-            .reset_index(drop=True)
-        )
-        _session_key_to_idx = {
-            (row.subject, row.session): idx
-            for idx, row in enumerate(_session_info.itertuples())
-        }
-        _bout_session_idx = np.array([
-            _session_key_to_idx[(subject, session)]
-            for subject, session in zip(_state_df["subject"], _state_df["session"])
-        ])
-        _session_subject = _session_info["subject"].to_numpy()
-        _session_treatment = _session_info["treatment_drug"].to_numpy()
-        _subject_positions = {}
-        for _idx, _subject in enumerate(_session_subject):
-            _subject_positions.setdefault(_subject, []).append(_idx)
-        _subject_positions = {
-            _subject: np.array(_positions)
-            for _subject, _positions in _subject_positions.items()
-        }
+        # Permutation test: for each animal, flip (or not) its Drug/Saline
+        # label as a WHOLE UNIT -- either keep the animal's real session
+        # labels, or swap Drug<->Saline for every one of its sessions/bouts.
+        #
+        # This replaces an earlier version that shuffled session labels
+        # independently WITHIN each animal. That scrambled the real pairing
+        # between specific (often bout-count-imbalanced) sessions and their
+        # treatment label -- e.g. one animal could have 80 Drug bouts vs 1
+        # Saline bout -- which let the real fit's between-animal random-slope
+        # variance on treatment collapse under permutation (from ~2 down to
+        # ~0.1-0.2 in a spot check) and produced an artificially narrow,
+        # anti-conservative null. That version gave 2AFC dwell times a *** in
+        # both states despite a 5/5 (Engaged) and 8/2 (Disengaged) per-animal
+        # split and non-significant paired t-test / Wilcoxon / LMM Wald test.
+        #
+        # Flipping whole animals keeps each animal's own session/bout-count
+        # structure completely intact in every permutation, only relabeling
+        # which physical condition counts as "Drug" for that animal -- the
+        # standard paired/sign-flip permutation unit for a within-subject
+        # design. With N animals there are 2**N possible flip patterns;
+        # N_SHUF_2AFC draws are a Monte Carlo sample of that space.
+        _subjects_2AFC = _state_df["subject"].unique()
+        _subject_to_pos_2AFC = {_s: _i for _i, _s in enumerate(_subjects_2AFC)}
+        _subject_idx_2AFC = _state_df["subject"].map(_subject_to_pos_2AFC).to_numpy()
+        _treatment_drug_arr_2AFC = _state_df["treatment_drug"].to_numpy()
 
         _null_betas = np.full(N_SHUF_2AFC, np.nan)
         _n_failed = 0
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             for _shuf_idx in range(N_SHUF_2AFC):
-                _shuffled_treatment = _session_treatment.copy()
-                for _subject, _positions in _subject_positions.items():
-                    _shuffled_treatment[_positions] = _perm_rng_2AFC.permutation(
-                        _session_treatment[_positions]
-                    )
-                _state_df["treatment_drug_shuf"] = _shuffled_treatment[_bout_session_idx]
+                _flip = _perm_rng_2AFC.integers(0, 2, size=len(_subjects_2AFC))
+                _state_df["treatment_drug_shuf"] = np.where(
+                    _flip[_subject_idx_2AFC] == 1,
+                    1 - _treatment_drug_arr_2AFC,
+                    _treatment_drug_arr_2AFC,
+                )
                 try:
                     _shuf_model = smf.mixedlm(
                         "log_dwell ~ treatment_drug_shuf",
@@ -3700,6 +3746,11 @@ def dwell_time_permutation_annotations(
         hue="treatment",
         hue_order=treatment_order,
     )
+    # Fixed ylim (1, 1000) so both dwell-time panels share the same y-range --
+    # without this, matplotlib auto-scales each panel to its own data and the
+    # two axes end up with different ranges. Clamped both BEFORE and AFTER the
+    # annotation call since the annotation helper can expand ylim on its own.
+    dwell_time_2AFC.set_ylim(1, 1000)
     _add_permutation_state_annotation(
         dwell_time_2AFC,
         treatment_dwell_dfs["2AFC_DRUG"],
@@ -3708,6 +3759,7 @@ def dwell_time_permutation_annotations(
         y="mean_dwell_trials",
         order=["Engaged", "Disengaged"],
     )
+    dwell_time_2AFC.set_ylim(1, 1000)
     dwell_time_2AFC.set_title(task_labels["2AFC_DRUG"])
     dwell_time_2AFC.set_xlabel("")
     dwell_time_2AFC.set_ylabel("Dwell time (trials)")
@@ -3742,6 +3794,8 @@ def dwell_time_permutation_annotations(
         hue="treatment",
         hue_order=treatment_order,
     )
+    # Fixed ylim (1, 1000), see 2AFC panel above for why.
+    dwell_time_2ADC.set_ylim(1, 1000)
     _add_permutation_state_annotation(
         dwell_time_2ADC,
         treatment_dwell_dfs["2ADC_DRUG"],
@@ -3750,6 +3804,7 @@ def dwell_time_permutation_annotations(
         y="mean_dwell_trials",
         order=["Engaged", "Disengaged"],
     )
+    dwell_time_2ADC.set_ylim(1, 1000)
     dwell_time_2ADC.set_title(task_labels["2ADC_DRUG"])
     dwell_time_2ADC.set_xlabel("")
     dwell_time_2ADC.set_ylabel("Dwell time (trials)")
@@ -3770,93 +3825,82 @@ def _(mo):
 
 
 @app.cell
-def dwell_time_pooled(
-    BOXPLOT_STYLE,
-    add_paired_state_annotation,
-    add_subject_pair_lines,
-    axd,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    pd,
-    plt,
-    sns,
-    task_labels,
-    treatment_dwell_dfs,
-    treatment_order,
-    treatment_palette,
-):
-    # Pool dwell times from both tasks (2AFC_DRUG + 2ADC_DRUG) into a single
-    # Saline-vs-Drug boxplot, instead of one panel per task, to gain plotting
-    # space and statistical power (more animals per treatment arm). Subject IDs
-    # do not collide between the two cohorts (2AFC_DRUG uses plain numeric ids,
-    # 2ADC_DRUG uses letter-prefixed ids), so pooling and pairing by subject is
-    # unambiguous.
-    pooled_dwell_df = pd.concat(
-        [
-            treatment_dwell_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
-            treatment_dwell_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
-        ],
-        ignore_index=True,
-    )
-
-    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    dwell_time_pooled = plt.gca() if not mount_figure else axd["dwell_time_pooled"]
-    dwell_time_pooled.clear()
-    sns.boxplot(
-        data=pooled_dwell_df,
-        x="state_label",
-        y="mean_dwell_trials",
-        hue="treatment",
-        order=["Engaged", "Disengaged"],
-        hue_order=treatment_order,
-        palette=treatment_palette,
-        ax=dwell_time_pooled,
-        legend=True,
-        **BOXPLOT_STYLE,
-    )
-    dwell_time_pooled.set_yscale("log")
-    add_subject_pair_lines(
-        dwell_time_pooled,
-        pooled_dwell_df,
-        x="state_label",
-        y="mean_dwell_trials",
-        order=["Engaged", "Disengaged"],
-        hue="treatment",
-        hue_order=treatment_order,
-    )
-    # NOTE: like transition_weights_pooled, the paired-annotation helper can
-    # expand the y-axis well past the actual data range within the real
-    # mounted mosaic, leaving blank space with floating annotation text.
-    # Clamping set_ylim both BEFORE and AFTER the annotation call keeps the
-    # final range deterministic regardless of what the helper does internally.
-    # pooled_dwell_df["mean_dwell_trials"] actually spans ~1.4-311, so (1, 1000)
-    # gives headroom for the annotation brackets on the log scale.
-    dwell_time_pooled.set_ylim(1, 1000)
-    # Original paired t-test annotation (same function/call the per-task
-    # dwell_time_2AFC / dwell_time_2ADC panels use), just run on the pooled data.
-    add_paired_state_annotation(
-        dwell_time_pooled,
-        pooled_dwell_df,
-        x="state_label",
-        y="mean_dwell_trials",
-        order=["Engaged", "Disengaged"],
-        hue="treatment",
-        hue_order=treatment_order,
-        # show_pvalue_if_ns=True
-    )
-    dwell_time_pooled.set_ylim(1, 1000)
-    # dwell_time_pooled.set_title("2AFC + 2ADC (pooled)")
-    dwell_time_pooled.set_xlabel("State")
-    dwell_time_pooled.set_ylabel("Dwell time (trials)")
-    dwell_time_pooled.set_xticklabels(["Eng.", "Dis."])
-    dwell_time_pooled.legend(frameon=False, title="")
-    if not mount_figure:
-        dwell_time_pooled.figure.savefig(
-            (path_panels / "dwell_time_pooled").with_suffix(f".{format}")
-        )
-    dwell_time_pooled
+def dwell_time_pooled():
+    # Commented out: reverted row 3 back to per-task histogram/dwell
+    # panels (see aLJB mosaic cell). This dwell_time_pooled panel directly
+    # indexes axd["...pooled"], which no longer exists in the mosaic,
+    # so it would raise KeyError if left active. Uncomment together
+    # with the pooled row in aLJB to restore.
+    # # Pool dwell times from both tasks (2AFC_DRUG + 2ADC_DRUG) into a single
+    # # Saline-vs-Drug boxplot, instead of one panel per task, to gain plotting
+    # # space and statistical power (more animals per treatment arm). Subject IDs
+    # # do not collide between the two cohorts (2AFC_DRUG uses plain numeric ids,
+    # # 2ADC_DRUG uses letter-prefixed ids), so pooling and pairing by subject is
+    # # unambiguous.
+    # pooled_dwell_df = pd.concat(
+    #     [
+    #         treatment_dwell_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
+    #         treatment_dwell_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
+    #     ],
+    #     ignore_index=True,
+    # )
+    #
+    # plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    # dwell_time_pooled = plt.gca() if not mount_figure else axd["dwell_time_pooled"]
+    # dwell_time_pooled.clear()
+    # sns.boxplot(
+    #     data=pooled_dwell_df,
+    #     x="state_label",
+    #     y="mean_dwell_trials",
+    #     hue="treatment",
+    #     order=["Engaged", "Disengaged"],
+    #     hue_order=treatment_order,
+    #     palette=treatment_palette,
+    #     ax=dwell_time_pooled,
+    #     legend=True,
+    #     **BOXPLOT_STYLE,
+    # )
+    # dwell_time_pooled.set_yscale("log")
+    # add_subject_pair_lines(
+    #     dwell_time_pooled,
+    #     pooled_dwell_df,
+    #     x="state_label",
+    #     y="mean_dwell_trials",
+    #     order=["Engaged", "Disengaged"],
+    #     hue="treatment",
+    #     hue_order=treatment_order,
+    # )
+    # # NOTE: like transition_weights_pooled, the paired-annotation helper can
+    # # expand the y-axis well past the actual data range within the real
+    # # mounted mosaic, leaving blank space with floating annotation text.
+    # # Clamping set_ylim both BEFORE and AFTER the annotation call keeps the
+    # # final range deterministic regardless of what the helper does internally.
+    # # pooled_dwell_df["mean_dwell_trials"] actually spans ~1.4-311, so (1, 1000)
+    # # gives headroom for the annotation brackets on the log scale.
+    # dwell_time_pooled.set_ylim(1, 1000)
+    # # Original paired t-test annotation (same function/call the per-task
+    # # dwell_time_2AFC / dwell_time_2ADC panels use), just run on the pooled data.
+    # add_paired_state_annotation(
+    #     dwell_time_pooled,
+    #     pooled_dwell_df,
+    #     x="state_label",
+    #     y="mean_dwell_trials",
+    #     order=["Engaged", "Disengaged"],
+    #     hue="treatment",
+    #     hue_order=treatment_order,
+    #     # show_pvalue_if_ns=True
+    # )
+    # dwell_time_pooled.set_ylim(1, 1000)
+    # # dwell_time_pooled.set_title("2AFC + 2ADC (pooled)")
+    # dwell_time_pooled.set_xlabel("State")
+    # dwell_time_pooled.set_ylabel("Dwell time (trials)")
+    # dwell_time_pooled.set_xticklabels(["Eng.", "Dis."])
+    # dwell_time_pooled.legend(frameon=False, title="")
+    # if not mount_figure:
+    #     dwell_time_pooled.figure.savefig(
+    #         (path_panels / "dwell_time_pooled").with_suffix(f".{format}")
+    #     )
+    # dwell_time_pooled
     return
 
 
@@ -3899,43 +3943,43 @@ def dwell_lmm_pooled(
         print(f"Observed treatment_drug beta = {_observed_beta:.4f}")
         print(f"Treatment (Drug vs Saline) LMM Wald p-value: {_result.pvalues['treatment_drug']:.4f}")
 
-        # Permutation test: shuffle the drug/saline session labels within each
-        # animal (each animal keeps its own number of drug/saline sessions),
-        # refit the same LMM, and build a null distribution of treatment_drug beta.
-        _session_info = (
-            _state_df[["subject", "session", "treatment_drug"]]
-            .drop_duplicates()
-            .reset_index(drop=True)
-        )
-        _session_key_to_idx = {
-            (row.subject, row.session): idx
-            for idx, row in enumerate(_session_info.itertuples())
-        }
-        _bout_session_idx = np.array([
-            _session_key_to_idx[(subject, session)]
-            for subject, session in zip(_state_df["subject"], _state_df["session"])
-        ])
-        _session_subject = _session_info["subject"].to_numpy()
-        _session_treatment = _session_info["treatment_drug"].to_numpy()
-        _subject_positions = {}
-        for _idx, _subject in enumerate(_session_subject):
-            _subject_positions.setdefault(_subject, []).append(_idx)
-        _subject_positions = {
-            _subject: np.array(_positions)
-            for _subject, _positions in _subject_positions.items()
-        }
+        # Permutation test: for each animal, flip (or not) its Drug/Saline
+        # label as a WHOLE UNIT -- either keep the animal's real session
+        # labels, or swap Drug<->Saline for every one of its sessions/bouts.
+        #
+        # This replaces an earlier version that shuffled session labels
+        # independently WITHIN each animal. That scrambled the real pairing
+        # between specific (often bout-count-imbalanced) sessions and their
+        # treatment label -- e.g. one animal could have 80 Drug bouts vs 1
+        # Saline bout -- which let the real fit's between-animal random-slope
+        # variance on treatment collapse under permutation (from ~2 down to
+        # ~0.1-0.2 in a spot check) and produced an artificially narrow,
+        # anti-conservative null. That version gave 2AFC dwell times a *** in
+        # both states despite a 5/5 (Engaged) and 8/2 (Disengaged) per-animal
+        # split and non-significant paired t-test / Wilcoxon / LMM Wald test.
+        #
+        # Flipping whole animals keeps each animal's own session/bout-count
+        # structure completely intact in every permutation, only relabeling
+        # which physical condition counts as "Drug" for that animal -- the
+        # standard paired/sign-flip permutation unit for a within-subject
+        # design. With N animals there are 2**N possible flip patterns;
+        # N_SHUF_pooled draws are a Monte Carlo sample of that space.
+        _subjects_pooled = _state_df["subject"].unique()
+        _subject_to_pos_pooled = {_s: _i for _i, _s in enumerate(_subjects_pooled)}
+        _subject_idx_pooled = _state_df["subject"].map(_subject_to_pos_pooled).to_numpy()
+        _treatment_drug_arr_pooled = _state_df["treatment_drug"].to_numpy()
 
         _null_betas = np.full(N_SHUF_pooled, np.nan)
         _n_failed = 0
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             for _shuf_idx in range(N_SHUF_pooled):
-                _shuffled_treatment = _session_treatment.copy()
-                for _subject, _positions in _subject_positions.items():
-                    _shuffled_treatment[_positions] = _perm_rng_pooled.permutation(
-                        _session_treatment[_positions]
-                    )
-                _state_df["treatment_drug_shuf"] = _shuffled_treatment[_bout_session_idx]
+                _flip = _perm_rng_pooled.integers(0, 2, size=len(_subjects_pooled))
+                _state_df["treatment_drug_shuf"] = np.where(
+                    _flip[_subject_idx_pooled] == 1,
+                    1 - _treatment_drug_arr_pooled,
+                    _treatment_drug_arr_pooled,
+                )
                 try:
                     _shuf_model = smf.mixedlm(
                         "log_dwell ~ treatment_drug_shuf",
@@ -4019,13 +4063,17 @@ def _(
         plt.gca() if not mount_figure else axd.get("histogram_transitions_2ADC", plt.gca())
     )
     histogram_transitions_2ADC.clear()
+    # Fixed BIN WIDTH (not bin count), matching the 2AFC panel -- see that
+    # cell for why a shared width (rather than a shared bin count) is used.
+    HIST_BINWIDTH_2ADC = 2
+    print(f"histogram_transitions_2ADC: binwidth={HIST_BINWIDTH_2ADC}")
     sns.histplot(
         data=treatment_switch_dfs["2ADC_DRUG"],
         x="n_switches",
         hue="treatment",
         hue_order=treatment_order,
         palette=treatment_palette,
-        bins=12,
+        binwidth=HIST_BINWIDTH_2ADC,
         stat="probability",
         common_norm=False,
         element="step",
@@ -4034,9 +4082,15 @@ def _(
         ax=histogram_transitions_2ADC,
     )
     _legend = histogram_transitions_2ADC.get_legend()
-    _legend.set_frame_on(False)
-    _legend.set_title(None)
-    _legend.set_loc("upper right")
+    _handles = _legend.legend_handles
+    _labels = [_t.get_text() for _t in _legend.get_texts()]
+    _legend.remove()
+    histogram_transitions_2ADC.legend(
+        _handles, _labels, frameon=False, title=None, handlelength=1, loc="upper right",
+    )
+    histogram_transitions_2ADC.set_xlim(right=50)
+    histogram_transitions_2ADC.set_xticks([0, 25, 50])
+    histogram_transitions_2ADC.set_ylim(0, 0.6)
     histogram_transitions_2ADC.set_title(task_labels["2ADC_DRUG"])
     histogram_transitions_2ADC.set_xlabel("State switches")
     histogram_transitions_2ADC.set_ylabel("Probability")
@@ -4077,13 +4131,20 @@ def _(
         plt.gca() if not mount_figure else axd.get("histogram_transitions_2AFC", plt.gca())
     )
     histogram_transitions_2AFC.clear()
+    # Fixed BIN WIDTH (not bin count) bumped up from the old bins=12 to
+    # increase resolution. Using a shared width (rather than a shared bin
+    # COUNT over each task's own data range) keeps bins the same visual size
+    # between the 2AFC and 2ADC panels -- a shared count made 2ADC's bins look
+    # much bigger since its n_switches range is ~2x wider (0-75 vs 0-38).
+    HIST_BINWIDTH_2AFC = 2
+    print(f"histogram_transitions_2AFC: binwidth={HIST_BINWIDTH_2AFC}")
     sns.histplot(
         data=treatment_switch_dfs["2AFC_DRUG"],
         x="n_switches",
         hue="treatment",
         hue_order=treatment_order,
         palette=treatment_palette,
-        bins=12,
+        binwidth=HIST_BINWIDTH_2AFC,
         stat="probability",
         common_norm=False,
         element="step",
@@ -4092,8 +4153,15 @@ def _(
         ax=histogram_transitions_2AFC,
     )
     _legend = histogram_transitions_2AFC.get_legend()
-    _legend.set_frame_on(False)
-    _legend.set_title(None)
+    _handles = _legend.legend_handles
+    _labels = [_t.get_text() for _t in _legend.get_texts()]
+    _legend.remove()
+    histogram_transitions_2AFC.legend(
+        _handles, _labels, frameon=False, title=None, handlelength=1,
+    )
+    histogram_transitions_2AFC.set_xlim(right=50)
+    histogram_transitions_2AFC.set_xticks([0, 25, 50])
+    histogram_transitions_2AFC.set_ylim(0, 0.6)
     histogram_transitions_2AFC.set_title(task_labels["2AFC_DRUG"])
     histogram_transitions_2AFC.set_xlabel("State switches")
     histogram_transitions_2AFC.set_ylabel("Probability")
@@ -4116,68 +4184,60 @@ def _(mo):
 
 
 @app.cell
-def state_switch_histogram_pooled(
-    axd,
-    fig_size,
-    format,
-    mount_figure,
-    path_panels,
-    pd,
-    plt,
-    sns,
-    task_labels,
-    treatment_order,
-    treatment_palette,
-    treatment_switch_dfs,
-):
-    # Pool state-switch counts from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
-    # single Saline-vs-Drug histogram, instead of one panel per task, to gain
-    # plotting space and statistical power (more sessions per treatment arm).
-    # NOTE: session lengths (n_trials) are fairly similar between the two tasks
-    # (mean ~272 trials for 2AFC vs ~294 for 2ADC), so pooling the raw switch
-    # COUNT ("n_switches") is reasonably comparable here; if session-length
-    # differences ever matter more, "switch_rate" (n_switches / n_trials) is
-    # already a column in both treatment_switch_dfs tables and would be the
-    # safer quantity to pool instead
-
-    pooled_switch_df = pd.concat(
-        [
-            treatment_switch_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
-            treatment_switch_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
-        ],
-        ignore_index=True,
-    )
-
-    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    histogram_transitions_pooled = (
-        plt.gca() if not mount_figure else axd["state_switch_histogram_pooled"]
-    )
-    histogram_transitions_pooled.clear()
-    sns.histplot(
-        data=pooled_switch_df,
-        x="n_switches",
-        hue="treatment",
-        hue_order=treatment_order,
-        palette=treatment_palette,
-        bins=12,
-        stat="probability",
-        common_norm=False,
-        element="step",
-        multiple="layer",
-        alpha=0.5,
-        ax=histogram_transitions_pooled,
-    )
-    _legend = histogram_transitions_pooled.get_legend()
-    _legend.set_frame_on(False)
-    _legend.set_title(None)
-    # histogram_transitions_pooled.set_title("2AFC + 2ADC (pooled)")
-    histogram_transitions_pooled.set_xlabel("State switches")
-    histogram_transitions_pooled.set_ylabel("Probability")
-    if not mount_figure:
-        histogram_transitions_pooled.figure.savefig(
-            (path_panels / "state_switch_histogram_pooled").with_suffix(f".{format}")
-        )
-    histogram_transitions_pooled
+def state_switch_histogram_pooled():
+    # Commented out: reverted row 3 back to per-task histogram/dwell
+    # panels (see aLJB mosaic cell). This state_switch_histogram_pooled panel directly
+    # indexes axd["...pooled"], which no longer exists in the mosaic,
+    # so it would raise KeyError if left active. Uncomment together
+    # with the pooled row in aLJB to restore.
+    # # Pool state-switch counts from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
+    # # single Saline-vs-Drug histogram, instead of one panel per task, to gain
+    # # plotting space and statistical power (more sessions per treatment arm).
+    # # NOTE: session lengths (n_trials) are fairly similar between the two tasks
+    # # (mean ~272 trials for 2AFC vs ~294 for 2ADC), so pooling the raw switch
+    # # COUNT ("n_switches") is reasonably comparable here; if session-length
+    # # differences ever matter more, "switch_rate" (n_switches / n_trials) is
+    # # already a column in both treatment_switch_dfs tables and would be the
+    # # safer quantity to pool instead
+    #
+    # pooled_switch_df = pd.concat(
+    #     [
+    #         treatment_switch_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
+    #         treatment_switch_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
+    #     ],
+    #     ignore_index=True,
+    # )
+    #
+    # plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    # histogram_transitions_pooled = (
+    #     plt.gca() if not mount_figure else axd["state_switch_histogram_pooled"]
+    # )
+    # histogram_transitions_pooled.clear()
+    # sns.histplot(
+    #     data=pooled_switch_df,
+    #     x="n_switches",
+    #     hue="treatment",
+    #     hue_order=treatment_order,
+    #     palette=treatment_palette,
+    #     bins=12,
+    #     stat="probability",
+    #     common_norm=False,
+    #     element="step",
+    #     multiple="layer",
+    #     alpha=0.5,
+    #     ax=histogram_transitions_pooled,
+    # )
+    # _legend = histogram_transitions_pooled.get_legend()
+    # _legend.set_frame_on(False)
+    # _legend.set_title(None)
+    # # histogram_transitions_pooled.set_title("2AFC + 2ADC (pooled)")
+    # histogram_transitions_pooled.set_xlabel("State switches")
+    # histogram_transitions_pooled.set_ylabel("Probability")
+    # if not mount_figure:
+    #     histogram_transitions_pooled.figure.savefig(
+    #         (path_panels / "state_switch_histogram_pooled").with_suffix(f".{format}")
+    #     )
+    # histogram_transitions_pooled
     return
 
 
@@ -5593,7 +5653,7 @@ def _(mo):
 
 
 @app.cell
-def _(axd, fig, mount_figure, path_panels):
+def _(FuncFormatter, axd, fig, mount_figure, path_panels):
     if mount_figure:
         for _name in (
             "single_session_drug_2ADC",
@@ -5647,6 +5707,18 @@ def _(axd, fig, mount_figure, path_panels):
         axd["psychometric_2ADC_engaged"].set_ylabel("$p$(right | eng.)")
         axd["psychometric_2AFC_engaged"].set_title("")
         axd["psychometric_2AFC_engaged"].set_ylabel("$p$(right | eng.)")
+
+        axd["accuracy_treatment_2ADC"].set_title("")
+        axd["accuracy_treatment_2AFC"].set_title("")
+
+        # Render whole-number yticks (e.g. the ylim=1.0 top) without a
+        # trailing ".0" -- "1" instead of "1.0" -- while leaving fractional
+        # ticks (0.5, 0.6, ...) displayed normally.
+        def _format_accuracy_tick(value, pos):
+            return f"{value:g}"
+
+        for _acc_key in ("accuracy_treatment_2ADC", "accuracy_treatment_2AFC"):
+            axd[_acc_key].yaxis.set_major_formatter(FuncFormatter(_format_accuracy_tick))
 
         fig.savefig((path_panels / "figure4").with_suffix(".pdf"))
         fig.savefig((path_panels / "figure4").with_suffix(".svg"))
