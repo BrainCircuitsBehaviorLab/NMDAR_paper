@@ -188,7 +188,7 @@ def _():
         fill=False,
         boxprops={"color": "0.5"},
         whiskerprops={"color": "0.5"},
-        medianprops={"linewidth": 3},
+        # medianprops={"linewidth": 3},
         showfliers=False,
         showcaps=False,
     )
@@ -1270,23 +1270,21 @@ def _(fig_size, mount_figure, plt):
                     "single_session_drug_2AFC",
                     "single_session_drug_2AFC",
                 ],
+                # Pooled row (2AFC_DRUG + 2ADC_DRUG combined): state-switch
+                # histogram gets 2/4 of the row (needs the x-range to read
+                # clearly), dwell time and transition weights get 1/4 each.
+                # Using the mosaic's native 4-column grid directly (repeated
+                # labels to span columns, same technique as the rows above)
+                # rather than a manually split merged cell -- a nested
+                # subgridspec split (equal thirds, tried both with a custom
+                # wspace and with the subgridspec default) ate noticeably more
+                # of the row into blank gaps than the native columns do.
                 [
-                    "histogram_transitions_2ADC",
-                    "dwell_time_2ADC",
-                    "histogram_transitions_2AFC",
-                    "dwell_time_2AFC",
+                    "state_switch_histogram_pooled",
+                    "state_switch_histogram_pooled",
+                    "dwell_time_pooled",
+                    "transition_weights_pooled",
                 ],
-                # Pooled row (2AFC_DRUG + 2ADC_DRUG combined) -- reverted back to
-                # the per-task row above for now. Transition weights are left
-                # out of row 3 entirely for the moment (neither pooled nor
-                # per-task); uncomment this block + comment the one above to
-                # restore the pooled layout.
-                # [
-                #     "state_switch_histogram_pooled",
-                #     "state_switch_histogram_pooled",
-                #     "dwell_time_pooled",
-                #     "transition_weights_pooled",
-                # ],
                 [
                     "accuracy_treatment_2ADC",  # was: "transition_weights_2ADC" (placeholder ".")
                     "psychometric_2ADC_engaged",
@@ -1297,26 +1295,6 @@ def _(fig_size, mount_figure, plt):
             figsize=fig_size(1, 1),
             constrained_layout=True,
         )
-        # fig.set_constrained_layout_pads(
-        #     w_pad=0.005,
-        #     h_pad=0.01,
-        #     wspace=0.005,
-        #     hspace=0.04,
-        # )
-
-        # for name, axis in axd.items():
-        #     axis.text(
-        #         0.5,
-        #         0.5,
-        #         name,
-        #         transform=axis.transAxes,
-        #         ha="center",
-        #         va="center",
-        #         fontsize=7,
-        #         wrap=True,
-        #     )
-        #     if name == "Diagram":
-        #         axis.set_axis_off()
 
     else:
         fig, axd = None, {}
@@ -1676,95 +1654,110 @@ def _(mo):
 
 
 @app.cell
-def transition_weights_pooled():
-    # Commented out: reverted row 3 back to per-task histogram/dwell
-    # panels (see aLJB mosaic cell). This transition_weights_pooled panel directly
-    # indexes axd["...pooled"], which no longer exists in the mosaic,
-    # so it would raise KeyError if left active. Uncomment together
-    # with the pooled row in aLJB to restore.
-    # # Pool transition weights from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
-    # # single plot, instead of one panel per task, to gain plotting space and
-    # # statistical power (more animals per feature/transition-direction group).
-    # # Feature/transition categories match exactly between the two tasks
-    # # ("Drug" and "Cum. reward" x "Engaged -> Disengaged", "Disengaged -> Engaged"),
-    # # and subject ids don't collide, so pooling is unambiguous
-    #
-    # pooled_transition_df = pd.concat(
-    #     [
-    #         transition_plot_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
-    #         transition_plot_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
-    #     ],
-    #     ignore_index=True,
-    # )
-    #
-    # plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    # transition_weights_pooled = (
-    #     plt.gca() if not mount_figure else axd["transition_weights_pooled"]
-    # )
-    # transition_weights_pooled.clear()
-    # sns.boxplot(
-    #     data=pooled_transition_df,
-    #     x="feature_label",
-    #     y="weight",
-    #     hue="transition_label",
-    #     order=transition_orders["2AFC_DRUG"],
-    #     palette=palette,
-    #     ax=transition_weights_pooled,
-    #     **boxplot_STYLE,
-    # )
-    # transition_weights_pooled.axhline(0, color="0.5", linestyle="--")
-    # add_subject_pair_lines(
-    #     transition_weights_pooled,
-    #     pooled_transition_df,
-    #     x="feature_label",
-    #     y="weight",
-    #     order=transition_orders["2AFC_DRUG"],
-    #     hue="transition_label",
-    #     hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
-    # )
-    # # NOTE: the one-sample annotation helper computes each label's pixel
-    # # position from the axes' y-scale at call time, and (within the real
-    # # multi-axes mounted mosaic specifically) can end up expanding the ylim
-    # # well past our intended range, leaving a near-blank panel with floating
-    # # annotation text. Clamping set_ylim both BEFORE and AFTER the annotation
-    # # call makes the final range deterministic regardless of what the
-    # # annotation helper does internally.
-    # transition_weights_pooled.set_ylim(-15, 15)
-    # # Original one-sample-vs-zero annotation (same function/call the per-task
-    # # transition_weights_2AFC / transition_weights_2ADC panels use), just run
-    # # on the pooled data.
-    # add_one_sample_zero_annotations_test(
-    #     transition_weights_pooled,
-    #     pooled_transition_df,
-    #     x="feature_label",
-    #     y="weight",
-    #     order=transition_orders["2AFC_DRUG"],
-    #     hue="transition_label",
-    #     hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
-    #     show_pvalue_if_ns=False,
-    # )
-    # transition_weights_pooled.set_ylim(-15, 15)
-    #
-    # _handles, _ = transition_weights_pooled.get_legend_handles_labels()
-    # transition_weights_pooled.legend(
-    #     _handles,
-    #     ["E→D", "D→E"],
-    #     ncols=2,
-    #     frameon=False,
-    #     handlelength=0.25,
-    #     handletextpad=0.25, 
-    #     columnspacing=0.25,
-    #     loc="lower right"
-    # )
-    # # transition_weights_pooled.set_title("2AFC + 2ADC (pooled)")
-    # transition_weights_pooled.set_xlabel("")
-    # transition_weights_pooled.set_ylabel("Transition weight")
-    # transition_weights_pooled.tick_params(axis="x", rotation=0)
-    # if not mount_figure:
-    #     transition_weights_pooled.figure.savefig(
-    #         (path_panels / "transition_weights_pooled").with_suffix(f".{format}")
-    #     )
-    # transition_weights_pooled
+def transition_weights_pooled(
+    add_one_sample_zero_annotations_test,
+    add_subject_pair_lines,
+    axd,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    mount_figure,
+    palette,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    task_labels,
+    transition_orders,
+    transition_plot_dfs,
+):
+    # Pool transition weights from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
+    # single plot, instead of one panel per task, to gain plotting space and
+    # statistical power (more animals per feature/transition-direction group).
+    # Feature/transition categories match exactly between the two tasks
+    # ("Drug" and "Cum. reward" x "Engaged -> Disengaged", "Disengaged -> Engaged"),
+    # and subject ids don't collide, so pooling is unambiguous
+
+    pooled_transition_df = pd.concat(
+        [
+            transition_plot_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
+            transition_plot_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
+        ],
+        ignore_index=True,
+    )
+
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    transition_weights_pooled = (
+        plt.gca() if not mount_figure else axd["transition_weights_pooled"]
+    )
+    transition_weights_pooled.clear()
+    # Local copy of boxplot_STYLE (shared with several other transition-weight
+    # panels, so not mutated directly) with the median linewidth matched to
+    # BOXPLOT_STYLE's (used by dwell_time_pooled) -- boxplot_STYLE uses 3,
+    # which renders noticeably thicker than the dwell-time panel's median.
+
+    sns.boxplot(
+        data=pooled_transition_df,
+        x="feature_label",
+        y="weight",
+        hue="transition_label",
+        order=transition_orders["2AFC_DRUG"],
+        palette=palette,
+        ax=transition_weights_pooled,
+        **boxplot_STYLE,
+    )
+    transition_weights_pooled.axhline(0, color="0.5", linestyle="--")
+    add_subject_pair_lines(
+        transition_weights_pooled,
+        pooled_transition_df,
+        x="feature_label",
+        y="weight",
+        order=transition_orders["2AFC_DRUG"],
+        hue="transition_label",
+        hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+    )
+    # NOTE: the one-sample annotation helper computes each label's pixel
+    # position from the axes' y-scale at call time, and (within the real
+    # multi-axes mounted mosaic specifically) can end up expanding the ylim
+    # well past our intended range, leaving a near-blank panel with floating
+    # annotation text. Clamping set_ylim both BEFORE and AFTER the annotation
+    # call makes the final range deterministic regardless of what the
+    # annotation helper does internally.
+    transition_weights_pooled.set_ylim(-15, 15)
+    add_one_sample_zero_annotations_test(
+        transition_weights_pooled,
+        pooled_transition_df,
+        x="feature_label",
+        y="weight",
+        order=transition_orders["2AFC_DRUG"],
+        hue="transition_label",
+        hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+        show_pvalue_if_ns=False,
+    )
+    transition_weights_pooled.set_ylim(-15, 15)
+
+    _handles, _ = transition_weights_pooled.get_legend_handles_labels()
+    # Legend at the top of the axes (where a title would go) instead of
+    # inside the plot, so it doesn't overlap the boxes/annotations.
+    transition_weights_pooled.legend(
+        _handles,
+        ["E→D", "D→E"],
+        ncols=2,
+        frameon=False,
+        handlelength=0.25,
+        handletextpad=0.25,
+        columnspacing=0.25,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
+    )
+    transition_weights_pooled.set_xlabel("")
+    transition_weights_pooled.set_ylabel("Transition weight")
+    transition_weights_pooled.tick_params(axis="x", rotation=0)
+    if not mount_figure:
+        transition_weights_pooled.figure.savefig(
+            (path_panels / "transition_weights_pooled").with_suffix(f".{format}")
+        )
+    transition_weights_pooled
     return
 
 
@@ -3372,19 +3365,19 @@ def _(
     BOXPLOT_STYLE,
     add_paired_state_annotation,
     add_subject_pair_lines,
-    axd,
     fig_size,
     format,
     mount_figure,
     path_panels,
     plt,
     sns,
+    supp_axd,
     treatment_dwell_dfs,
     treatment_order,
     treatment_palette,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    dwell_time_2ADC = plt.gca() if not mount_figure else axd.get("dwell_time_2ADC", plt.gca())
+    dwell_time_2ADC = plt.gca() if not mount_figure else supp_axd.get("dwell_time_2ADC", plt.gca())
     dwell_time_2ADC.clear()
     sns.boxplot(
         data=treatment_dwell_dfs["2ADC_DRUG"],
@@ -3584,19 +3577,19 @@ def _(
     BOXPLOT_STYLE,
     add_paired_state_annotation,
     add_subject_pair_lines,
-    axd,
     fig_size,
     format,
     mount_figure,
     path_panels,
     plt,
     sns,
+    supp_axd,
     treatment_dwell_dfs,
     treatment_order,
     treatment_palette,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    dwell_time_2AFC = plt.gca() if not mount_figure else axd.get("dwell_time_2AFC", plt.gca())
+    dwell_time_2AFC = plt.gca() if not mount_figure else supp_axd.get("dwell_time_2AFC", plt.gca())
     dwell_time_2AFC.clear()
     sns.boxplot(
         data=treatment_dwell_dfs["2AFC_DRUG"],
@@ -3654,9 +3647,10 @@ def dwell_time_permutation_annotations(
     dwell_time_2AFC,
     format,
     mount_figure,
+    np,
     path_panels,
+    plt,
     sns,
-    task_labels,
     treatment_dwell_dfs,
     treatment_order,
     treatment_palette,
@@ -3760,7 +3754,12 @@ def dwell_time_permutation_annotations(
         order=["Engaged", "Disengaged"],
     )
     dwell_time_2AFC.set_ylim(1, 1000)
-    dwell_time_2AFC.set_title(task_labels["2AFC_DRUG"])
+    dwell_time_2AFC.set_yticks([1, 10, 100, 1000])
+    dwell_time_2AFC.yaxis.set_minor_locator(
+        plt.matplotlib.ticker.LogLocator(base=10, subs=np.arange(2, 10), numticks=12)
+    )
+    dwell_time_2AFC.yaxis.set_minor_formatter(plt.matplotlib.ticker.NullFormatter())
+    dwell_time_2AFC.set_title("EA")
     dwell_time_2AFC.set_xlabel("")
     dwell_time_2AFC.set_ylabel("Dwell time (trials)")
     dwell_time_2AFC.set_xticklabels(["Eng.", "Dis."])
@@ -3805,7 +3804,12 @@ def dwell_time_permutation_annotations(
         order=["Engaged", "Disengaged"],
     )
     dwell_time_2ADC.set_ylim(1, 1000)
-    dwell_time_2ADC.set_title(task_labels["2ADC_DRUG"])
+    dwell_time_2ADC.set_yticks([1, 10, 100, 1000])
+    dwell_time_2ADC.yaxis.set_minor_locator(
+        plt.matplotlib.ticker.LogLocator(base=10, subs=np.arange(2, 10), numticks=12)
+    )
+    dwell_time_2ADC.yaxis.set_minor_formatter(plt.matplotlib.ticker.NullFormatter())
+    dwell_time_2ADC.set_title("STM")
     dwell_time_2ADC.set_xlabel("")
     dwell_time_2ADC.set_ylabel("Dwell time (trials)")
     dwell_time_2ADC.set_xticklabels(["Eng.", "Dis."])
@@ -3825,82 +3829,100 @@ def _(mo):
 
 
 @app.cell
-def dwell_time_pooled():
-    # Commented out: reverted row 3 back to per-task histogram/dwell
-    # panels (see aLJB mosaic cell). This dwell_time_pooled panel directly
-    # indexes axd["...pooled"], which no longer exists in the mosaic,
-    # so it would raise KeyError if left active. Uncomment together
-    # with the pooled row in aLJB to restore.
-    # # Pool dwell times from both tasks (2AFC_DRUG + 2ADC_DRUG) into a single
-    # # Saline-vs-Drug boxplot, instead of one panel per task, to gain plotting
-    # # space and statistical power (more animals per treatment arm). Subject IDs
-    # # do not collide between the two cohorts (2AFC_DRUG uses plain numeric ids,
-    # # 2ADC_DRUG uses letter-prefixed ids), so pooling and pairing by subject is
-    # # unambiguous.
-    # pooled_dwell_df = pd.concat(
-    #     [
-    #         treatment_dwell_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
-    #         treatment_dwell_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
-    #     ],
-    #     ignore_index=True,
-    # )
-    #
-    # plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    # dwell_time_pooled = plt.gca() if not mount_figure else axd["dwell_time_pooled"]
-    # dwell_time_pooled.clear()
-    # sns.boxplot(
-    #     data=pooled_dwell_df,
-    #     x="state_label",
-    #     y="mean_dwell_trials",
-    #     hue="treatment",
-    #     order=["Engaged", "Disengaged"],
-    #     hue_order=treatment_order,
-    #     palette=treatment_palette,
-    #     ax=dwell_time_pooled,
-    #     legend=True,
-    #     **BOXPLOT_STYLE,
-    # )
-    # dwell_time_pooled.set_yscale("log")
-    # add_subject_pair_lines(
-    #     dwell_time_pooled,
-    #     pooled_dwell_df,
-    #     x="state_label",
-    #     y="mean_dwell_trials",
-    #     order=["Engaged", "Disengaged"],
-    #     hue="treatment",
-    #     hue_order=treatment_order,
-    # )
-    # # NOTE: like transition_weights_pooled, the paired-annotation helper can
-    # # expand the y-axis well past the actual data range within the real
-    # # mounted mosaic, leaving blank space with floating annotation text.
-    # # Clamping set_ylim both BEFORE and AFTER the annotation call keeps the
-    # # final range deterministic regardless of what the helper does internally.
-    # # pooled_dwell_df["mean_dwell_trials"] actually spans ~1.4-311, so (1, 1000)
-    # # gives headroom for the annotation brackets on the log scale.
-    # dwell_time_pooled.set_ylim(1, 1000)
-    # # Original paired t-test annotation (same function/call the per-task
-    # # dwell_time_2AFC / dwell_time_2ADC panels use), just run on the pooled data.
-    # add_paired_state_annotation(
-    #     dwell_time_pooled,
-    #     pooled_dwell_df,
-    #     x="state_label",
-    #     y="mean_dwell_trials",
-    #     order=["Engaged", "Disengaged"],
-    #     hue="treatment",
-    #     hue_order=treatment_order,
-    #     # show_pvalue_if_ns=True
-    # )
-    # dwell_time_pooled.set_ylim(1, 1000)
-    # # dwell_time_pooled.set_title("2AFC + 2ADC (pooled)")
-    # dwell_time_pooled.set_xlabel("State")
-    # dwell_time_pooled.set_ylabel("Dwell time (trials)")
-    # dwell_time_pooled.set_xticklabels(["Eng.", "Dis."])
-    # dwell_time_pooled.legend(frameon=False, title="")
-    # if not mount_figure:
-    #     dwell_time_pooled.figure.savefig(
-    #         (path_panels / "dwell_time_pooled").with_suffix(f".{format}")
-    #     )
-    # dwell_time_pooled
+def dwell_time_pooled(
+    BOXPLOT_STYLE,
+    add_paired_state_annotation,
+    add_subject_pair_lines,
+    axd,
+    fig_size,
+    format,
+    mount_figure,
+    np,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    task_labels,
+    treatment_dwell_dfs,
+    treatment_order,
+    treatment_palette,
+):
+    # Pool dwell times from both tasks (2AFC_DRUG + 2ADC_DRUG) into a single
+    # Saline-vs-Drug boxplot, instead of one panel per task, to gain plotting
+    # space and statistical power (more animals per treatment arm). Subject IDs
+    # do not collide between the two cohorts (2AFC_DRUG uses plain numeric ids,
+    # 2ADC_DRUG uses letter-prefixed ids), so pooling and pairing by subject is
+    # unambiguous.
+    pooled_dwell_df = pd.concat(
+        [
+            treatment_dwell_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
+            treatment_dwell_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
+        ],
+        ignore_index=True,
+    )
+
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    dwell_time_pooled = plt.gca() if not mount_figure else axd["dwell_time_pooled"]
+    dwell_time_pooled.clear()
+    sns.boxplot(
+        data=pooled_dwell_df,
+        x="state_label",
+        y="mean_dwell_trials",
+        hue="treatment",
+        order=["Engaged", "Disengaged"],
+        hue_order=treatment_order,
+        palette=treatment_palette,
+        ax=dwell_time_pooled,
+        legend=True,
+        **BOXPLOT_STYLE,
+    )
+    dwell_time_pooled.set_yscale("log")
+    add_subject_pair_lines(
+        dwell_time_pooled,
+        pooled_dwell_df,
+        x="state_label",
+        y="mean_dwell_trials",
+        order=["Engaged", "Disengaged"],
+        hue="treatment",
+        hue_order=treatment_order,
+    )
+    # NOTE: like transition_weights_pooled, the paired-annotation helper can
+    # expand the y-axis well past the actual data range within the real
+    # mounted mosaic, leaving blank space with floating annotation text.
+    # Clamping set_ylim both BEFORE and AFTER the annotation call keeps the
+    # final range deterministic regardless of what the helper does internally.
+    # pooled_dwell_df["mean_dwell_trials"] actually spans ~1.4-311, so (1, 1000)
+    # gives headroom for the annotation brackets on the log scale.
+    dwell_time_pooled.set_ylim(1, 1000)
+    add_paired_state_annotation(
+        dwell_time_pooled,
+        pooled_dwell_df,
+        x="state_label",
+        y="mean_dwell_trials",
+        order=["Engaged", "Disengaged"],
+        hue="treatment",
+        hue_order=treatment_order,
+    )
+    dwell_time_pooled.set_ylim(1, 1000)
+    dwell_time_pooled.set_yticks([1, 10, 100, 1000])
+    # Add the log scale's usual unlabeled minor ticks (2-9 within each decade)
+    # back in -- narrow mounted panels make matplotlib's default LogLocator
+    # thin these out (and even skip whole major decades) to avoid overlap, so
+    # they're set explicitly here rather than left to the automatic locator.
+    dwell_time_pooled.yaxis.set_minor_locator(
+        plt.matplotlib.ticker.LogLocator(base=10, subs=np.arange(2, 10), numticks=12)
+    )
+    dwell_time_pooled.yaxis.set_minor_formatter(plt.matplotlib.ticker.NullFormatter())
+    dwell_time_pooled.set_xlabel("State")
+
+    dwell_time_pooled.set_ylabel("Dwell time (trials)")
+    dwell_time_pooled.set_xticklabels(["Eng.", "Dis."])
+    dwell_time_pooled.legend(frameon=False, title="")
+    if not mount_figure:
+        dwell_time_pooled.figure.savefig(
+            (path_panels / "dwell_time_pooled").with_suffix(f".{format}")
+        )
+    dwell_time_pooled
     return
 
 
@@ -4046,21 +4068,20 @@ def _(mo):
 
 @app.cell
 def _(
-    axd,
     fig_size,
     format,
     mount_figure,
     path_panels,
     plt,
     sns,
-    task_labels,
+    supp_axd,
     treatment_order,
     treatment_palette,
     treatment_switch_dfs,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     histogram_transitions_2ADC = (
-        plt.gca() if not mount_figure else axd.get("histogram_transitions_2ADC", plt.gca())
+        plt.gca() if not mount_figure else supp_axd.get("histogram_transitions_2ADC", plt.gca())
     )
     histogram_transitions_2ADC.clear()
     # Fixed BIN WIDTH (not bin count), matching the 2AFC panel -- see that
@@ -4081,6 +4102,17 @@ def _(
         alpha=0.5,
         ax=histogram_transitions_2ADC,
     )
+
+    # Put Drug (pink) on top of Saline (gray) via explicit zorder -- sns.histplot's
+    # draw order (and therefore default stacking) doesn't reliably match
+    # hue_order, so this is set explicitly rather than relied on implicitly.
+    for _coll in histogram_transitions_2ADC.collections:
+        _fc = _coll.get_facecolor()
+        if len(_fc) and tuple(_fc[0][:3]) == plt.matplotlib.colors.to_rgb(treatment_palette["Drug"]):
+            _coll.set_zorder(2)
+        else:
+            _coll.set_zorder(1)
+
     _legend = histogram_transitions_2ADC.get_legend()
     _handles = _legend.legend_handles
     _labels = [_t.get_text() for _t in _legend.get_texts()]
@@ -4091,7 +4123,7 @@ def _(
     histogram_transitions_2ADC.set_xlim(right=50)
     histogram_transitions_2ADC.set_xticks([0, 25, 50])
     histogram_transitions_2ADC.set_ylim(0, 0.6)
-    histogram_transitions_2ADC.set_title(task_labels["2ADC_DRUG"])
+    histogram_transitions_2ADC.set_title("STM")  # supplementary panels labeled STM/EA, matching the main figure's single-session titles
     histogram_transitions_2ADC.set_xlabel("State switches")
     histogram_transitions_2ADC.set_ylabel("Probability")
     if not mount_figure:
@@ -4101,7 +4133,7 @@ def _(
             )
         )
     histogram_transitions_2ADC
-    return
+    return (histogram_transitions_2ADC,)
 
 
 @app.cell(hide_code=True)
@@ -4114,21 +4146,20 @@ def _(mo):
 
 @app.cell
 def _(
-    axd,
     fig_size,
     format,
     mount_figure,
     path_panels,
     plt,
     sns,
-    task_labels,
+    supp_axd,
     treatment_order,
     treatment_palette,
     treatment_switch_dfs,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     histogram_transitions_2AFC = (
-        plt.gca() if not mount_figure else axd.get("histogram_transitions_2AFC", plt.gca())
+        plt.gca() if not mount_figure else supp_axd.get("histogram_transitions_2AFC", plt.gca())
     )
     histogram_transitions_2AFC.clear()
     # Fixed BIN WIDTH (not bin count) bumped up from the old bins=12 to
@@ -4152,17 +4183,22 @@ def _(
         alpha=0.5,
         ax=histogram_transitions_2AFC,
     )
-    _legend = histogram_transitions_2AFC.get_legend()
-    _handles = _legend.legend_handles
-    _labels = [_t.get_text() for _t in _legend.get_texts()]
-    _legend.remove()
-    histogram_transitions_2AFC.legend(
-        _handles, _labels, frameon=False, title=None, handlelength=1,
-    )
+
+    # Put Drug (pink) on top of Saline (gray) via explicit zorder -- sns.histplot's
+    # draw order (and therefore default stacking) doesn't reliably match
+    # hue_order, so this is set explicitly rather than relied on implicitly.
+    for _coll in histogram_transitions_2AFC.collections:
+        _fc = _coll.get_facecolor()
+        if len(_fc) and tuple(_fc[0][:3]) == plt.matplotlib.colors.to_rgb(treatment_palette["Drug"]):
+            _coll.set_zorder(2)
+        else:
+            _coll.set_zorder(1)
+
+    histogram_transitions_2AFC.get_legend().remove()
     histogram_transitions_2AFC.set_xlim(right=50)
     histogram_transitions_2AFC.set_xticks([0, 25, 50])
     histogram_transitions_2AFC.set_ylim(0, 0.6)
-    histogram_transitions_2AFC.set_title(task_labels["2AFC_DRUG"])
+    histogram_transitions_2AFC.set_title("EA")  # supplementary panels labeled STM/EA, matching the main figure's single-session titles
     histogram_transitions_2AFC.set_xlabel("State switches")
     histogram_transitions_2AFC.set_ylabel("Probability")
     if not mount_figure:
@@ -4172,7 +4208,7 @@ def _(
             )
         )
     histogram_transitions_2AFC
-    return
+    return (histogram_transitions_2AFC,)
 
 
 @app.cell(hide_code=True)
@@ -4184,60 +4220,86 @@ def _(mo):
 
 
 @app.cell
-def state_switch_histogram_pooled():
-    # Commented out: reverted row 3 back to per-task histogram/dwell
-    # panels (see aLJB mosaic cell). This state_switch_histogram_pooled panel directly
-    # indexes axd["...pooled"], which no longer exists in the mosaic,
-    # so it would raise KeyError if left active. Uncomment together
-    # with the pooled row in aLJB to restore.
-    # # Pool state-switch counts from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
-    # # single Saline-vs-Drug histogram, instead of one panel per task, to gain
-    # # plotting space and statistical power (more sessions per treatment arm).
-    # # NOTE: session lengths (n_trials) are fairly similar between the two tasks
-    # # (mean ~272 trials for 2AFC vs ~294 for 2ADC), so pooling the raw switch
-    # # COUNT ("n_switches") is reasonably comparable here; if session-length
-    # # differences ever matter more, "switch_rate" (n_switches / n_trials) is
-    # # already a column in both treatment_switch_dfs tables and would be the
-    # # safer quantity to pool instead
-    #
-    # pooled_switch_df = pd.concat(
-    #     [
-    #         treatment_switch_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
-    #         treatment_switch_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
-    #     ],
-    #     ignore_index=True,
-    # )
-    #
-    # plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    # histogram_transitions_pooled = (
-    #     plt.gca() if not mount_figure else axd["state_switch_histogram_pooled"]
-    # )
-    # histogram_transitions_pooled.clear()
-    # sns.histplot(
-    #     data=pooled_switch_df,
-    #     x="n_switches",
-    #     hue="treatment",
-    #     hue_order=treatment_order,
-    #     palette=treatment_palette,
-    #     bins=12,
-    #     stat="probability",
-    #     common_norm=False,
-    #     element="step",
-    #     multiple="layer",
-    #     alpha=0.5,
-    #     ax=histogram_transitions_pooled,
-    # )
-    # _legend = histogram_transitions_pooled.get_legend()
-    # _legend.set_frame_on(False)
-    # _legend.set_title(None)
-    # # histogram_transitions_pooled.set_title("2AFC + 2ADC (pooled)")
-    # histogram_transitions_pooled.set_xlabel("State switches")
-    # histogram_transitions_pooled.set_ylabel("Probability")
-    # if not mount_figure:
-    #     histogram_transitions_pooled.figure.savefig(
-    #         (path_panels / "state_switch_histogram_pooled").with_suffix(f".{format}")
-    #     )
-    # histogram_transitions_pooled
+def state_switch_histogram_pooled(
+    axd,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    pd,
+    plt,
+    sns,
+    task_labels,
+    treatment_order,
+    treatment_palette,
+    treatment_switch_dfs,
+):
+    # Pool state-switch counts from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
+    # single Saline-vs-Drug histogram, instead of one panel per task, to gain
+    # plotting space and statistical power (more sessions per treatment arm).
+    # NOTE: session lengths (n_trials) are fairly similar between the two tasks
+    # (mean ~272 trials for 2AFC vs ~294 for 2ADC), so pooling the raw switch
+    # COUNT ("n_switches") is reasonably comparable here; if session-length
+    # differences ever matter more, "switch_rate" (n_switches / n_trials) is
+    # already a column in both treatment_switch_dfs tables and would be the
+    # safer quantity to pool instead
+
+    pooled_switch_df = pd.concat(
+        [
+            treatment_switch_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
+            treatment_switch_dfs["2ADC_DRUG"].assign(task=task_labels["2ADC_DRUG"]),
+        ],
+        ignore_index=True,
+    )
+
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    state_switch_histogram_pooled = (
+        plt.gca() if not mount_figure else axd["state_switch_histogram_pooled"]
+    )
+    state_switch_histogram_pooled.clear()
+    # Fixed BIN WIDTH (not bin count), matching the per-task
+    # histogram_transitions_2ADC / histogram_transitions_2AFC panels -- a
+    # shared width (rather than a bin count over the pooled data's own range)
+    # keeps bins the same visual size as those panels.
+    HIST_BINWIDTH_pooled = 1
+    sns.histplot(
+        data=pooled_switch_df,
+        x="n_switches",
+        hue="treatment",
+        hue_order=treatment_order,
+        palette=treatment_palette,
+        binwidth=HIST_BINWIDTH_pooled,
+        stat="probability",
+        common_norm=False,
+        element="step",
+        multiple="layer",
+        alpha=0.5,
+        ax=state_switch_histogram_pooled,
+    )
+
+    # Put Drug (pink) on top of Saline (gray) via explicit zorder -- sns.histplot's
+    # draw order (and therefore default stacking) doesn't reliably match
+    # hue_order, so this is set explicitly rather than relied on implicitly.
+    for _coll in state_switch_histogram_pooled.collections:
+        _fc = _coll.get_facecolor()
+        if len(_fc) and tuple(_fc[0][:3]) == plt.matplotlib.colors.to_rgb(treatment_palette["Drug"]):
+            _coll.set_zorder(2)
+        else:
+            _coll.set_zorder(1)
+
+    _legend = state_switch_histogram_pooled.get_legend()
+    _legend.set_frame_on(False)
+    _legend.set_title(None)
+    state_switch_histogram_pooled.set_xlim(right=50)
+    state_switch_histogram_pooled.set_xticks([0, 25, 50])
+    state_switch_histogram_pooled.set_xlabel("State switches")
+
+    state_switch_histogram_pooled.set_ylabel("Probability")
+    if not mount_figure:
+        state_switch_histogram_pooled.figure.savefig(
+            (path_panels / "state_switch_histogram_pooled").with_suffix(f".{format}")
+        )
+    state_switch_histogram_pooled
     return
 
 
@@ -4894,12 +4956,12 @@ def _(
     # )
     single_session_saline_2ADC.set(
         # title="Saline",
-        title="STM",
         xlabel="Trial",
         ylabel="$p$(eng.) | Saline",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
+    single_session_saline_2ADC.set_title("STM", fontweight="bold")
     single_session_saline_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
     # single_session_saline_2ADC.legend(frameon=False, loc="lower right")
     if not mount_figure:
@@ -4966,12 +5028,12 @@ def _(
     # )
     single_session_saline_2AFC.set(
         # title="Saline",
-        title="EA",
         xlabel="Trial",
         ylabel="$p$(engaged)",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
+    single_session_saline_2AFC.set_title("EA", fontweight="bold")
     single_session_saline_2AFC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
     # single_session_saline_2AFC.legend(frameon=False, loc="lower right")
     if not mount_figure:
@@ -5659,10 +5721,7 @@ def _(FuncFormatter, axd, fig, mount_figure, path_panels):
             "single_session_drug_2ADC",
             "single_session_saline_2AFC",
             "single_session_drug_2AFC",
-            "histogram_transitions_2AFC",
-            "dwell_time_2AFC",
             "dwell_time_pooled",
-            "transition_weights_2AFC",
             "psychometric_2ADC_engaged",
             "psychometric_2AFC_engaged",
             "accuracy_treatment_2AFC",
@@ -5685,24 +5744,6 @@ def _(FuncFormatter, axd, fig, mount_figure, path_panels):
         axd["single_session_drug_2AFC"].set_ylabel("")
         axd["single_session_drug_2AFC"].set_yticklabels("")
 
-        # Transitions and dwell times (row commented out of the mosaic for now,
-        # replaced by the pooled row below -- guard so this cell still runs
-        # cleanly either way, to make toggling that row back on/off painless).
-        if "histogram_transitions_2ADC" in axd:
-            axd["histogram_transitions_2ADC"].set_title("")
-        if "histogram_transitions_2AFC" in axd:
-            axd["histogram_transitions_2AFC"].set_title("")
-        if "dwell_time_2ADC" in axd:
-            axd["dwell_time_2ADC"].set_title("")
-            axd["dwell_time_2ADC"].set_xlabel("State")
-        if "dwell_time_2AFC" in axd:
-            axd["dwell_time_2AFC"].set_title("")
-            axd["dwell_time_2AFC"].set_xlabel("State")
-
-        if "transition_weights_2ADC" in axd:
-            axd["transition_weights_2ADC"].set_title("")
-        if "transition_weights_2AFC" in axd:
-            axd["transition_weights_2AFC"].set_title("")
         axd["psychometric_2ADC_engaged"].set_title("")
         axd["psychometric_2ADC_engaged"].set_ylabel("$p$(right | eng.)")
         axd["psychometric_2AFC_engaged"].set_title("")
@@ -5724,9 +5765,80 @@ def _(FuncFormatter, axd, fig, mount_figure, path_panels):
         fig.savefig((path_panels / "figure4").with_suffix(".svg"))
         fig.savefig((path_panels / "figure4").with_suffix(".png"))
 
-        # fig.align_xlabels()
-        # fig.align_ylabels()
+        fig.align_xlabels()
+        fig.align_ylabels()
+        # fig.tight_layout()
     fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Supplementary figure 4
+    """)
+    return
+
+
+@app.cell
+def figure4_supp(fig_size, mount_figure, plt):
+    # Supplementary figure: the 4 per-task panels (state-switch histogram and
+    # dwell time, for 2ADC and 2AFC separately) that were displaced from the
+    # main figure4 mosaic when that row was replaced by pooled (2AFC+2ADC)
+    # versions of the same panels. Same 1x4 layout that row used in the main
+    # figure. Kept here as a supplement so the per-task breakdown is still
+    # available even though the main figure now reports the pooled version.
+    # histogram_transitions_2ADC / histogram_transitions_2AFC / dwell_time_2ADC
+    # / dwell_time_2AFC are drawn by their own existing cells further up the
+    # notebook -- those cells (and the dwell-time significance-annotation cell
+    # downstream of them) already target supp_axd whenever mount_figure is
+    # True, the same way the main panels target axd, so they redraw into this
+    # mosaic automatically once it exists; titles are already set by those
+    # cells too, so nothing else is needed here besides the layout.
+    #
+    # This cell only builds the (still-empty) mosaic -- it necessarily runs
+    # BEFORE the panel-drawing cells above, so its own output is blank. The
+    # populated figure is displayed/saved by a second cell at the very end of
+    # the notebook, which runs after those panel cells (same aLJB/elJp
+    # two-cell split the main figure4 mosaic uses, for the same reason).
+    if mount_figure:
+        supp_fig, supp_axd = plt.subplot_mosaic(
+            [
+                [
+                    "histogram_transitions_2ADC",
+                    "dwell_time_2ADC",
+                    "histogram_transitions_2AFC",
+                    "dwell_time_2AFC",
+                ],
+            ],
+            figsize=fig_size(1, 4),
+            constrained_layout=True,
+        )
+    else:
+        supp_fig, supp_axd = None, {}
+    return supp_axd, supp_fig
+
+
+@app.cell
+def figure4_supp_finalize(
+    dwell_time_2ADC,
+    dwell_time_2AFC,
+    histogram_transitions_2ADC,
+    histogram_transitions_2AFC,
+    mount_figure,
+    path_panels,
+    supp_fig,
+):
+    # Finalize + save the supplementary figure (see figure4_supp above) --
+    # runs after histogram_transitions_2ADC/2AFC and dwell_time_2ADC/2AFC (and
+    # the dwell-time significance annotations) have drawn into it, so this is
+    # the actual populated result.
+    if mount_figure:
+        _ = (histogram_transitions_2ADC, histogram_transitions_2AFC, dwell_time_2ADC, dwell_time_2AFC)
+        supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".pdf"))
+        supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".svg"))
+        supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".png"))
+    supp_fig
     return
 
 
