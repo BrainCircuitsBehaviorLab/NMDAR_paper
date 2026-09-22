@@ -24,8 +24,8 @@
     "seed": 0,
     "baseline_class_idx": 0,
     "emission_model": "standard",
-    "model_id": "drug_param",
-    "cv_mode": "none",
+    "model_id": "param",
+    "cv_mode": "balanced_session_holdout",
     "cv_repeats": 0,
-    "condition_filter": "drug"
+    "condition_filter": "all"
 }

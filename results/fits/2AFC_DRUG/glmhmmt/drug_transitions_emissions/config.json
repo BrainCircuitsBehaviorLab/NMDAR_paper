@@ -22,7 +22,8 @@
         "Drug"
     ],
     "transition_cols": [
-        "Drug"
+        "Drug",
+        "cumulative_reward"
     ],
     "frozen_emissions": {
         "1": {

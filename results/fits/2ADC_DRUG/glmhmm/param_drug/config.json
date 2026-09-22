@@ -24,7 +24,7 @@
         2
     ],
     "model_id": "param_drug",
-    "cv_mode": "none",
+    "cv_mode": "balanced_session_holdout",
     "cv_repeats": 0,
-    "condition_filter": "drug"
+    "condition_filter": "all"
 }
