@@ -114,7 +114,7 @@ def _(ROOT):
         # "GLM-HMM drug": "GLM-HMM\ndrug",
         "No drug": "No drug",
         "Emissions": "Emissions",
-        "Transitions": "Transmissions",
+        "Transitions": "Transitions",
         "Both": "Both",
     }
     panel_names = {"drug_ll_2ADC": "S4a", "drug_ll_2AFC": "S4b"}
@@ -693,12 +693,12 @@ def _(mo):
     Significance stars come from a two-sided sign-flip permutation test (10,000
     permutations) on each subject's paired delta CV LL, using the raw
     (uncorrected) p-value since these are the two pre-specified comparisons of
-    interest: No drug vs Transmissions (p = 0.028) and Emissions vs
-    Transmissions (p = 0.030). No other pairwise comparison reached p < 0.05
+    interest: No drug vs Transitions (p = 0.028) and Emissions vs
+    Transitions (p = 0.030). No other pairwise comparison reached p < 0.05
     (all p >= 0.11). As a robustness check, a linear mixed-effects model
     (test CV LL ~ model, random intercept per subject) gives a Wald-test p of
-    0.049 for Emissions vs Transmissions (consistent, though close to the
-    threshold) but 0.219 for No drug vs Transmissions (not significant by this
+    0.049 for Emissions vs Transitions (consistent, though close to the
+    threshold) but 0.219 for No drug vs Transitions (not significant by this
     method); see the "Mixed-effects model" section below for the full
     comparison across methods.
     """)

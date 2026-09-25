@@ -1271,8 +1271,10 @@ def _(fig_size, mount_figure, plt):
                     "single_session_drug_2AFC",
                 ],
                 # Pooled row (2AFC_DRUG + 2ADC_DRUG combined): state-switch
-                # histogram gets 2/4 of the row (needs the x-range to read
-                # clearly), dwell time and transition weights get 1/4 each.
+                # histogram, engaged occupancy, dwell time, and transition
+                # weights each get 1/4 of the row. State-switch histogram used
+                # to get 2/4 (needed the x-range to read clearly) but was
+                # trimmed to 1/4 to make room for engaged occupancy.
                 # Using the mosaic's native 4-column grid directly (repeated
                 # labels to span columns, same technique as the rows above)
                 # rather than a manually split merged cell -- a nested
@@ -1281,7 +1283,7 @@ def _(fig_size, mount_figure, plt):
                 # of the row into blank gaps than the native columns do.
                 [
                     "state_switch_histogram_pooled",
-                    "state_switch_histogram_pooled",
+                    "engaged_occupancy_pooled",
                     "dwell_time_pooled",
                     "transition_weights_pooled",
                 ],
@@ -2886,6 +2888,201 @@ def _(mo):
 @app.cell
 def _():
     # MCDR is not part of MODEL_BY_TASK for this figure; panel disabled.
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Engaged occupancy
+    """)
+    return
+
+
+@app.cell
+def _(
+    add_paired_state_annotation,
+    add_subject_pair_lines,
+    boxplot_STYLE,
+    fig_size,
+    format,
+    occupancy_dfs,
+    path_panels,
+    pd,
+    plt,
+    session_options,
+    sns,
+    task_labels,
+    task_names,
+    treatment_order,
+    treatment_palette,
+):
+    # Engaged-state occupancy (fraction of trials per session spent Engaged),
+    # Saline vs Drug, one panel per task (2ADC left, 2AFC right). Not part of
+    # the main mosaic -- reuses occupancy_dfs (glmhmmt_state_occupancy_df,
+    # already computed above) and session_options (subject/session -> treatment,
+    # built in the ecfG cell) rather than a task-level pooled dataframe, since
+    # this is a standalone supplementary check.
+    _engaged_occupancy_frames = []
+    for _task_name in task_names:
+        _occ = occupancy_dfs[_task_name].copy()
+        _occ["subject"] = _occ["subject"].astype(str)
+        _occ["session"] = _occ["session"].astype(str)
+        _occ = _occ[_occ["state_label"] == "Engaged"]
+        _occ = _occ.merge(session_options[_task_name], on=["subject", "session"], how="inner")
+        _occ["task_label"] = task_labels[_task_name]
+        _engaged_occupancy_frames.append(_occ)
+    engaged_occupancy_df = pd.concat(_engaged_occupancy_frames, ignore_index=True)
+
+    # Per-subject mean (a subject can have several sessions per treatment arm)
+    # for add_subject_pair_lines / add_paired_state_annotation below.
+    engaged_occupancy_subject_df = (
+        engaged_occupancy_df.groupby(
+            ["subject", "task_label", "treatment"], as_index=False, observed=True
+        ).agg(occupancy=("occupancy", "mean"))
+    )
+
+    # sharey=True so both panels use the same y-axis range/tick labels.
+    engaged_occupancy_fig, engaged_occupancy_axes = plt.subplots(
+        1, 2, figsize=fig_size(2, 2), constrained_layout=True, sharey=True
+    )
+    # x is the (single-value) task label with treatment as the dodged hue --
+    # the layout add_subject_pair_lines / add_paired_state_annotation expect
+    # (their default offset=0.2 matches seaborn's 2-level hue dodge) -- with
+    # the two dodge positions relabeled Saline/Drug directly instead of a
+    # legend.
+    for _ax, _task_name in zip(engaged_occupancy_axes, ("2ADC_DRUG", "2AFC_DRUG")):
+        _task_label = task_labels[_task_name]
+        _task_df = engaged_occupancy_df[engaged_occupancy_df["task_label"] == _task_label]
+        _task_subject_df = engaged_occupancy_subject_df[
+            engaged_occupancy_subject_df["task_label"] == _task_label
+        ]
+        sns.boxplot(
+            data=_task_df,
+            x="task_label",
+            y="occupancy",
+            hue="treatment",
+            order=[_task_label],
+            hue_order=treatment_order,
+            palette=treatment_palette,
+            legend=False,
+            ax=_ax,
+            **boxplot_STYLE,
+        )
+        add_subject_pair_lines(
+            _ax,
+            _task_subject_df,
+            x="task_label",
+            y="occupancy",
+            order=[_task_label],
+            hue="treatment",
+            hue_order=treatment_order,
+        )
+        add_paired_state_annotation(
+            _ax,
+            _task_subject_df,
+            x="task_label",
+            y="occupancy",
+            order=[_task_label],
+            hue="treatment",
+            hue_order=treatment_order,
+        )
+        _ax.set_xticks([-0.2, 0.2])
+        _ax.set_xticklabels(treatment_order)
+        _ax.set_xlabel("")
+        _ax.set_ylabel("Engaged occupancy")
+        _ax.set_title(_task_label)
+
+    engaged_occupancy_fig.savefig(
+        (path_panels / "engaged_occupancy_treatment").with_suffix(f".{format}")
+    )
+    engaged_occupancy_fig
+    return (engaged_occupancy_df,)
+
+
+@app.cell
+def engaged_occupancy_pooled(
+    add_paired_state_annotation,
+    add_subject_pair_lines,
+    axd,
+    boxplot_STYLE,
+    engaged_occupancy_df,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    plt,
+    sns,
+    treatment_order,
+    treatment_palette,
+):
+    # Pool engaged occupancy from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
+    # single Saline-vs-Drug boxplot, instead of one panel per task, to gain
+    # plotting space and statistical power (more animals per treatment arm) --
+    # same rationale as dwell_time_pooled / state_switch_histogram_pooled /
+    # transition_weights_pooled above. Subject ids don't collide between the
+    # two cohorts (2AFC_DRUG uses plain numeric ids, 2ADC_DRUG uses
+    # letter-prefixed ids), so pooling and pairing by subject is unambiguous.
+    pooled_engaged_occupancy_subject_df = (
+        engaged_occupancy_df.groupby(
+            ["subject", "state_label", "treatment"], as_index=False, observed=True
+        ).agg(occupancy=("occupancy", "mean"))
+    )
+
+    # Sized to match a single panel of the per-task figure above (fig_size(2, 2)
+    # is that figure's TOTAL width for its 2 side-by-side panels) -- half that
+    # width, same height, rather than a fresh fig_size call. Only used when
+    # not mounted; inside the main mosaic the panel's size comes from its own
+    # grid cell (see aLJB -- it now takes the 1/4-width slot the state-switch
+    # histogram gave up).
+    _per_task_figsize = fig_size(2, 2)
+    plt.figure(
+        figsize=(_per_task_figsize[0] / 2, _per_task_figsize[1]),
+        constrained_layout=True,
+    )
+    engaged_occupancy_pooled = (
+        plt.gca() if not mount_figure else axd["engaged_occupancy_pooled"]
+    )
+    engaged_occupancy_pooled.clear()
+    sns.boxplot(
+        data=pooled_engaged_occupancy_subject_df,
+        x="state_label",
+        y="occupancy",
+        hue="treatment",
+        order=["Engaged"],
+        hue_order=treatment_order,
+        palette=treatment_palette,
+        legend=False,
+        ax=engaged_occupancy_pooled,
+        **boxplot_STYLE,
+    )
+    add_subject_pair_lines(
+        engaged_occupancy_pooled,
+        pooled_engaged_occupancy_subject_df,
+        x="state_label",
+        y="occupancy",
+        order=["Engaged"],
+        hue="treatment",
+        hue_order=treatment_order,
+    )
+    add_paired_state_annotation(
+        engaged_occupancy_pooled,
+        pooled_engaged_occupancy_subject_df,
+        x="state_label",
+        y="occupancy",
+        order=["Engaged"],
+        hue="treatment",
+        hue_order=treatment_order,
+    )
+    engaged_occupancy_pooled.set_xticks([-0.2, 0.2])
+    engaged_occupancy_pooled.set_xticklabels(treatment_order)
+    engaged_occupancy_pooled.set_xlabel("")
+    engaged_occupancy_pooled.set_ylabel("Engaged occupancy")
+    if not mount_figure:
+        engaged_occupancy_pooled.figure.savefig(
+            (path_panels / "engaged_occupancy_pooled").with_suffix(f".{format}")
+        )
+    engaged_occupancy_pooled
     return
 
 
