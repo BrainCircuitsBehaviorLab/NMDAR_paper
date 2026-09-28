@@ -6,7 +6,7 @@
 
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -148,6 +148,8 @@ def _(df_2AFC_delay, figsize, path_panels, pl, plt, two_afc_delay_plots):
     acc_2ADC = plt.gca()
     two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'Saline'), ax=acc_2ADC, color="tab:gray", title="", label='Saline')
     two_afc_delay_plots.plot_accuracy(df_2AFC_delay.filter(pl.col("drug") == 'NR2B'), ax=acc_2ADC, color="tab:pink", title="", label='Drug')
+    plt.xticks([0, 10], ['0', '10'])
+    plt.xlabel('')
     plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/acc_2ADC.svg')
     plt.savefig(f'{path_panels}/acc_2ADC.png')
@@ -233,6 +235,7 @@ def _(df_2AFC_delay, figsize, path_panels, pl, plt, two_afc_delay_plots):
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "NR2B"), ax = rb_2ADC, title='', color = "tab:pink")
     two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Saline"), ax = rb_2ADC, title='', color = "tab:gray")
     # two_afc_delay_plots.plot_rb(df_2AFC_delay.filter(pl.col("drug") == "Rest"), ax = rb_2ADC, title='', color = "k")
+    plt.xticks([0, 10], ['0', '10'])
     plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/rb_2ADC.svg')
     plt.savefig(f'{path_panels}/rb_2ADC.pdf', transparent=True,)
@@ -305,6 +308,8 @@ def _(df_2AFC, figsize, path_panels, pl, plt, two_afc_plots):
     acc_2AFC = plt.gca()
     two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 0), ax=acc_2AFC, color="tab:gray", title="", label='Saline')
     two_afc_plots.plot_accuracy(df_2AFC.filter(pl.col("Drug") == 1), ax=acc_2AFC, color="tab:pink", title="", label='Drug')
+    plt.xlabel('')
+    plt.xticks([20, 0], ['20', '0'])
     plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/acc_2AFC.svg')
     plt.savefig(f'{path_panels}/acc_2AFC.png')
@@ -379,6 +384,8 @@ def _(df_2AFC, figsize, path_panels, pl, plt, two_afc_plots):
     rb_2AFC = plt.gca()
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 0), ax=rb_2AFC, title="", color="tab:gray")
     two_afc_plots.plot_rb(df_2AFC.filter(pl.col("Drug") == 1), ax=rb_2AFC, title="", color="tab:pink")
+    plt.xlabel('Stim. strength (ILD dB)')
+    plt.xticks([20, 0], ['20', '0'])
     plt.ylim(0.45, 1)
     plt.savefig(f'{path_panels}/rb_2AFC.svg')
     plt.savefig(f'{path_panels}/rb_2AFC.pdf', transparent=True,)

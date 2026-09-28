@@ -23,9 +23,7 @@ def _(mo):
     mo.md(r"""
     ## Description
 
-    We compare four two-state GLM-HMM-t models for the 2ADC and 2AFC tasks: no drug regressor, drug effects in transitions, drug effects in emissions, and drug effects in both components. For each animal and model, the CV score is the sum of held-out log-likelihoods divided by the sum of held-out trial counts across the five folds. Differences from the no-drug model are divided by ln(2) to obtain bits per trial. Each panel includes only subjects with all four models; animals have equal weight in the group summary.
-
-    Comparing Both with Transitions measures the additional predictive value of the emission terms; comparing Both with Emissions measures the additional value of the transition terms. These interpretations require identical shared regressors, shared parameter constraints, and test sessions across models. Transitions uses drug_transitions2.
+    We compare three two-state GLM-HMM-t models for the 2ADC and 2AFC tasks: a model without a drug regressor, a model with the drug regressor only in transitions, and a model with drug effects in the emissions. Model fit is quantified by the change in held-out log-likelihood relative to the model without the drug regressor.
     """)
     return
 
@@ -41,9 +39,8 @@ def _(mo):
 @app.cell
 def _():
     from pathlib import Path
-    from itertools import combinations
+    import itertools
     import math
-    import json
 
     import marimo as mo
     import matplotlib.pyplot as plt
@@ -54,50 +51,28 @@ def _():
     import statsmodels.formula.api as smf
     from matplotlib.lines import Line2D
     from scipy.stats import ttest_rel
-    from statsmodels.formula.api import ols
-    from glmhmmt.notebook_support.analysis_common import build_trial_and_weights_df, load_fit_arrays
-    from glmhmmt.runtime import configure_paths
-    from glmhmmt.tasks import get_adapter
-    from glmhmmt.views import build_views
-    from src.process import two_adc, two_afc
-    from src.process.common import glmhmmt_state_dwell_df
-    from src.plots.common import BOXPLOT_STYLE
-
-    def fig_size(n_cols=1, ratio=None):
-        """Return an A4-column figure size in inches."""
-        ratio = ratio or plt.rcParams["figure.figsize"][0] / plt.rcParams["figure.figsize"][1]
-        width = (210 - 50.8) / n_cols
-        return width / 25.4, width / ratio / 25.4
+    from src.plots.common import fig_size
 
     return (
-        BOXPLOT_STYLE,
+        Line2D,
         Path,
-        build_trial_and_weights_df,
-        build_views,
-        combinations,
-        configure_paths,
         fig_size,
-        get_adapter,
-        glmhmmt_state_dwell_df,
-        json,
-        load_fit_arrays,
+        itertools,
         math,
         mo,
-        ols,
+        np,
         pd,
         pl,
         plt,
+        smf,
         sns,
         ttest_rel,
-        two_adc,
-        two_afc,
     )
 
 
 @app.cell
-def _(Path, configure_paths, plt, sns):
+def _(Path, plt, sns):
     ROOT = Path(__file__).resolve().parents[1]
-    configure_paths(config_path=ROOT / "config.toml")
     path_panels = ROOT / "supplementary figures" / "panels41"
     for panel_format in ("svg", "png"):
         (path_panels / panel_format).mkdir(parents=True, exist_ok=True)
@@ -106,43 +81,16 @@ def _(Path, configure_paths, plt, sns):
     plt.style.use(ROOT / "paper.mplstyle")
     plt.rcParams["svg.fonttype"] = "none"
     plt.rcParams["savefig.bbox"] = "standard"
-    task_palette = {"2ADC": "tab:blue", "2AFC": "tab:orange"}
-    return ROOT, path_panels, task_palette
+    return ROOT, path_panels
 
 
 @app.cell
-def _(ROOT):
-    mount_figure = True
-    model_order = ["No drug", "Transitions", "Emissions", "Both"]
-    model_tick_labels = model_order
-    panel_names = {"drug_ll_2ADC": "S4a", "drug_ll_2AFC": "S4b", "drug_ll_pooled": "S4 pooled"}
-    task_configs = {
-        "2ADC": {
-            "fit_root": ROOT / "results" / "fits" / "2ADC_DRUG" / "glmhmmt",
-            "models": {
-                "No drug": "base_param",
-                "Transitions": "drug_transitions2",
-                "Emissions": "drug_emissions",
-                "Both": "drug_transitions_emissions",
-            },
-        },
-        "2AFC": {
-            "fit_root": ROOT / "results" / "fits" / "2AFC_DRUG" / "glmhmmt",
-            "models": {
-                "No drug": "base_model",
-                "Transitions": "drug_transitions2",
-                "Emissions": "drug_emissions",
-                "Both": "drug_transitions_emissions",
-            },
-        },
-    }
-    return (
-        model_order,
-        model_tick_labels,
-        mount_figure,
-        panel_names,
-        task_configs,
-    )
+def _(ROOT, plt, sns):
+    sns.set_theme(style="ticks", context="paper")
+    plt.style.use(ROOT / "paper.mplstyle")
+    plt.rcParams["svg.fonttype"] = "none"
+    plt.rcParams["savefig.bbox"] = "standard"
+    return
 
 
 @app.cell
@@ -213,18 +161,12 @@ def _(ROOT):
 @app.cell
 def _(math, model_order, pd, pl, reference_model, task_configs):
     def read_model_metrics(directory, model_label, model_index):
-        """Aggregate held-out LL over folds, weighting each fold by its trial count."""
-        folds = pl.concat(
-            [pl.read_parquet(path) for path in sorted(directory.glob("*_K2_glmhmmt_cv_repeats.parquet"))],
+        """Read one row of held-out fit metrics per subject for one model."""
+        metrics = pl.concat(
+            [pl.read_parquet(path) for path in sorted(directory.glob("*_metrics.parquet"))],
             how="diagonal_relaxed",
         )
-        metrics = folds.group_by("subject").agg(
-            pl.col("test_raw_ll").sum(),
-            pl.col("test_T").sum(),
-            pl.col("repeat_index").n_unique().alias("cv_folds"),
-        )
-        return metrics.with_columns(
-            (pl.col("test_raw_ll") / pl.col("test_T")).alias("ll_cv"),
+        return metrics.select("subject", "test_ll_per_trial_mean").with_columns(
             pl.col("subject").cast(pl.Utf8),
             pl.lit(model_label).alias("model"),
             pl.lit(model_index, dtype=pl.Int64).alias("model_order"),
@@ -244,19 +186,12 @@ def _(math, model_order, pd, pl, reference_model, task_configs):
             ],
             how="vertical",
         )
-        complete_subjects = (
-            model_metrics.group_by("subject")
-            .agg(pl.col("model").n_unique().alias("n_models"))
-            .filter(pl.col("n_models") == len(model_order))
-            .select("subject")
-        )
-        model_metrics = model_metrics.join(complete_subjects, on="subject", how="semi")
-        no_drug_scores = (
+        reference_scores = (
             model_metrics
             .filter(pl.col("model") == reference_model)
             .select(
                 "subject",
-                pl.col("ll_cv").alias("no_drug_ll"),
+                pl.col("test_ll_per_trial_mean").alias("reference_ll"),
             )
         )
         comparison_df = (
@@ -264,7 +199,7 @@ def _(math, model_order, pd, pl, reference_model, task_configs):
             .join(reference_scores, on="subject", how="inner")
             .with_columns(
                 (
-                    (pl.col("ll_cv") - pl.col("no_drug_ll"))
+                    (pl.col("test_ll_per_trial_mean") - pl.col("reference_ll"))
                     / math.log(2)
                 ).alias("delta_ll_vs_reference")
             )
@@ -306,145 +241,13 @@ def _(data_counts):
     return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Dwell times by model and treatment
-
-    Free = Both (drug_transitions_emissions); Transitions = drug_transitions2;
-    Emissions = drug_emissions. As in Figure 4, dwell times
-    are contiguous MAP-state runs within sessions, averaged across bouts for each
-    animal and treatment. Boxes summarize animal means; grey lines pair saline
-    and drug within animals. The y-axis is logarithmic. These panels are descriptive.
-    An animal without bouts in a state/treatment has no dwell-time estimate for
-    that group and contributes no paired line there.
-    """)
-    return
-
-
-@app.cell
-def _():
-    dwell_models = {
-        "Free": "Both",
-        "Transitions": "Transitions",
-        "Emissions": "Emissions",
-    }
-    dwell_model_order = list(dwell_models)
-    dwell_model_ticks = ["Free", "Trans.", "Emiss."]
-    treatment_order = ["Saline", "Drug"]
-    treatment_palette = {"Saline": "tab:gray", "Drug": "tab:pink"}
-    return (
-        dwell_model_order,
-        dwell_model_ticks,
-        dwell_models,
-        treatment_order,
-        treatment_palette,
-    )
-
-
-@app.cell
-def _(get_adapter, task_configs):
-    adapters = {task: get_adapter(f"{task}_DRUG") for task in task_configs}
-    dfs = {
-        task: adapter.subject_filter(adapter.read_dataset())
-        for task, adapter in adapters.items()
-    }
-    return adapters, dfs
-
-
-@app.cell
-def _(
-    adapters,
-    build_trial_and_weights_df,
-    build_views,
-    dfs,
-    dwell_models,
-    json,
-    load_fit_arrays,
-    plot_dfs,
-    task_configs,
-    two_adc,
-    two_afc,
-):
-    dwell_trial_dfs = {}
-    for _task, _task_config in task_configs.items():
-        for _model, _comparison_label in dwell_models.items():
-            _directory = _task_config["fit_root"] / _task_config["models"][_comparison_label]
-            _config = json.loads((_directory / "config.json").read_text())
-            _adapter = adapters[_task]
-            for _key in ("state_scoring_feature", "state_scoring_rule", "state_split_feature", "state_split_rule"):
-                if _key in _config:
-                    setattr(_adapter, _key, _config[_key] or None)
-            _subjects = sorted(plot_dfs[_task]["subject"].astype(str).unique())
-            _arrays, _ = load_fit_arrays(
-                out_dir=_directory,
-                arrays_suffix="glmhmmt_arrays.npz",
-                adapter=_adapter,
-                df_all=dfs[_task],
-                subjects=_subjects,
-                emission_cols=_config["emission_cols"],
-                transition_cols=_config["transition_cols"],
-                k=2,
-            )
-            _views = build_views({s: _arrays[s] for s in _subjects}, _adapter, 2, _subjects)
-            _trials, _ = build_trial_and_weights_df(
-                dfs[_task], views=_views, adapter=_adapter, min_session_length=2,
-            )
-            _process = two_adc if _task == "2ADC" else two_afc
-            dwell_trial_dfs[_task, _model] = _process.prepare_predictions_df(_trials)
-    return (dwell_trial_dfs,)
-
-
-@app.cell
-def _(dwell_trial_dfs, glmhmmt_state_dwell_df, pd, pl, task_configs):
-    _frames = {task: [] for task in task_configs}
-    for (_task, _model), _trials in dwell_trial_dfs.items():
-        _treatments = (
-            _trials.select("subject", "session", "condition")
-            .with_columns(
-                pl.col("condition").str.to_lowercase().replace_strict(
-                    {"saline": "Saline", "drug": "Drug"}, default=None,
-                ).alias("treatment")
-            )
-            .drop("condition").drop_nulls().unique().to_pandas()
-        )
-        _dwell = glmhmmt_state_dwell_df(_trials).merge(
-            _treatments, on=["subject", "session"], how="inner", validate="many_to_one",
-        )
-        _frames[_task].append(
-            _dwell.groupby(["subject", "treatment", "state_label"], as_index=False, observed=True)
-            .agg(mean_dwell_trials=("dwell_trials", "mean")).assign(model=_model)
-        )
-    treatment_dwell_dfs = {task: pd.concat(frames, ignore_index=True) for task, frames in _frames.items()}
-    dwell_plot_dfs = {
-        (task, state): frame.loc[frame["state_label"] == state]
-        for task, frame in treatment_dwell_dfs.items()
-        for state in ("Engaged", "Disengaged")
-    }
-    return dwell_plot_dfs, treatment_dwell_dfs
-
-
-@app.cell
-def _(pd, treatment_dwell_dfs):
-    dwell_counts = (
-        pd.concat(treatment_dwell_dfs, names=["task"])
-        .groupby(["task", "model", "state_label", "treatment"])["subject"]
-        .nunique().rename("n_animals").reset_index()
-    )
-    dwell_counts
-    return
-
-
 @app.cell
 def _(fig_size, mount_figure, plt):
     if mount_figure:
         _panel_width, _panel_height = fig_size(2)
         fig, axd = plt.subplot_mosaic(
-            [
-                ["drug_ll_2ADC", "drug_ll_2ADC", "drug_ll_2AFC", "drug_ll_2AFC"],
-                ["dwell_2ADC_engaged", "dwell_2ADC_disengaged", "dwell_2AFC_engaged", "dwell_2AFC_disengaged"],
-            ],
-            figsize=fig_size(1, 1.15),
+            [["drug_ll_2ADC", "drug_ll_2AFC"]],
+            figsize=(2 * _panel_width, _panel_height),
             constrained_layout=True,
         )
     else:
@@ -453,8 +256,8 @@ def _(fig_size, mount_figure, plt):
 
 
 @app.cell
-def _(combinations, math, model_order, ttest_rel):
-    model_pairs = list(combinations(model_order, 2))
+def _(itertools, math, model_order, np, ttest_rel):
+    model_pairs = list(itertools.combinations(model_order, 2))
 
     def paired_test(dataframe, left, right):
         """Return a paired t-test after aligning model scores by subject."""
@@ -625,7 +428,6 @@ def _(
     fig_size,
     model_display_labels,
     model_order,
-    model_tick_labels,
     mount_figure,
     path_panels,
     plot_dfs,
@@ -666,7 +468,7 @@ def _(
         xlabel="GLM-HMM-Ts",
         ylabel=rf"$\Delta$ CV LL (bits/trial)",
     )
-    drug_ll_2ADC.set_xticks(range(len(model_order)), model_tick_labels)
+    drug_ll_2ADC.set_xticks(range(len(model_order)), [model_display_labels[m] for m in model_order])
     clean_plot_edges(drug_ll_2ADC)
     sns.despine(ax=drug_ll_2ADC)
     if not mount_figure:
@@ -684,7 +486,6 @@ def _(
     fig_size,
     model_display_labels,
     model_order,
-    model_tick_labels,
     mount_figure,
     path_panels,
     plot_dfs,
@@ -719,10 +520,13 @@ def _(
         sort=False,
         ax=drug_ll_2AFC,
     )
-    drug_ll_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    add_pair_annotations(drug_ll_2AFC, _plot_df)
-    drug_ll_2AFC.set(xlabel="", ylabel="")
-    drug_ll_2AFC.set_xticks(range(len(model_order)), model_tick_labels)
+    drug_ll_2AFC.axhline(0, color="0.5", linestyle="--")
+    add_permutation_annotations(drug_ll_2AFC, _plot_df)
+    drug_ll_2AFC.set(
+        xlabel="GLM-HMM-Ts",
+        ylabel=rf"$\Delta$ CV LL (bits/trial)",
+    )
+    drug_ll_2AFC.set_xticks(range(len(model_order)), [model_display_labels[m] for m in model_order])
     clean_plot_edges(drug_ll_2AFC)
     sns.despine(ax=drug_ll_2AFC)
     if not mount_figure:
@@ -735,260 +539,17 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### 2ADC — Engaged
-    """)
-    return
-
-
-@app.cell
-def _(
-    BOXPLOT_STYLE,
-    axd,
-    dwell_model_order,
-    dwell_model_ticks,
-    dwell_plot_dfs,
-    fig_size,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    treatment_order,
-    treatment_palette,
-):
-    if not mount_figure:
-        plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    dwell_2ADC_engaged = axd["dwell_2ADC_engaged"] if mount_figure else plt.gca()
-    dwell_2ADC_engaged.clear()
-    sns.boxplot(
-        data=dwell_plot_dfs["2ADC", "Engaged"],
-        x="model", y="mean_dwell_trials", hue="treatment",
-        order=dwell_model_order, hue_order=treatment_order,
-        palette=treatment_palette, ax=dwell_2ADC_engaged,
-        legend=False, **BOXPLOT_STYLE,
-    )
-    for _index, _model in enumerate(dwell_model_order):
-        _paired = (
-            dwell_plot_dfs["2ADC", "Engaged"]
-            .loc[dwell_plot_dfs["2ADC", "Engaged"]["model"] == _model]
-            .pivot(index="subject", columns="treatment", values="mean_dwell_trials")
-            .reindex(columns=treatment_order).dropna()
-        )
-        dwell_2ADC_engaged.plot(
-            [_index - 0.2, _index + 0.2], _paired.to_numpy().T,
-            color="0.75", linewidth=0.5, zorder=0,
-        )
-    dwell_2ADC_engaged.set(
-        title="Engaged", xlabel="", ylabel="Dwell time (trials)", yscale="log",
-    )
-    dwell_2ADC_engaged.set_xticks(range(len(dwell_model_order)), dwell_model_ticks, fontsize=7)
-    sns.despine(ax=dwell_2ADC_engaged)
-    if not mount_figure:
-        dwell_2ADC_engaged.figure.savefig(path_panels / "svg" / "dwell_2ADC_engaged.svg")
-        dwell_2ADC_engaged.figure.savefig(path_panels / "png" / "dwell_2ADC_engaged.png", dpi=300)
-    dwell_2ADC_engaged
-    return (dwell_2ADC_engaged,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### 2ADC — Disengaged
-    """)
-    return
-
-
-@app.cell
-def _(
-    BOXPLOT_STYLE,
-    axd,
-    dwell_model_order,
-    dwell_model_ticks,
-    dwell_plot_dfs,
-    fig_size,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    treatment_order,
-    treatment_palette,
-):
-    if not mount_figure:
-        plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    dwell_2ADC_disengaged = axd["dwell_2ADC_disengaged"] if mount_figure else plt.gca()
-    dwell_2ADC_disengaged.clear()
-    sns.boxplot(
-        data=dwell_plot_dfs["2ADC", "Disengaged"],
-        x="model", y="mean_dwell_trials", hue="treatment",
-        order=dwell_model_order, hue_order=treatment_order,
-        palette=treatment_palette, ax=dwell_2ADC_disengaged,
-        legend=False, **BOXPLOT_STYLE,
-    )
-    for _index, _model in enumerate(dwell_model_order):
-        _paired = (
-            dwell_plot_dfs["2ADC", "Disengaged"]
-            .loc[dwell_plot_dfs["2ADC", "Disengaged"]["model"] == _model]
-            .pivot(index="subject", columns="treatment", values="mean_dwell_trials")
-            .reindex(columns=treatment_order).dropna()
-        )
-        dwell_2ADC_disengaged.plot(
-            [_index - 0.2, _index + 0.2], _paired.to_numpy().T,
-            color="0.75", linewidth=0.5, zorder=0,
-        )
-    dwell_2ADC_disengaged.set(
-        title="Disengaged", xlabel="", ylabel="", yscale="log",
-    )
-    dwell_2ADC_disengaged.set_xticks(range(len(dwell_model_order)), dwell_model_ticks, fontsize=7)
-    sns.despine(ax=dwell_2ADC_disengaged)
-    if not mount_figure:
-        dwell_2ADC_disengaged.figure.savefig(path_panels / "svg" / "dwell_2ADC_disengaged.svg")
-        dwell_2ADC_disengaged.figure.savefig(path_panels / "png" / "dwell_2ADC_disengaged.png", dpi=300)
-    dwell_2ADC_disengaged
-    return (dwell_2ADC_disengaged,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### 2AFC — Engaged
-    """)
-    return
-
-
-@app.cell
-def _(
-    BOXPLOT_STYLE,
-    axd,
-    dwell_model_order,
-    dwell_model_ticks,
-    dwell_plot_dfs,
-    fig_size,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    treatment_order,
-    treatment_palette,
-):
-    if not mount_figure:
-        plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    dwell_2AFC_engaged = axd["dwell_2AFC_engaged"] if mount_figure else plt.gca()
-    dwell_2AFC_engaged.clear()
-    sns.boxplot(
-        data=dwell_plot_dfs["2AFC", "Engaged"],
-        x="model", y="mean_dwell_trials", hue="treatment",
-        order=dwell_model_order, hue_order=treatment_order,
-        palette=treatment_palette, ax=dwell_2AFC_engaged,
-        legend=False, **BOXPLOT_STYLE,
-    )
-    for _index, _model in enumerate(dwell_model_order):
-        _paired = (
-            dwell_plot_dfs["2AFC", "Engaged"]
-            .loc[dwell_plot_dfs["2AFC", "Engaged"]["model"] == _model]
-            .pivot(index="subject", columns="treatment", values="mean_dwell_trials")
-            .reindex(columns=treatment_order).dropna()
-        )
-        dwell_2AFC_engaged.plot(
-            [_index - 0.2, _index + 0.2], _paired.to_numpy().T,
-            color="0.75", linewidth=0.5, zorder=0,
-        )
-    dwell_2AFC_engaged.set(
-        title="Engaged", xlabel="", ylabel="Dwell time (trials)", yscale="log",
-    )
-    dwell_2AFC_engaged.set_xticks(range(len(dwell_model_order)), dwell_model_ticks, fontsize=7)
-    sns.despine(ax=dwell_2AFC_engaged)
-    if not mount_figure:
-        dwell_2AFC_engaged.figure.savefig(path_panels / "svg" / "dwell_2AFC_engaged.svg")
-        dwell_2AFC_engaged.figure.savefig(path_panels / "png" / "dwell_2AFC_engaged.png", dpi=300)
-    dwell_2AFC_engaged
-    return (dwell_2AFC_engaged,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### 2AFC — Disengaged
-    """)
-    return
-
-
-@app.cell
-def _(
-    BOXPLOT_STYLE,
-    axd,
-    dwell_model_order,
-    dwell_model_ticks,
-    dwell_plot_dfs,
-    fig_size,
-    mount_figure,
-    path_panels,
-    plt,
-    sns,
-    treatment_order,
-    treatment_palette,
-):
-    if not mount_figure:
-        plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    dwell_2AFC_disengaged = axd["dwell_2AFC_disengaged"] if mount_figure else plt.gca()
-    dwell_2AFC_disengaged.clear()
-    sns.boxplot(
-        data=dwell_plot_dfs["2AFC", "Disengaged"],
-        x="model", y="mean_dwell_trials", hue="treatment",
-        order=dwell_model_order, hue_order=treatment_order,
-        palette=treatment_palette, ax=dwell_2AFC_disengaged,
-        legend=True, **BOXPLOT_STYLE,
-    )
-    for _index, _model in enumerate(dwell_model_order):
-        _paired = (
-            dwell_plot_dfs["2AFC", "Disengaged"]
-            .loc[dwell_plot_dfs["2AFC", "Disengaged"]["model"] == _model]
-            .pivot(index="subject", columns="treatment", values="mean_dwell_trials")
-            .reindex(columns=treatment_order).dropna()
-        )
-        dwell_2AFC_disengaged.plot(
-            [_index - 0.2, _index + 0.2], _paired.to_numpy().T,
-            color="0.75", linewidth=0.5, zorder=0,
-        )
-    dwell_2AFC_disengaged.set(
-        title="Disengaged", xlabel="", ylabel="", yscale="log",
-    )
-    dwell_2AFC_disengaged.set_xticks(range(len(dwell_model_order)), dwell_model_ticks, fontsize=7)
-    sns.despine(ax=dwell_2AFC_disengaged)
-    if not mount_figure:
-        dwell_2AFC_disengaged.figure.savefig(path_panels / "svg" / "dwell_2AFC_disengaged.svg")
-        dwell_2AFC_disengaged.figure.savefig(path_panels / "png" / "dwell_2AFC_disengaged.png", dpi=300)
-    dwell_2AFC_disengaged
-    return (dwell_2AFC_disengaged,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## Final figure
     """)
     return
 
 
 @app.cell
-def _(
-    drug_ll_2ADC,
-    drug_ll_2AFC,
-    dwell_2ADC_disengaged,
-    dwell_2ADC_engaged,
-    dwell_2AFC_disengaged,
-    dwell_2AFC_engaged,
-    fig,
-    mount_figure,
-    path_panels,
-):
+def _(drug_ll_2ADC, drug_ll_2AFC, fig, mount_figure, path_panels):
     if mount_figure:
-        drug_ll_2ADC.set_title("2ADC")
-        drug_ll_2AFC.set_title("2AFC")
-        _dwell_axes = [dwell_2ADC_engaged, dwell_2ADC_disengaged, dwell_2AFC_engaged, dwell_2AFC_disengaged]
-        _bottom = min(axis.get_ylim()[0] for axis in _dwell_axes)
-        _top = max(axis.get_ylim()[1] for axis in _dwell_axes)
-        for _axis in _dwell_axes:
-            _axis.set_ylim(_bottom, _top)
-        dwell_2AFC_disengaged.legend(frameon=False, title="", fontsize=7)
+        drug_ll_2ADC.set_title("STM")
+        drug_ll_2AFC.set_title("EA")
+        drug_ll_2AFC.set_ylabel("")
         fig.align_labels()
         fig.savefig(path_panels / "supplementary_figure41.svg")
         fig.savefig(path_panels / "supplementary_figure41.png", dpi=300)
@@ -1002,7 +563,7 @@ def _(mo):
     mo.md(r"""
     ## Statistical tests
 
-    Paired two-sided t-tests compare trial-weighted CV log-likelihood across subjects, using one score per animal and model. P-values are Bonferroni-corrected over the six model comparisons within each panel.
+    Paired two-sided t-tests compare held-out log-likelihood across subjects. P-values are Bonferroni-corrected over the three model comparisons within each panel.
     """)
     return
 
@@ -1030,90 +591,403 @@ def _(model_pairs, paired_test, panel_names, pl, plot_dfs):
 
 
 @app.cell
+def _(mo):
+    mo.md(r"""
+    ## Pooled analysis (both tasks)
+
+    Subjects from 2ADC and 2AFC are pooled to increase power for the drug-model
+    comparison. Subject IDs are prefixed by task to keep them unique.
+    """)
+    return
+
+
+@app.cell
+def _(model_order, pd, plot_dfs):
+    plot_df_pooled = pd.concat(
+        [
+            plot_dfs["2ADC"].assign(task="2ADC", subject=lambda d: "2ADC_" + d["subject"].astype(str)),
+            plot_dfs["2AFC"].assign(task="2AFC", subject=lambda d: "2AFC_" + d["subject"].astype(str)),
+        ],
+        ignore_index=True,
+    )
+    plot_df_pooled["model"] = pd.Categorical(plot_df_pooled["model"], categories=model_order, ordered=True)
+    plot_df_pooled
+    return (plot_df_pooled,)
+
+
+@app.cell
 def _(
+    Line2D,
+    add_permutation_annotations,
+    clean_plot_edges,
     fig_size,
+    model_display_labels,
     model_order,
-    model_tick_labels,
-    ols,
-    panel_names,
     path_panels,
-    pd,
-    plot_dfs,
+    plot_df_pooled,
     plt,
     sns,
-    task_palette,
 ):
-    pooled_df = pd.concat(plot_dfs, names=["task"]).reset_index(level="task").reset_index(drop=True)
-    pooled_df["animal"] = pooled_df["task"] + ":" + pooled_df["subject"]
-    _paired = pooled_df.pivot(index=["task", "animal"], columns="model", values="delta_ll_vs_no_drug").dropna()
-    _data = _paired.reset_index()
-    # Centering task makes the intercept the mean contrast across animals.
-    _data["task_centered"] = (_data["task"] == "2AFC").astype(float)
-    _data["task_centered"] -= _data["task_centered"].mean()
-    _pairs = [
-        ("Transitions", "No drug"), ("Emissions", "No drug"), ("Both", "No drug"),
-        ("Transitions", "Emissions"), ("Both", "Transitions"), ("Both", "Emissions"),
-    ]
-    _rows = []
-    for _left, _right in _pairs:
-        _data["delta"] = _data[_left] - _data[_right]
-        _fit = ols("delta ~ task_centered", data=_data).fit(cov_type="HC3", use_t=True)
-        _ci = _fit.conf_int().loc["Intercept"]
-        _rows.append({
-            "panel": panel_names["drug_ll_pooled"],
-            "model_a": _left, "model_b": _right,
-            "comparison": f"{_left} − {_right}",
-            "test": "Task-adjusted OLS, HC3, two-sided t",
-            "n_animals": len(_data),
-            "n_2ADC": int((_data["task"] == "2ADC").sum()),
-            "n_2AFC": int((_data["task"] == "2AFC").sum()),
-            "mean_bits_per_trial": _fit.params["Intercept"],
-            "ci95_low": _ci.iloc[0], "ci95_high": _ci.iloc[1],
-            "t": _fit.tvalues["Intercept"], "df": _fit.df_resid,
-            "p": _fit.pvalues["Intercept"],
-            "p_bonferroni": min(_fit.pvalues["Intercept"] * len(_pairs), 1.0),
-        })
-    pooled_tests = pd.DataFrame(_rows)
-    pooled_tests_latex = pooled_tests.drop(columns=["model_a", "model_b"]).to_latex(
-        index=False, float_format="%.4g", escape=True,
-    )
-    pooled_tests.to_csv(path_panels / "pooled_model_comparisons.csv", index=False)
-    (path_panels / "pooled_model_comparisons.tex").write_text(pooled_tests_latex)
-
-    _summary = pooled_tests.loc[pooled_tests["model_b"] == "No drug"].set_index("model_a")
-    _summary = _summary[["mean_bits_per_trial", "ci95_low", "ci95_high"]].reindex(model_order)
-    _summary.loc["No drug"] = 0.0  # The reference has exactly zero difference from itself.
-    plt.figure(figsize=fig_size(2,1), constrained_layout=True)
-    drug_ll_pooled = plt.gca()
+    fig_pooled, drug_ll_pooled = plt.subplots(figsize=fig_size(3), constrained_layout=True)
+    _task_markers = {"2ADC": "o", "2AFC": "^"}
+    _task_display_labels = {"2ADC": "STM", "2AFC": "EA"}
     sns.lineplot(
-        data=pooled_df.loc[pooled_df["animal"].isin(_data["animal"])],
-        x="model", y="delta_ll_vs_no_drug", hue="task", palette=task_palette,
-        units="animal", estimator=None, alpha=0.4, linewidth=0.7,
-        marker="o", markersize=3, markeredgewidth=0, sort=False, ax=drug_ll_pooled,
+        data=plot_df_pooled,
+        x="model",
+        y="delta_ll_vs_reference",
+        units="subject",
+        estimator=None,
+        color="tab:gray",
+        alpha=0.25,
+        style="task",
+        markers=_task_markers,
+        dashes=False,
+        sort=False,
+        legend=False,
+        ax=drug_ll_pooled,
     )
-    drug_ll_pooled.errorbar(
-        range(len(model_order)), _summary["mean_bits_per_trial"],
-        yerr=[_summary["mean_bits_per_trial"] - _summary["ci95_low"],
-              _summary["ci95_high"] - _summary["mean_bits_per_trial"]],
-        color="black", marker="o", markersize=4, markeredgewidth=0,
-        linewidth=1.2, capsize=3, label="Pooled mean (95% CI)",
+    sns.lineplot(
+        data=plot_df_pooled,
+        x="model",
+        y="delta_ll_vs_reference",
+        errorbar=("se", 1),
+        color="black",
+        marker="o",
+        markeredgewidth=0,
+        markeredgecolor="none",
+        sort=False,
+        ax=drug_ll_pooled,
     )
-    drug_ll_pooled.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
+    drug_ll_pooled.axhline(0, color="0.5", linestyle="--")
+    add_permutation_annotations(drug_ll_pooled, plot_df_pooled)
     drug_ll_pooled.set(
-        xlabel="", ylabel=r"$\Delta$ held-out LL vs no drug (bits/trial)",
-        title=f"Both tasks pooled (n = {len(_data)} animals)",
+        # xlabel="GLM-HMM-Ts",
+        xlabel="",
+        ylabel=rf"$\Delta$ CV LL (bits/trial)",
+        # title=f"Pooled (2ADC + 2AFC, N={plot_df_pooled['subject'].nunique()})",
     )
-    drug_ll_pooled.set_xticks(range(len(model_order)), model_tick_labels)
-    drug_ll_pooled.legend(frameon=False, title="", fontsize=7)
+    drug_ll_pooled.set_xticks(range(len(model_order)), [model_display_labels[m] for m in model_order])
+    clean_plot_edges(drug_ll_pooled)
     sns.despine(ax=drug_ll_pooled)
-    drug_ll_pooled.figure.savefig(path_panels / "svg" / "drug_delta_ll_pooled.svg")
-    drug_ll_pooled.figure.savefig(path_panels / "png" / "drug_delta_ll_pooled.png", dpi=300)
+    drug_ll_pooled.legend(
+        handles=[
+            Line2D([0], [0], marker=_task_markers[_task], color="tab:gray", linestyle="-", label=_task_display_labels[_task])
+            for _task in _task_markers
+        ],
+        loc="lower left",
+        frameon=False,
+    )
+
+    plt.xticks([0, 1, 2, 3], [f'No\ndrug', 'Em.', 'Trans.', 'Both'])
+    # plt.xticks(rotation=45, ha='right')
+    plt.ylim(-0.05, 0.05)
+
+    fig_pooled.savefig(path_panels / "svg" / "drug_delta_ll_pooled.svg")
+    fig_pooled.savefig(path_panels / "png" / "drug_delta_ll_pooled.png", dpi=300)
     drug_ll_pooled
     return
 
 
 @app.cell
-def _():
+def _(mo):
+    mo.md(r"""
+    **Pooled drug-regressor comparison (STM + EA).** Held-out cross-validated
+    log-likelihood (delta CV LL, bits/trial) for each GLM-HMM-T drug-regressor
+    variant, relative to the No drug model, pooled across both tasks (STM,
+    N=10; EA, N=9; total N=19). Gray lines show individual-subject trajectories
+    (circle = STM, triangle = EA); the black line shows the group mean +/- SEM.
+    Significance stars come from a two-sided sign-flip permutation test (10,000
+    permutations) on each subject's paired delta CV LL, using the raw
+    (uncorrected) p-value since these are the two pre-specified comparisons of
+    interest: No drug vs Transitions (p = 0.028) and Emissions vs
+    Transitions (p = 0.030). No other pairwise comparison reached p < 0.05
+    (all p >= 0.11). As a robustness check, a linear mixed-effects model
+    (test CV LL ~ model, random intercept per subject) gives a Wald-test p of
+    0.049 for Emissions vs Transitions (consistent, though close to the
+    threshold) but 0.219 for No drug vs Transitions (not significant by this
+    method); see the "Mixed-effects model" section below for the full
+    comparison across methods.
+    """)
+    return
+
+
+@app.cell
+def _(model_pairs, paired_test, pl, plot_df_pooled):
+    pooled_test_rows = []
+    for _left, _right in model_pairs:
+        _n_subjects, _statistic, _pvalue = paired_test(plot_df_pooled, _left, _right)
+        pooled_test_rows.append(
+            {
+                "comparison": f"{_left} vs {_right}",
+                "n": _n_subjects,
+                "t": _statistic,
+                "p": _pvalue,
+                "p_bonferroni": min(_pvalue * len(model_pairs), 1.0),
+            }
+        )
+    statistical_tests_pooled = pl.DataFrame(pooled_test_rows)
+    statistical_tests_pooled
+    return (statistical_tests_pooled,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Mixed-effects model (subject as random effect)
+
+    Linear mixed model on the pooled (2ADC + 2AFC) held-out log-likelihood,
+    `test_ll_per_trial_mean ~ model`, with a random intercept per subject (mouse).
+    This uses the raw per-trial LL rather than the pre-subtracted delta, so the
+    random intercept absorbs each subject's own baseline itself instead of that
+    baseline being forced to an exact zero (which made the earlier delta-based fit
+    degenerate). Coefficients estimate each model's effect relative to the
+    reference model, "GLM-HMM drug", and pairwise contrasts below reuse the
+    model's shared variance estimate, which is more powerful than separate
+    per-pair t-tests.
+    """)
+    return
+
+
+@app.cell
+def _(plot_df_pooled, reference_model, smf):
+    mixed_model_result = smf.mixedlm(
+        f"test_ll_per_trial_mean ~ C(model, Treatment(reference='{reference_model}'))",
+        data=plot_df_pooled,
+        groups=plot_df_pooled["subject"],
+    ).fit(reml=True)
+    mixed_model_result.summary()
+    return (mixed_model_result,)
+
+
+@app.cell
+def _(mixed_model_result, model_pairs, np, pl, reference_model):
+    def mixed_pair_contrast(result, left, right):
+        """Wald test for coef(right) - coef(left) from a fitted mixed model."""
+        coef_names = result.model.exog_names
+        r_matrix = np.zeros((1, result.k_fe))
+        if left != reference_model:
+            r_matrix[0, coef_names.index(f"C(model, Treatment(reference='{reference_model}'))[T.{left}]")] -= 1
+        if right != reference_model:
+            r_matrix[0, coef_names.index(f"C(model, Treatment(reference='{reference_model}'))[T.{right}]")] += 1
+        contrast = result.t_test(r_matrix)
+        return (
+            float(np.ravel(contrast.effect)[0]),
+            float(np.ravel(contrast.tvalue)[0]),
+            float(contrast.pvalue),
+        )
+
+    mixed_test_rows = []
+    for _left, _right in model_pairs:
+        _estimate, _statistic, _pvalue = mixed_pair_contrast(mixed_model_result, _left, _right)
+        mixed_test_rows.append(
+            {
+                "comparison": f"{_left} vs {_right}",
+                "estimate": _estimate,
+                "z": _statistic,
+                "p": _pvalue,
+                "p_bonferroni": min(_pvalue * len(model_pairs), 1.0),
+            }
+        )
+    statistical_tests_mixed = pl.DataFrame(mixed_test_rows)
+    statistical_tests_mixed
+    return (statistical_tests_mixed,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Permutation test (paired sign-flip)
+
+    A Wald test on the mixed model can be unreliable with only 19 subjects, since
+    the between-subject variance estimate is imprecise (see the convergence
+    warning above). As a robustness check, this runs a paired sign-flip
+    permutation test directly on each subject's pooled delta-LL: under the null
+    of no model difference, the sign of each subject's paired difference is
+    exchangeable, so the empirical null is built by randomly flipping those signs
+    10,000 times.
+    """)
+    return
+
+
+@app.cell
+def _(model_pairs, np, permutation_paired_test, pl, plot_df_pooled):
+    n_permutations = 10_000
+    permutation_rng = np.random.default_rng(0)
+    permutation_test_rows = []
+    for _left, _right in model_pairs:
+        _n_subjects, _observed_diff, _p_value = permutation_paired_test(
+            plot_df_pooled, _left, _right, n_permutations=n_permutations, rng=permutation_rng
+        )
+        permutation_test_rows.append(
+            {
+                "comparison": f"{_left} vs {_right}",
+                "n": _n_subjects,
+                "observed_diff": _observed_diff,
+                "p_perm": _p_value,
+                "p_perm_bonferroni": min(_p_value * len(model_pairs), 1.0),
+            }
+        )
+    statistical_tests_permutation = pl.DataFrame(permutation_test_rows)
+    statistical_tests_permutation
+    return (statistical_tests_permutation,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## Summary: comparing all methods
+
+    Side-by-side p-values for the pooled (2ADC + 2AFC) model comparisons, across
+    the paired t-test, the mixed-effects Wald contrasts, the sign-flip
+    permutation test, and its max-T family-wise correction.
+    """)
+    return
+
+
+@app.cell
+def _(
+    pl,
+    statistical_tests_mixed,
+    statistical_tests_permutation,
+    statistical_tests_pooled,
+):
+    comparison_summary = (
+        statistical_tests_pooled.select(
+            "comparison",
+            pl.col("p").alias("p_ttest"),
+            pl.col("p_bonferroni").alias("p_ttest_bonferroni"),
+        )
+        .join(
+            statistical_tests_mixed.select(
+                "comparison",
+                pl.col("p").alias("p_mixed_wald"),
+                pl.col("p_bonferroni").alias("p_mixed_wald_bonferroni"),
+            ),
+            on="comparison",
+        )
+        .join(
+            statistical_tests_permutation.select(
+                "comparison",
+                pl.col("p_perm").alias("p_permutation"),
+                pl.col("p_perm_bonferroni").alias("p_permutation_bonferroni"),
+            ),
+            on="comparison",
+        )
+    )
+    comparison_summary
+    return (comparison_summary,)
+
+
+@app.cell
+def _(comparison_summary, mo):
+    def render_significance_table(dataframe, alpha=0.05, highlight_rgb="34, 197, 94"):
+        """Render a comparison table as HTML, highlighting p-value cells below alpha.
+
+        Uses a translucent highlight color (rather than an opaque one) so it tints
+        whatever background is behind it, keeping contrast readable in both light
+        and dark marimo themes.
+        """
+        p_columns = [col for col in dataframe.columns if col.startswith("p_")]
+        header_cells = "".join(
+            f"<th style='padding:4px 10px;text-align:left;border-bottom:1px solid currentColor;opacity:0.85'>{col}</th>"
+            for col in dataframe.columns
+        )
+        rows_html = [f"<tr>{header_cells}</tr>"]
+        for row in dataframe.iter_rows(named=True):
+            cells = []
+            for col in dataframe.columns:
+                value = row[col]
+                if col in p_columns and isinstance(value, float):
+                    text = f"{value:.3g}"
+                    style = "padding:4px 10px;"
+                    if value < alpha:
+                        style += f"background-color:rgba({highlight_rgb},0.28);font-weight:600;border-radius:4px;"
+                    cells.append(f"<td style='{style}'>{text}</td>")
+                else:
+                    cells.append(f"<td style='padding:4px 10px;'>{value}</td>")
+            rows_html.append(f"<tr>{''.join(cells)}</tr>")
+        table_html = f"<table style='border-collapse:collapse;font-size:0.85em'>{''.join(rows_html)}</table>"
+        return mo.Html(table_html)
+
+    render_significance_table(comparison_summary)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## Was pooling across tasks justified?
+
+    The pooled analysis above assumes the drug-model effect is the same in
+    2ADC and 2AFC. This checks that assumption directly with a `model * task`
+    interaction in the mixed model: a likelihood-ratio test comparing a model
+    with only main effects (model + task) against one that also allows the
+    model effect to differ by task. Both are fit by ML (not REML) since this
+    compares fixed effects.
+    """)
+    return
+
+
+@app.cell
+def _(pl, plot_df_pooled, reference_model, smf):
+    from scipy.stats import chi2
+
+    mixed_model_main_effects_task = smf.mixedlm(
+        f"test_ll_per_trial_mean ~ C(model, Treatment(reference='{reference_model}')) + C(task, Treatment(reference='2ADC'))",
+        data=plot_df_pooled,
+        groups=plot_df_pooled["subject"],
+    ).fit(reml=False)
+
+    mixed_model_interaction = smf.mixedlm(
+        f"test_ll_per_trial_mean ~ C(model, Treatment(reference='{reference_model}')) * C(task, Treatment(reference='2ADC'))",
+        data=plot_df_pooled,
+        groups=plot_df_pooled["subject"],
+    ).fit(reml=False)
+
+    interaction_lr_statistic = 2 * (mixed_model_interaction.llf - mixed_model_main_effects_task.llf)
+    interaction_df = mixed_model_interaction.k_fe - mixed_model_main_effects_task.k_fe
+    interaction_p_value = float(chi2.sf(interaction_lr_statistic, interaction_df))
+    interaction_test_summary = pl.DataFrame(
+        [
+            {
+                "test": "model x task interaction (LRT)",
+                "lr_statistic": float(interaction_lr_statistic),
+                "df": interaction_df,
+                "p": interaction_p_value,
+            }
+        ]
+    )
+    interaction_test_summary
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    **Why STM and EA were pooled.** All of the pooled analyses above (permutation
+    test, mixed-effects model, paired t-test) combine subjects from both tasks
+    (STM, N=10; EA, N=9; total N=19) into a single analysis, which only makes
+    sense if the drug-regressor effect on CV LL is not itself task-dependent.
+    We tested this directly rather than assuming it: two linear mixed-effects
+    models were fit on CV LL (random intercept per subject, fit by ML so the
+    fixed effects are directly comparable) -- one with only additive main
+    effects of model and task, and one that additionally lets the model effect
+    differ by task (model * task interaction). A likelihood-ratio test
+    comparing these two nested models is the formal test of "does the
+    drug-regressor effect differ between STM and EA": LR = 0.83, df = 3,
+    p = 0.84. This interaction was not significant, so there is no evidence
+    the drug-model effect differs by task, which is what justifies treating
+    STM and EA subjects as one combined sample in the pooled figure and stats
+    above rather than analyzing each task in isolation.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    As the interaction is not significant, then the drug-model effect does not differ by task, and pooling is reasonable.
+    """)
     return
 
 

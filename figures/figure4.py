@@ -1725,7 +1725,6 @@ def transition_weights_pooled(
     # annotation text. Clamping set_ylim both BEFORE and AFTER the annotation
     # call makes the final range deterministic regardless of what the
     # annotation helper does internally.
-    transition_weights_pooled.set_ylim(-15, 15)
     add_one_sample_zero_annotations_test(
         transition_weights_pooled,
         pooled_transition_df,
@@ -1736,7 +1735,7 @@ def transition_weights_pooled(
         hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
         show_pvalue_if_ns=False,
     )
-    transition_weights_pooled.set_ylim(-15, 15)
+    # transition_weights_pooled.set_ylim(-15, 15)
 
     _handles, _ = transition_weights_pooled.get_legend_handles_labels()
     # Legend at the top of the axes (where a title would go) instead of
@@ -1807,7 +1806,11 @@ def _(plot_dfs, task_names, treatment_order):
                 treatment_order=treatment_order,
             )
         )
-    return treatment_accuracy_curves, treatment_accuracy_meta
+    return (
+        prepare_treatment_accuracy_repetition_curves,
+        treatment_accuracy_curves,
+        treatment_accuracy_meta,
+    )
 
 
 @app.cell
@@ -1964,6 +1967,119 @@ def _(
             (path_panels / "accuracy_treatment_2AFC").with_suffix(f".{format}")
         )
     accuracy_treatment_2AFC
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Accuracy engaged
+    """)
+    return
+
+
+@app.cell
+def accuracy_treatment_engaged(
+    Line2D,
+    fig_size,
+    format,
+    np,
+    path_panels,
+    plt,
+    prepare_treatment_accuracy_repetition_curves,
+    task_labels,
+    task_names,
+    treatment_order,
+    treatment_palette,
+    treatment_trial_dfs,
+):
+    # Same accuracy-vs-difficulty summary as accuracy_treatment_2ADC/2AFC above
+    # (prepare_treatment_accuracy_repetition_curves), but restricted to
+    # Engaged-state trials only -- filter treatment_trial_dfs[task] to
+    # state_label == "Engaged" before summarizing, rather than deriving a
+    # state-conditional model column (unlike the engaged-only psychometric
+    # curves above, there's no marginal-blend concern here: p_model_correct is
+    # just evaluated on the subset of trials that were actually Engaged).
+    treatment_accuracy_curves_engaged = {}
+    treatment_accuracy_meta_engaged = {}
+    for _task_name in task_names:
+        _engaged_trials = treatment_trial_dfs[_task_name][
+            treatment_trial_dfs[_task_name]["state_label"] == "Engaged"
+        ]
+        (
+            treatment_accuracy_curves_engaged[_task_name],
+            treatment_accuracy_meta_engaged[_task_name],
+        ) = prepare_treatment_accuracy_repetition_curves(
+            _engaged_trials,
+            task_name=_task_name,
+            treatment_order=treatment_order,
+        )
+
+    # Same plotting template as accuracy_treatment_2ADC/2AFC, one panel per
+    # task (2ADC left, 2AFC right).
+    accuracy_engaged_fig, accuracy_engaged_axes = plt.subplots(
+        1, 2, figsize=fig_size(2, 2), constrained_layout=True
+    )
+    for _ax, _task_name in zip(accuracy_engaged_axes, ("2ADC_DRUG", "2AFC_DRUG")):
+        _accuracy_df = treatment_accuracy_curves_engaged[_task_name]["accuracy"]
+        for _treatment in treatment_order:
+            _treatment_df = _accuracy_df[_accuracy_df["treatment"] == _treatment]
+            _x = _treatment_df["x_value"].to_numpy(dtype=float)
+            _model = _treatment_df["model_mean"].to_numpy(dtype=float)
+            _model_sem = _treatment_df["model_sem"].to_numpy(dtype=float)
+            _data = _treatment_df["data_mean"].to_numpy(dtype=float)
+            _data_sem = _treatment_df["data_sem"].to_numpy(dtype=float)
+            _color = treatment_palette[_treatment]
+            _ax.plot(_x, _model, color=_color)
+            _ax.fill_between(
+                _x,
+                np.clip(_model - _model_sem, 0, 1),
+                np.clip(_model + _model_sem, 0, 1),
+                color=_color,
+                alpha=0.2,
+                linewidth=0,
+            )
+            _ax.errorbar(
+                _x,
+                _data,
+                yerr=_data_sem,
+                fmt="o",
+                color=_color,
+                markeredgewidth=0,
+                capsize=2,
+                zorder=3,
+            )
+        _meta = treatment_accuracy_meta_engaged[_task_name]
+        _ax.axhline(_meta["baseline"], color="0.6", linestyle="--")
+        _ax.set(
+            title=task_labels[_task_name],
+            xlabel=_meta["xlabel"],
+            ylabel="Accuracy",
+            ylim=(0.45, 1),
+        )
+        if _task_name == "2AFC_DRUG":
+            _ax.set_xticks([0, 2, 4, 8, 20])
+        if _meta["invert_x"]:
+            _ax.invert_xaxis()
+
+    _legend_handles = [
+        Line2D([0], [0], marker="o", color="black", linestyle="None", markeredgewidth=0, label="Data"),
+        Line2D([0], [0], color="black", label="Model"),
+    ]
+    accuracy_engaged_axes[0].legend(
+        handles=_legend_handles,
+        frameon=False,
+        ncol=2,
+        handlelength=0.25,
+        handletextpad=0.25,
+        columnspacing=0.5,
+        loc="lower right",
+    )
+
+    accuracy_engaged_fig.savefig(
+        (path_panels / "accuracy_treatment_engaged").with_suffix(f".{format}")
+    )
+    accuracy_engaged_fig
     return
 
 
@@ -2990,7 +3106,7 @@ def _(
         _ax.set_xticks([-0.2, 0.2])
         _ax.set_xticklabels(treatment_order)
         _ax.set_xlabel("")
-        _ax.set_ylabel("Engaged occupancy")
+        _ax.set_ylabel(f"Occupancy | eng.")
         _ax.set_title(_task_label)
 
     engaged_occupancy_fig.savefig(
@@ -3077,7 +3193,7 @@ def engaged_occupancy_pooled(
     engaged_occupancy_pooled.set_xticks([-0.2, 0.2])
     engaged_occupancy_pooled.set_xticklabels(treatment_order)
     engaged_occupancy_pooled.set_xlabel("")
-    engaged_occupancy_pooled.set_ylabel("Engaged occupancy")
+    engaged_occupancy_pooled.set_ylabel(f"Occupancy | eng.")
     if not mount_figure:
         engaged_occupancy_pooled.figure.savefig(
             (path_panels / "engaged_occupancy_pooled").with_suffix(f".{format}")
@@ -4271,14 +4387,13 @@ def _(
     path_panels,
     plt,
     sns,
-    supp_axd,
     treatment_order,
     treatment_palette,
     treatment_switch_dfs,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     histogram_transitions_2ADC = (
-        plt.gca() if not mount_figure else supp_axd.get("histogram_transitions_2ADC", plt.gca())
+        # plt.gca() if not mount_figure else supp_axd.get("histogram_transitions_2ADC", plt.gca())
     )
     histogram_transitions_2ADC.clear()
     # Fixed BIN WIDTH (not bin count), matching the 2AFC panel -- see that
@@ -4484,9 +4599,21 @@ def state_switch_histogram_pooled(
         else:
             _coll.set_zorder(1)
 
+    # Legend must be rebuilt (rather than mutated in place) to change
+    # handlelength -- Legend has no public setter for it after construction.
+    # Halved to 1 (default ~2) only when mounted, since the panel gave up half
+    # its row width to engaged_occupancy_pooled (see aLJB) and got cramped.
     _legend = state_switch_histogram_pooled.get_legend()
-    _legend.set_frame_on(False)
-    _legend.set_title(None)
+    _handles = _legend.legend_handles
+    _labels = [_t.get_text() for _t in _legend.get_texts()]
+    _legend.remove()
+    state_switch_histogram_pooled.legend(
+        _handles,
+        _labels,
+        frameon=False,
+        title=None,
+        handlelength=1 if mount_figure else None,
+    )
     state_switch_histogram_pooled.set_xlim(right=50)
     state_switch_histogram_pooled.set_xticks([0, 25, 50])
     state_switch_histogram_pooled.set_xlabel("State switches")
@@ -5128,7 +5255,7 @@ def _(
         _data["trial_x"],
         _data["p_engaged"],
         color='tab:gray',#state_palette["Engaged"],
-        label=r"$p$(Engaged)",
+        label="saline",
     )
     for _trial_x, _probability in zip(
         _data["trial_x"], _data["p_engaged"], strict=False
@@ -5154,13 +5281,14 @@ def _(
     single_session_saline_2ADC.set(
         # title="Saline",
         xlabel="Trial",
-        ylabel="$p$(eng.) | Saline",
+        ylabel="$p$(engaged)",
+        # ylabel="$p$(eng.) | Saline",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
     single_session_saline_2ADC.set_title("STM", fontweight="bold")
     single_session_saline_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-    # single_session_saline_2ADC.legend(frameon=False, loc="lower right")
+    single_session_saline_2ADC.legend(frameon=False, loc="lower left", handlelength=1)
     if not mount_figure:
         single_session_saline_2ADC.figure.savefig(
             (path_panels / "2ADC_saline_single_session").with_suffix(
@@ -5272,7 +5400,7 @@ def _(
         _data["trial_x"],
         _data["p_engaged"],
         color='tab:pink',#state_palette["Engaged"],
-        label=r"$p$(Engaged)",
+        label="drug",
     )
     for _trial_x, _probability in zip(
         _data["trial_x"], _data["p_engaged"], strict=False
@@ -5298,12 +5426,13 @@ def _(
     single_session_drug_2ADC.set(
         # title="Drug",
         xlabel="Trial",
-        ylabel="$p$(eng.) | Drug",
+        ylabel="$p$(engaged)",
+        # ylabel="$p$(eng.) | Drug",
         xlim=(-0.5, len(_data["trial_x"]) - 0.5),
         ylim=(0, 1),
     )
     single_session_drug_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-    # single_session_drug_2ADC.legend(frameon=False, loc="lower right")
+    single_session_drug_2ADC.legend(frameon=False, loc="lower left", handlelength=1)
     if not mount_figure:
         single_session_drug_2ADC.figure.savefig(
             (path_panels / "2ADC_drug_single_session").with_suffix(
