@@ -1,0 +1,203 @@
+{
+  "cv": "leave_one_session_out",
+  "task": "2ADC_DRUG",
+  "subjects": [
+    "C37",
+    "C38",
+    "E10",
+    "E11",
+    "E13",
+    "N19",
+    "N24",
+    "N25",
+    "N27",
+    "N28"
+  ],
+  "seed": 1,
+  "source_model": "base_param",
+  "effective_configs": {
+    "No drug": {
+      "task": "2ADC_DRUG",
+      "tau": 50,
+      "subjects": [
+        "C37",
+        "C38",
+        "E10",
+        "E11",
+        "E13",
+        "N19",
+        "N24",
+        "N25",
+        "N27",
+        "N28"
+      ],
+      "emission_cols": [
+        "bias",
+        "stim_x_delay_param",
+        "choice_lag_param"
+      ],
+      "transition_cols": [
+        "cumulative_reward"
+      ],
+      "frozen_emissions": {
+        "1": {
+          "stim_x_delay_param": 0.0
+        }
+      },
+      "baseline_class_idx": 1,
+      "K_list": [
+        2
+      ],
+      "model_id": "base_param",
+      "cv_mode": "balanced_session_holdout",
+      "cv_repeats": 0,
+      "num_classes": 2
+    },
+    "Transitions": {
+      "task": "2ADC_DRUG",
+      "tau": 50,
+      "subjects": [
+        "C37",
+        "C38",
+        "E10",
+        "E11",
+        "E13",
+        "N19",
+        "N24",
+        "N25",
+        "N27",
+        "N28"
+      ],
+      "emission_cols": [
+        "bias",
+        "stim_x_delay_param",
+        "choice_lag_param"
+      ],
+      "transition_cols": [
+        "cumulative_reward",
+        "drug_z"
+      ],
+      "frozen_emissions": {
+        "1": {
+          "stim_x_delay_param": 0.0
+        }
+      },
+      "baseline_class_idx": 1,
+      "K_list": [
+        2
+      ],
+      "model_id": "base_param",
+      "cv_mode": "balanced_session_holdout",
+      "cv_repeats": 0,
+      "num_classes": 2
+    },
+    "Emissions": {
+      "task": "2ADC_DRUG",
+      "tau": 50,
+      "subjects": [
+        "C37",
+        "C38",
+        "E10",
+        "E11",
+        "E13",
+        "N19",
+        "N24",
+        "N25",
+        "N27",
+        "N28"
+      ],
+      "emission_cols": [
+        "bias",
+        "stim_x_delay_param",
+        "choice_lag_param",
+        "drug_z_x_stim_x_delay_param",
+        "drug_z_x_choice_lag_param"
+      ],
+      "transition_cols": [
+        "cumulative_reward"
+      ],
+      "frozen_emissions": {
+        "1": {
+          "stim_x_delay_param": 0.0,
+          "drug_z_x_stim_x_delay_param": 0.0
+        }
+      },
+      "baseline_class_idx": 1,
+      "K_list": [
+        2
+      ],
+      "model_id": "base_param",
+      "cv_mode": "balanced_session_holdout",
+      "cv_repeats": 0,
+      "num_classes": 2
+    }
+  },
+  "n_restarts": 10,
+  "num_iters": 50,
+  "m_step_iters": 50,
+  "n_drug_starts": 5,
+  "drug_max_iter": 300,
+  "normalization": "Training trial mean and population SD of -1/+1",
+  "fitting": "No drug on both training conditions; then freeze all base parameters and optimize new drug weights only",
+  "objective": "Training marginal HMM LL + library log prior; test never selects starts",
+  "input_fingerprints": {
+    "C37": "ead83370aa5a1c805ac600ba70bd510b1ae0c49384cae196b4c0df9558cdf82f",
+    "C38": "fb529f8094a11753d2224976b8c39687b4b9cb3a2699b6dc10158637260f4d76",
+    "E10": "4a35835d91194e19dd954675a8188f7a476520fc667664eceb86fc1abb53d8ea",
+    "E11": "7c52436a884b5a3a2e28484cd6e49095eeed79600275ab99ad8db0a219bb6af2",
+    "E13": "203c1c5388fba284eff77d7edd13966deda7ec39f1b69df0c4ed9cbbbcec11d1",
+    "N19": "87a334142225e3b0fe1a66644e16c357ac09339981c760acfaff799aa654b508",
+    "N24": "46472dcfc53d13f18ce04f22ef7f31a02e12486e944cccfc82f0185da038aa3f",
+    "N25": "cef7acdaaac7ae1743065e0beecb893b8a0c71b18dfcb85fdedbec20394b78b1",
+    "N27": "823eae4cfd70661d3e66b1de918bde6caf2123c7ed534e3cabd164a0fac52081",
+    "N28": "11912905106d2f8c096fccb9a3de2b66810f8353461e4af5cd370379a0f94ed5"
+  },
+  "upstream_specs": {
+    "stim_x_delay_param": {
+      "target_name": "stim_x_delay_param",
+      "fit_task": "2ADC_DRUG",
+      "fit_model_kind": "glm",
+      "fit_model_id": "one hot",
+      "arrays_suffix": "glm_arrays.npz",
+      "source_features": [],
+      "source_feature_prefixes": [
+        "stim_x_delay_hot_"
+      ],
+      "exclude_features": [],
+      "excluded_subjects": [],
+      "sign": 1.0,
+      "state_idx": 0,
+      "class_idx": 0
+    },
+    "choice_lag_param": {
+      "target_name": "choice_lag_param",
+      "fit_task": "2ADC_DRUG",
+      "fit_model_kind": "glm",
+      "fit_model_id": "one hot",
+      "arrays_suffix": "glm_arrays.npz",
+      "source_features": [
+        "choice_lag_01",
+        "choice_lag_02",
+        "choice_lag_03",
+        "choice_lag_04",
+        "choice_lag_05",
+        "choice_lag_06",
+        "choice_lag_07",
+        "choice_lag_08",
+        "choice_lag_09",
+        "choice_lag_10",
+        "choice_lag_11",
+        "choice_lag_12",
+        "choice_lag_13",
+        "choice_lag_14",
+        "choice_lag_15"
+      ],
+      "source_feature_prefixes": [],
+      "exclude_features": [],
+      "excluded_subjects": [],
+      "sign": 1.0,
+      "state_idx": 0,
+      "class_idx": 0
+    }
+  }
+}

@@ -1,0 +1,161 @@
+subject,model,component,group,feature,weight_kind,fixed,weight,raw_weight,n_folds
+14,Emissions,emissions,Disengaged,bias,Base coefficient,false,2.201867997646332,2.201867997646332,14
+14,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,1.0031350893633706,1.0031350893633706,14
+14,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,-0.29290459198611124,-0.1456663507436003,14
+14,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,14
+14,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,14
+14,Emissions,emissions,Engaged,bias,Base coefficient,false,0.4579912785972868,0.4579912785972868,14
+14,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,1.0480512295450484,1.0480512295450484,14
+14,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.2501279669148581,0.12448148322956902,14
+14,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,0.01639974009179111,0.00817300968836727,14
+14,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.0071666581290108,1.0071666581290108,14
+16,Emissions,emissions,Disengaged,bias,Base coefficient,false,0.23706857860088348,0.23706857860088348,18
+16,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,1.5077013108465407,1.5077013108465407,18
+16,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.3497540524436368,0.17452211305499077,18
+16,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,18
+16,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,18
+16,Emissions,emissions,Engaged,bias,Base coefficient,false,-0.02636744285296623,-0.02636744285296623,18
+16,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,1.0443019602033827,1.0443019602033827,18
+16,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.331294188896815,0.1653486912449201,18
+16,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.24167664845784506,-0.12061506468388769,18
+16,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.031304955482483,1.031304955482483,18
+17,Emissions,emissions,Disengaged,bias,Base coefficient,false,-0.639683423936367,-0.639683423936367,20
+17,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,3.166725730895996,3.166725730895996,20
+17,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,1.2975569635629653,0.6477530844509601,20
+17,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,20
+17,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,20
+17,Emissions,emissions,Engaged,bias,Base coefficient,false,-0.15715540423989297,-0.15715540423989297,20
+17,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,0.8925434321165084,0.8925434321165084,20
+17,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.8293736726045609,0.4140584424138069,20
+17,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.27587134316563605,-0.13772607408463955,20
+17,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.0332106709480287,1.0332106709480287,20
+18,Emissions,emissions,Disengaged,bias,Base coefficient,false,-0.34335094392299653,-0.34335094392299653,10
+18,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,0.6019686579704284,0.6019686579704284,10
+18,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,-0.14508055877231527,-0.07186287218646611,10
+18,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,10
+18,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,10
+18,Emissions,emissions,Engaged,bias,Base coefficient,false,-0.16206547021865844,-0.16206547021865844,10
+18,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,0.9621212124824524,0.9621212124824524,10
+18,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,-0.04726197309792042,-0.023483857698738574,10
+18,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.32694600969552995,-0.1623026341199875,10
+18,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.2514512598514558,1.2514512598514558,10
+19,Emissions,emissions,Disengaged,bias,Base coefficient,false,-2.0819431245326996,-2.0819431245326996,8
+19,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,1.018782578408718,1.018782578408718,8
+19,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,-0.0619099438918056,-0.0306318762304727,8
+19,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,8
+19,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,8
+19,Emissions,emissions,Engaged,bias,Base coefficient,false,0.05583986476995051,0.05583986476995051,8
+19,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,1.0397180542349815,1.0397180542349815,8
+19,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.13700962392613292,0.06778838206082582,8
+19,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.05531136225908995,-0.027396114077419043,8
+19,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.0983168631792068,1.0983168631792068,8
+20,Emissions,emissions,Disengaged,bias,Base coefficient,false,0.08950463640080257,0.08950463640080257,22
+20,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,1.5143992846662349,1.5143992846662349,22
+20,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.28508905829353764,0.1423700304532593,22
+20,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,22
+20,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,22
+20,Emissions,emissions,Engaged,bias,Base coefficient,false,0.11106195724145933,0.11106195724145933,22
+20,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,1.0326713079755956,1.0326713079755956,22
+20,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.4257787615060806,0.2126270065253431,22
+20,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.3041238066825,-0.15187350592829965,22
+20,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.2021045251326128,1.2021045251326128,22
+22,Emissions,emissions,Disengaged,bias,Base coefficient,false,0.23682359836271238,0.23682359836271238,18
+22,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,1.181522164079878,1.181522164079878,18
+22,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,-0.027970063577716548,-0.013964380150557391,18
+22,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,18
+22,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,18
+22,Emissions,emissions,Engaged,bias,Base coefficient,false,-0.26726024515098995,-0.26726024515098995,18
+22,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,1.092986351913876,1.092986351913876,18
+22,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,-0.013903413149010804,-0.006936260188619296,18
+22,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.14287421697129807,-0.0712812522219287,18
+22,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.2782857616742451,1.2782857616742451,18
+23,Emissions,emissions,Disengaged,bias,Base coefficient,false,-0.18607674746049774,-0.18607674746049774,18
+23,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,1.646284408039517,1.646284408039517,18
+23,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.5446179178025987,0.2717852075066831,18
+23,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,18
+23,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,18
+23,Emissions,emissions,Engaged,bias,Base coefficient,false,-0.1254752038253678,-0.1254752038253678,18
+23,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,0.9354924923843808,0.9354924923843808,18
+23,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.32462483644485474,0.16200079189406502,18
+23,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.1228186511952016,-0.061282845576190285,18
+23,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.1862141622437372,1.1862141622437372,18
+24,Emissions,emissions,Disengaged,bias,Base coefficient,false,-1.488060827056567,-1.488060827056567,18
+24,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,1.055722759829627,1.055722759829627,18
+24,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,-0.29867395261923474,-0.14901602764924368,18
+24,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,18
+24,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,18
+24,Emissions,emissions,Engaged,bias,Base coefficient,false,-0.05628219425367812,-0.05628219425367812,18
+24,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,1.027637908856074,1.027637908856074,18
+24,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.28788385374678505,0.1436442956328392,18
+24,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.13459550961852074,-0.06716209691431788,18
+24,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.038958403799269,1.038958403799269,18
+25,Emissions,emissions,Disengaged,bias,Base coefficient,false,0.19482157420780924,0.19482157420780924,18
+25,Emissions,emissions,Disengaged,choice_lag_param,Base coefficient,false,1.5820623636245728,1.5820623636245728,18
+25,Emissions,emissions,Disengaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.025800294104556087,0.012875228321212894,18
+25,Emissions,emissions,Disengaged,drug_z_x_stim_param,Drug − saline contrast,true,0.0,0.0,18
+25,Emissions,emissions,Disengaged,stim_param,Base coefficient,true,0.0,0.0,18
+25,Emissions,emissions,Engaged,bias,Base coefficient,false,-0.12700785655114386,-0.12700785655114386,18
+25,Emissions,emissions,Engaged,choice_lag_param,Base coefficient,false,0.8661946124500699,0.8661946124500699,18
+25,Emissions,emissions,Engaged,drug_z_x_choice_lag_param,Drug − saline contrast,false,0.20836212775773472,0.10399840565191375,18
+25,Emissions,emissions,Engaged,drug_z_x_stim_param,Drug − saline contrast,false,-0.118970840341515,-0.059376090558038816,18
+25,Emissions,emissions,Engaged,stim_param,Base coefficient,false,1.094096514913771,1.094096514913771,18
+14,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-7.60512341771807,-7.60512341771807,14
+14,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,-0.33442867334399906,-0.33442867334399906,14
+14,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,-1.652293017932347,-0.823226911681039,14
+14,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-7.0123952116285055,-7.0123952116285055,14
+14,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,0.5415119092379298,0.5415119092379298,14
+14,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,0.10010301481400218,0.04947721239711557,14
+16,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-5.253783702850342,-5.253783702850342,18
+16,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,-0.5611879142622153,-0.5611879142622153,18
+16,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,3.4098749539504447,1.701575126602418,18
+16,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-6.922873364554511,-6.922873364554511,18
+16,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,-0.048010302086671196,-0.048010302086671196,18
+16,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,5.040847076310052,2.5156151321199207,18
+17,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-2.9266353249549866,-2.9266353249549866,20
+17,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,0.5201177455484867,0.5201177455484867,20
+17,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,2.133687454462051,1.0652319610118866,20
+17,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-5.094098496437073,-5.094098496437073,20
+17,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,0.6205594912171364,0.6205594912171364,20
+17,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,4.987093186378479,2.4897711992263796,20
+18,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-5.813962149620056,-5.813962149620056,10
+18,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,1.0504188701510428,1.0504188701510428,10
+18,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,0.17002526745200158,0.08418999407440424,10
+18,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-12.682521104812622,-12.682521104812622,10
+18,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,5.619458746165037,5.619458746165037,10
+18,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,-0.8110053837299347,-0.4029924999922514,10
+19,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-10.285950064659119,-10.285950064659119,8
+19,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,-0.057668581837788224,-0.057668581837788224,8
+19,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,-2.55402310192585,-1.2657101615332067,8
+19,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-12.355800986289978,-12.355800986289978,8
+19,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,-4.277650028467178,-4.277650028467178,8
+19,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,-0.11855863500386477,-0.05906604137271643,8
+20,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-3.058964653448625,-3.058964653448625,22
+20,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,0.36062006770887156,0.36062006770887156,22
+20,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,0.16882486544041472,0.0842894491083412,22
+20,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-4.425490921193903,-4.425490921193903,22
+20,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,0.9454827010631561,0.9454827010631561,22
+20,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,0.6400341079993681,0.3195934633470394,22
+22,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-7.034455325868395,-7.034455325868395,18
+22,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,0.6931933459127322,0.6931933459127322,18
+22,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,-0.4424222716026836,-0.2207360395954715,18
+22,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-6.525567955440945,-6.525567955440945,18
+22,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,1.3795530762937334,1.3795530762937334,18
+22,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,-0.16519883308663136,-0.08241282522471415,18
+23,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-6.387643019358317,-6.387643019358317,18
+23,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,-0.603668502635426,-0.603668502635426,18
+23,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,-2.245484987894694,-1.1206620898511674,18
+23,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-5.5779900550842285,-5.5779900550842285,18
+23,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,0.8201544649071164,0.8201544649071164,18
+23,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,-0.09706164648135503,-0.04843894850152234,18
+24,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-7.1639814376831055,-7.1639814376831055,18
+24,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,-1.9695821433431573,-1.9695821433431573,18
+24,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,0.2601862947146098,0.12981532141566277,18
+24,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-7.176174852583143,-7.176174852583143,18
+24,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,0.9002761865655581,0.9002761865655581,18
+24,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,-1.36050835914082,-0.6787919460071458,18
+25,Transitions,transitions,Disengaged → Engaged,bias,Base coefficient,false,-5.804550117916531,-5.804550117916531,18
+25,Transitions,transitions,Disengaged → Engaged,cumulative_reward,Base coefficient,false,-1.1507490773995717,-1.1507490773995717,18
+25,Transitions,transitions,Disengaged → Engaged,drug_z,Drug − saline contrast,false,-2.0243490404552884,-1.0103507704204984,18
+25,Transitions,transitions,Engaged → Disengaged,bias,Base coefficient,false,-7.114214605755276,-7.114214605755276,18
+25,Transitions,transitions,Engaged → Disengaged,cumulative_reward,Base coefficient,false,1.4026560054885016,1.4026560054885016,18
+25,Transitions,transitions,Engaged → Disengaged,drug_z,Drug − saline contrast,false,1.0149729086293116,0.5065854986508688,18

@@ -1,0 +1,6 @@
+task,model_space,model,score_scale,n_animals,n_sessions,n_trials,winner_fraction,expected_frequency,ep,protected_ep,bor,alpha,interpretation
+2ADC_DRUG,All three models,No drug,1.0,10,99,29100,0.2,0.1524328264777804,0.0279161332671902,0.2327744466344043,0.6707491042510004,1.981626744211145,Exploratory CV-score pseudo-evidence; fixed base
+2ADC_DRUG,All three models,Transitions,1.0,10,99,29100,0.4,0.4637082808709229,0.6110251039237511,0.42476359754235404,0.6707491042510004,6.028207651321998,Exploratory CV-score pseudo-evidence; fixed base
+2ADC_DRUG,All three models,Emissions,1.0,10,99,29100,0.4,0.38385889265129663,0.3610587628071204,0.3424619558226034,0.6707491042510004,4.990165604466856,Exploratory CV-score pseudo-evidence; fixed base
+2ADC_DRUG,Transitions vs Emissions,Transitions,1.0,10,99,29100,0.6,0.5856605777570228,0.7311700333108709,0.5698021213311135,0.6980485734617445,7.027926933084274,Exploratory CV-score pseudo-evidence; fixed base
+2ADC_DRUG,Transitions vs Emissions,Emissions,1.0,10,99,29100,0.4,0.4143394222429772,0.26882996668670084,0.4301978786681533,0.6980485734617445,4.972073066915726,Exploratory CV-score pseudo-evidence; fixed base

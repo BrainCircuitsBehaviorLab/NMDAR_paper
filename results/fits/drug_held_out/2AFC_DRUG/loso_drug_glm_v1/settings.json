@@ -1,0 +1,185 @@
+{
+  "cv": "leave_one_session_out",
+  "task": "2AFC_DRUG",
+  "subjects": [
+    "14",
+    "16",
+    "17",
+    "18",
+    "19",
+    "20",
+    "22",
+    "23",
+    "24",
+    "25"
+  ],
+  "seed": 1,
+  "n_restarts": 10,
+  "num_iters": 50,
+  "m_step_iters": 50,
+  "source_model_ids": {
+    "No drug": "base_model",
+    "Transitions": "drug_transitions2",
+    "Emissions": "drug_emissions",
+    "Both": "drug_transitions_emissions"
+  },
+  "effective_configs": {
+    "No drug": {
+      "task": "2AFC_DRUG",
+      "tau": 50,
+      "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+      ],
+      "emission_cols": [
+        "stim_param",
+        "choice_lag_param",
+        "bias"
+      ],
+      "transition_cols": [
+        "cumulative_reward"
+      ],
+      "frozen_emissions": {
+        "1": {
+          "stim_param": 0.0
+        }
+      },
+      "baseline_class_idx": 0,
+      "K_list": [
+        2
+      ],
+      "model_id": "base_model",
+      "cv_mode": "balanced_session_holdout",
+      "cv_repeats": 0,
+      "num_classes": 2
+    },
+    "Transitions": {
+      "task": "2AFC_DRUG",
+      "tau": 50,
+      "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+      ],
+      "emission_cols": [
+        "stim_param",
+        "bias",
+        "choice_lag_param"
+      ],
+      "transition_cols": [
+        "Drug",
+        "cumulative_reward"
+      ],
+      "frozen_emissions": {
+        "1": {
+          "stim_param": 0.0
+        }
+      },
+      "baseline_class_idx": 0,
+      "K_list": [
+        2
+      ],
+      "model_id": "drug_transitions2",
+      "cv_mode": "balanced_session_holdout",
+      "cv_repeats": 0,
+      "num_classes": 2
+    },
+    "Emissions": {
+      "task": "2AFC_DRUG",
+      "tau": 50,
+      "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+      ],
+      "emission_cols": [
+        "stim_param",
+        "choice_lag_param",
+        "bias",
+        "drug_x_choice_lag_param",
+        "drug_x_stim_param"
+      ],
+      "transition_cols": [
+        "cumulative_reward"
+      ],
+      "frozen_emissions": {
+        "1": {
+          "drug_x_stim_param": 0.0,
+          "stim_param": 0.0
+        }
+      },
+      "baseline_class_idx": 0,
+      "K_list": [
+        2
+      ],
+      "model_id": "drug_emissions",
+      "cv_mode": "balanced_session_holdout",
+      "cv_repeats": 0,
+      "num_classes": 2
+    },
+    "Both": {
+      "task": "2AFC_DRUG",
+      "tau": 50,
+      "subjects": [
+        "14",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "22",
+        "23",
+        "24",
+        "25"
+      ],
+      "emission_cols": [
+        "stim_param",
+        "choice_lag_param",
+        "bias",
+        "drug_x_choice_lag_param",
+        "drug_x_stim_param"
+      ],
+      "transition_cols": [
+        "Drug",
+        "cumulative_reward"
+      ],
+      "frozen_emissions": {
+        "1": {
+          "drug_x_stim_param": 0.0,
+          "stim_param": 0.0
+        }
+      },
+      "baseline_class_idx": 0,
+      "K_list": [
+        2
+      ],
+      "model_id": "both_comparable",
+      "cv_mode": "balanced_session_holdout",
+      "cv_repeats": 0,
+      "num_classes": 2
+    }
+  },
+  "feature_policy": "Fixed upstream GLM weights and existing whole-session reward normalization."
+}

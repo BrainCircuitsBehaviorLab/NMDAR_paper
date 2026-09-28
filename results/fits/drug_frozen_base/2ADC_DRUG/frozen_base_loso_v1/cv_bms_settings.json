@@ -1,0 +1,25 @@
+{
+  "task": "2ADC_DRUG",
+  "unit": "animal",
+  "score": "Sum of LOSO test LLs in nats",
+  "prior_alpha": 1,
+  "prior_equal_frequency_probability": 0.5,
+  "model_spaces": {
+    "All three models": [
+      "No drug",
+      "Transitions",
+      "Emissions"
+    ],
+    "Transitions vs Emissions": [
+      "Transitions",
+      "Emissions"
+    ]
+  },
+  "score_scales": [
+    0.01,
+    0.1,
+    1.0,
+    10.0
+  ],
+  "interpretation": "Exploratory CV-score pseudo-evidence; conditional on fixed base fits"
+}

@@ -1,0 +1,9 @@
+task,subject,model,metric,state,n_trials
+2ADC,C10b,Stim0,RT,Disengaged,199
+2ADC,C10b,Stim0,RT,Engaged,1930
+2ADC,C10b,Stim0,nLicks,Disengaged,81
+2ADC,C10b,Stim0,nLicks,Engaged,1509
+2AFC,325,Stim0,RT,Disengaged,176
+2AFC,325,Stim0,RT,Engaged,2503
+2AFC,325,Stim0,nLicks,Disengaged,65
+2AFC,325,Stim0,nLicks,Engaged,2099
