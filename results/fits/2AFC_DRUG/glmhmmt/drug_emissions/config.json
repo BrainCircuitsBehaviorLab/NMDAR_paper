@@ -18,8 +18,7 @@
         "choice_lag_param",
         "bias",
         "drug_x_choice_lag_param",
-        "drug_x_stim_param",
-        "Drug"
+        "drug_x_stim_param"
     ],
     "transition_cols": [
         "cumulative_reward"

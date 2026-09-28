@@ -39,10 +39,10 @@ ParamWeightSource = tuple[str, str]
 #   results/fits/<fit_task>/glm/<fit_model_id>/
 #
 # Examples:
-#   ("2AFC_DRUG", "one hot")  -> use drug-cohort GLM one-hot weights.
+#   ("2AFC_DRUG", "one hot")  -> use each drug-cohort animal's GLM one-hot weights.
 #   ("2AFC", "one hot")       -> use pooled base-2AFC GLM one-hot weights.
 #   ("2AFC", "one hot2")      -> use pooled base-2AFC GLM one-hot2 weights.
-PARAM_WEIGHT_SOURCE: ParamWeightSource | str = ("2AFC", "one hot")
+PARAM_WEIGHT_SOURCE: ParamWeightSource | str = ("2AFC_DRUG", "one hot")
 
 # Optional per-param override. Keys are target param columns, values are
 # (fit_task, fit_model_id). Leave empty when all selected params should use the
@@ -459,7 +459,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
                 feature_pd[target_name] = _weighted_sum_regressor_zero_fill(
                     feature_pd,
                     standard_param_specs[target_name],
-                    pooled_mean=True,
+                    pooled_mean=False,  # Use this animal's weights, as in 2ADC.
                 )
             for spec in condition_param_specs:
                 if spec is None:
@@ -652,7 +652,7 @@ class TwoAFCDrugAdapter(TwoAFCAdapter):
                 feature_pd[target_name] = _weighted_sum_regressor_zero_fill(
                     feature_pd,
                     standard_param_specs[target_name],
-                    pooled_mean=True,
+                    pooled_mean=False,  # Keep the design-matrix path consistent.
                 )
             feature_df = pl.from_pandas(feature_pd)
         feature_df = _normalize_condition_stim_params(feature_df)

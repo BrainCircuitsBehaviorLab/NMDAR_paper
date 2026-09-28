@@ -76,5 +76,7 @@
     "baseline_class_idx": 0,
     "emission_model": "standard",
     "model_id": "one hot2 lapses",
+    "cv_mode": "balanced_session_holdout",
+    "cv_repeats": 5,
     "condition_filter": "all"
 }

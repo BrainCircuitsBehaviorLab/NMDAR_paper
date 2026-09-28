@@ -17,7 +17,7 @@ def _(mo):
 
     ## Description
 
-    We compare free and constrained GLM-HMM emission models in the 2ADC and 2AFC tasks. Model fit is evaluated relative to each task's GLM, while RT, ILI, and nLicks AUCs quantify how well behavior distinguishes Engaged from Disengaged states.
+    We compare free and constrained GLM-HMM emission models in the 2ADC and 2AFC tasks. Model fit is evaluated relative to each task's GLM, while RT and nLicks AUCs (pooled across tasks) quantify how well behavior distinguishes Engaged from Disengaged states.
     """)
     return
 
@@ -77,7 +77,9 @@ def _():
 @app.cell
 def _():
     mount_figure = True
-    return (mount_figure,)
+    EXAMPLE_MODEL = "Stim0"
+    EXAMPLE_SUBJECTS = {"2ADC": "C10b", "2AFC": "325"}
+    return EXAMPLE_MODEL, EXAMPLE_SUBJECTS, mount_figure
 
 
 @app.cell
@@ -85,12 +87,15 @@ def _():
     panel_names = {
         "freeze_ll_2ADC": "S4a",
         "freeze_ll_2AFC": "S4b",
-        "auc_behavior_2ADC": "S4c",
-        "auc_behavior_2AFC": "S4d",
-        "state_frozen_ll_2ADC": "S4e",
-        "state_frozen_bic_2ADC": "S4f",
-        "state_frozen_ll_2AFC": "S4g",
-        "state_frozen_bic_2AFC": "S4h",
+        "auc_behavior": "S4c",
+        "rt_2ADC": "S4d",
+        "nlicks_2ADC": "S4e",
+        "rt_2AFC": "S4f",
+        "nlicks_2AFC": "S4g",
+        "state_frozen_ll_2ADC": "S4h",
+        "state_frozen_bic_2ADC": "S4i",
+        "state_frozen_ll_2AFC": "S4j",
+        "state_frozen_bic_2AFC": "S4k",
     }
     return (panel_names,)
 
@@ -115,14 +120,20 @@ def _(ROOT, plt, sns):
     plt.rcParams["savefig.bbox"] = "standard"
 
     freeze_model_order = ["Free", "Both0", "Stim0", "Hist0"]
-    auc_model_order = freeze_model_order[:3]
-    auc_metric_order = ["RT", "ILI", "nLicks"]
+    auc_model_order = freeze_model_order
+    auc_metric_order = ["RT", "nLicks"]
+    state_order = ["Engaged", "Disengaged"]
+    state_palette = {"Engaged": "tab:green", "Disengaged": "tab:gray"}
+    metric_palette = dict(zip(auc_metric_order, sns.color_palette("Set2", 2)))
     family_palette = {"free": "black", "frozen": "black"}
     return (
         auc_metric_order,
         auc_model_order,
         family_palette,
         freeze_model_order,
+        metric_palette,
+        state_order,
+        state_palette,
     )
 
 
@@ -270,18 +281,19 @@ def _(math, pl, ttest_1samp, ttest_rel):
         *,
         metric_order,
         model_order,
+        metric_palette,
     ):
-        model_offsets = {
-            model: (index - (len(model_order) - 1) / 2) * 0.8 / len(model_order)
-            for index, model in enumerate(model_order)
+        metric_offsets = {
+            metric: (index - (len(metric_order) - 1) / 2) * 0.8 / len(metric_order)
+            for index, metric in enumerate(metric_order)
         }
         model_pairs = [
-            (model_order[0], model_order[1]),
-            (model_order[1], model_order[2]),
-            (model_order[0], model_order[2]),
+            ("Stim0", "Hist0"),
+            ("Stim0", "Free"),
+            ("Stim0", "Both0"),
         ]
         panel_tests = []
-        for metric_index, metric in enumerate(metric_order):
+        for metric in metric_order:
             for left, right in model_pairs:
                 paired = (
                     dataframe.loc[
@@ -302,36 +314,41 @@ def _(math, pl, ttest_1samp, ttest_rel):
                     continue
                 pvalue = float(ttest_rel(paired[left], paired[right]).pvalue)
                 if math.isfinite(pvalue):
-                    panel_tests.append((metric_index, left, right, pvalue))
+                    panel_tests.append((metric, left, right, pvalue))
 
         n_tests = len(panel_tests)
-        for metric_index, metric in enumerate(metric_order):
+        bottom, top = axis.get_ylim()
+        step = (top - bottom) * 0.065
+        model_positions = {model: index for index, model in enumerate(model_order)}
+        annotation_index = 0
+        for metric in metric_order:
             significant_pairs = []
-            for test_metric_index, left, right, pvalue in panel_tests:
-                if test_metric_index != metric_index:
+            for test_metric, left, right, pvalue in panel_tests:
+                if test_metric != metric:
                     continue
                 adjusted_pvalue = bonferroni_pvalue(pvalue, n_tests)
                 label = significance_stars(adjusted_pvalue)
-                if label:
-                    significant_pairs.append((left, right, label))
+                significant_pairs.append((left, right, label or "ns"))
 
-            for pair_index, (left, right, label) in enumerate(significant_pairs):
-                line_y = 0.845 + pair_index * 0.02
-                left_x = metric_index + model_offsets[left]
-                right_x = metric_index + model_offsets[right]
+            for left, right, label in significant_pairs:
+                line_y = top + annotation_index * step
+                left_x = model_positions[left] + metric_offsets[metric]
+                right_x = model_positions[right] + metric_offsets[metric]
                 axis.plot(
                     [left_x, right_x],
                     [line_y, line_y],
-                    color="0.25",
+                    color=metric_palette[metric],
                     linewidth=0.7,
                 )
                 axis.text(
                     (left_x + right_x) / 2,
-                    line_y + 0.002,
+                    line_y + step * 0.08,
                     label,
                     ha="center",
                     va="bottom",
                 )
+                annotation_index += 1
+        axis.set_ylim(top=top + annotation_index * step)
 
 
     def add_one_sample_zero_annotations(axis, dataframe, *, x, y, order):
@@ -728,7 +745,8 @@ def _(
     roc_auc,
 ):
     behavior_auc_dfs = {}
-    metric_specs = [("nLicks", "nLicks"), ("RT", "RT"), ("ILI", "ILI")]
+    behavior_trial_dfs = {}
+    metric_specs = [("RT", "RT"), ("nLicks", "nLicks")]
 
     for behavior_task_label, behavior_task_config in TASK_CONFIGS.items():
         behavior_task_name = behavior_task_config["task"]
@@ -740,7 +758,7 @@ def _(
         behavior_trial_frames = []
 
         for behavior_model_order, (behavior_model_label, behavior_model_id) in enumerate(
-            behavior_task_config["freeze_models"][:3]
+            behavior_task_config["freeze_models"]
         ):
             behavior_model_adapter, _, _, behavior_views = load_fit_bundle(
                 task_name=behavior_task_name,
@@ -779,6 +797,7 @@ def _(
                 )
 
         behavior_trial_df = pl.concat(behavior_trial_frames, how="diagonal").to_pandas()
+        behavior_trial_dfs[behavior_task_label] = behavior_trial_df
         behavior_auc_rows = []
         for (behavior_model_label, behavior_subject), behavior_subject_df in behavior_trial_df.groupby(
             ["model", "subject"], sort=False
@@ -794,7 +813,7 @@ def _(
                 if behavior_metric == "nLicks":
                     behavior_valid_trials &= correct_trial_mask(behavior_subject_df)
                 else:
-                    # Faster RT and ILI should predict the Engaged state.
+                    # Faster RT should predict the Engaged state.
                     behavior_score = -behavior_score
                 behavior_auc = roc_auc(
                     behavior_target[behavior_valid_trials],
@@ -811,10 +830,20 @@ def _(
                         }
                     )
 
-        behavior_auc_dfs[behavior_task_label] = pd.DataFrame(
-            behavior_auc_rows
-        ).sort_values(["metric", "model", "subject"])
-    return (behavior_auc_dfs,)
+        behavior_auc_df = pd.DataFrame(behavior_auc_rows)
+        behavior_auc_df["model"] = pd.Categorical(
+            behavior_auc_df["model"],
+            categories=[label for label, _ in behavior_task_config["freeze_models"]],
+            ordered=True,
+        )
+        behavior_auc_dfs[behavior_task_label] = behavior_auc_df.sort_values(
+            ["metric", "model", "subject"]
+        )
+    # Prefix animal IDs so paired tests cannot match animals across tasks.
+    behavior_auc_dfs["combined"] = pd.concat(
+        behavior_auc_dfs.values(), ignore_index=True,
+    ).assign(subject=lambda df: df["task"] + ":" + df["subject"].astype(str))
+    return behavior_auc_dfs, behavior_trial_dfs
 
 
 @app.cell
@@ -837,16 +866,11 @@ def _(fig_size, mount_figure, plt):
         fig, axd = plt.subplot_mosaic(
             [
                 ["freeze_ll_2ADC"] * 2 + ["freeze_ll_2AFC"] * 2,
-                ["auc_behavior_2ADC"] * 2 + ["auc_behavior_2AFC"] * 2,
-                [
-                    "state_frozen_ll_2ADC",
-                    "state_frozen_bic_2ADC",
-                    "state_frozen_ll_2AFC",
-                    "state_frozen_bic_2AFC",
-                ],
+                ["auc_behavior"] * 4,
+                ["rt_2ADC", "nlicks_2ADC", "rt_2AFC", "nlicks_2AFC"],
             ],
-            figsize=fig_size(1),
-            constrained_layout=True,
+            figsize=fig_size(1, 0.9), constrained_layout=True,
+            gridspec_kw={"height_ratios": [1, 1.3, 1]},
         )
     else:
         fig, axd = None, {}
@@ -1017,62 +1041,223 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Behavioral AUC by emission constraint
+    ## Single-animal state histograms
 
-    ### 2ADC
+    Examples use the same animal and model for RT and nLicks within each task.
+    Histograms are normalized separately within each state, using common bins.
+    The x-axis shows percentiles 5–95 pooled across states for each animal and measure;
+    normalization still uses all trials, including the tails outside the displayed range.
+    nLicks uses correct trials, as in the AUC analysis; RT uses all finite trials.
+    Animals and the model can be changed in `EXAMPLE_SUBJECTS` and `EXAMPLE_MODEL`.
     """)
     return
 
 
 @app.cell
 def _(
-    BOXPLOT_STYLE,
-    add_grouped_model_pair_annotations,
+    EXAMPLE_MODEL,
+    EXAMPLE_SUBJECTS,
     auc_metric_order,
-    auc_model_order,
+    behavior_trial_dfs,
+    binary_engaged_target,
+    correct_trial_mask,
+    np,
+    pd,
+):
+    example_dfs = {}
+    example_bins = {}
+    example_counts = []
+    for example_task, example_subject in EXAMPLE_SUBJECTS.items():
+        trials = behavior_trial_dfs[example_task]
+        animal_trials = trials.loc[
+            trials["subject"].astype(str).eq(example_subject) & trials["model"].eq(EXAMPLE_MODEL)
+        ]
+        engaged, valid_states = binary_engaged_target(animal_trials["state_label"])
+        for example_metric in auc_metric_order:
+            values = pd.to_numeric(animal_trials[example_metric], errors="coerce").to_numpy(float)
+            valid_trials = valid_states & np.isfinite(values)
+            if example_metric == "nLicks":
+                valid_trials &= correct_trial_mask(animal_trials)
+            histogram_df = pd.DataFrame({
+                "value": values[valid_trials],
+                "state": np.where(engaged[valid_trials], "Engaged", "Disengaged"),
+            })
+            assert histogram_df["state"].nunique() == 2, "Choose an animal with both states."
+            example_dfs[example_task, example_metric] = histogram_df
+            # Both states share bin edges; all finite observations are retained.
+            example_bins[example_task, example_metric] = (
+                np.arange(histogram_df["value"].min() - 0.5, histogram_df["value"].max() + 1.5)
+                if example_metric == "nLicks" else np.arange(histogram_df["value"].min(), histogram_df["value"].max() + 0.025, 0.025)
+            )
+            for example_state, state_trials in histogram_df.groupby("state"):
+                example_counts.append({
+                    "task": example_task, "subject": example_subject, "model": EXAMPLE_MODEL,
+                    "metric": example_metric, "state": example_state, "n_trials": len(state_trials),
+                })
+    example_counts_df = pd.DataFrame(example_counts)
+    return example_bins, example_counts_df, example_dfs
+
+
+@app.cell
+def _(
+    EXAMPLE_MODEL,
+    EXAMPLE_SUBJECTS,
     axd,
-    behavior_auc_dfs,
+    example_bins,
+    example_dfs,
     fig_size,
     mount_figure,
     path_panels,
     plt,
     sns,
+    state_order,
+    state_palette,
 ):
-    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    auc_behavior_2ADC = plt.gca() if not mount_figure else axd["auc_behavior_2ADC"]
-    auc_behavior_2ADC.clear()
-    sns.boxplot(
-        data=behavior_auc_dfs["2ADC"],
-        x="metric",
-        y="auc",
-        hue="model",
-        order=auc_metric_order,
-        hue_order=auc_model_order,
-        palette="Set2",
-        ax=auc_behavior_2ADC,
-        **BOXPLOT_STYLE,
+    rt_example_2ADC = axd["rt_2ADC"] if mount_figure else plt.figure(
+        figsize=fig_size(3, 1), constrained_layout=True,
+    ).gca()
+    rt_example_2ADC.clear()
+    sns.histplot(
+        data=example_dfs["2ADC", "RT"], x="value", hue="state",
+        hue_order=state_order, palette=state_palette, bins=example_bins["2ADC", "RT"],
+        stat="probability", common_norm=False, element="step", fill=False,
+        linewidth=1, legend=False, ax=rt_example_2ADC,
     )
-    auc_behavior_2ADC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    auc_behavior_2ADC.set(xlabel="Metric", ylabel="State AUC", ylim=(0.4, 0.9))
-    add_grouped_model_pair_annotations(
-        auc_behavior_2ADC,
-        behavior_auc_dfs["2ADC"],
-        metric_order=auc_metric_order,
-        model_order=auc_model_order,
+    rt_example_2ADC.set(
+        xlabel="RT (s)", ylabel="Probability",
+        xlim=example_dfs["2ADC", "RT"]["value"].quantile([0.05, 0.95]),
+        title=f"2ADC · {EXAMPLE_SUBJECTS['2ADC']}\n{EXAMPLE_MODEL}",
     )
-    auc_behavior_2ADC.legend(title="", frameon=False, ncol=1)
-    sns.despine(ax=auc_behavior_2ADC)
+    rt_example_2ADC.xaxis.set_major_locator(plt.MaxNLocator(3))
+    sns.despine(ax=rt_example_2ADC)
     if not mount_figure:
-        auc_behavior_2ADC.figure.savefig(path_panels / "svg" / "behavior_auc_2ADC.svg")
-        auc_behavior_2ADC.figure.savefig(path_panels / "png" / "behavior_auc_2ADC.png", dpi=300)
-    auc_behavior_2ADC
-    return
+        rt_example_2ADC.figure.savefig(path_panels / "svg" / "rt_example_2ADC.svg")
+        rt_example_2ADC.figure.savefig(path_panels / "png" / "rt_example_2ADC.png", dpi=300)
+    rt_example_2ADC
+    return (rt_example_2ADC,)
+
+
+@app.cell
+def _(
+    EXAMPLE_MODEL,
+    EXAMPLE_SUBJECTS,
+    axd,
+    example_bins,
+    example_dfs,
+    fig_size,
+    mount_figure,
+    path_panels,
+    plt,
+    sns,
+    state_order,
+    state_palette,
+):
+    nlicks_example_2ADC = axd["nlicks_2ADC"] if mount_figure else plt.figure(
+        figsize=fig_size(3, 1), constrained_layout=True,
+    ).gca()
+    nlicks_example_2ADC.clear()
+    sns.histplot(
+        data=example_dfs["2ADC", "nLicks"], x="value", hue="state",
+        hue_order=state_order, palette=state_palette, bins=example_bins["2ADC", "nLicks"],
+        stat="probability", common_norm=False, element="step", fill=False,
+        linewidth=1, legend=False, ax=nlicks_example_2ADC,
+    )
+    nlicks_example_2ADC.set(
+        xlabel="nLicks", ylabel="",
+        xlim=example_dfs["2ADC", "nLicks"]["value"].quantile([0.05, 0.95]),
+        title=f"2ADC · {EXAMPLE_SUBJECTS['2ADC']}\n{EXAMPLE_MODEL}",
+    )
+    sns.despine(ax=nlicks_example_2ADC)
+    if not mount_figure:
+        nlicks_example_2ADC.figure.savefig(path_panels / "svg" / "nlicks_example_2ADC.svg")
+        nlicks_example_2ADC.figure.savefig(path_panels / "png" / "nlicks_example_2ADC.png", dpi=300)
+    nlicks_example_2ADC
+    return (nlicks_example_2ADC,)
+
+
+@app.cell
+def _(
+    EXAMPLE_MODEL,
+    EXAMPLE_SUBJECTS,
+    axd,
+    example_bins,
+    example_dfs,
+    fig_size,
+    mount_figure,
+    path_panels,
+    plt,
+    sns,
+    state_order,
+    state_palette,
+):
+    rt_example_2AFC = axd["rt_2AFC"] if mount_figure else plt.figure(
+        figsize=fig_size(3, 1), constrained_layout=True,
+    ).gca()
+    rt_example_2AFC.clear()
+    sns.histplot(
+        data=example_dfs["2AFC", "RT"], x="value", hue="state",
+        hue_order=state_order, palette=state_palette, bins=example_bins["2AFC", "RT"],
+        stat="probability", common_norm=False, element="step", fill=False,
+        linewidth=1, legend=False, ax=rt_example_2AFC,
+    )
+    rt_example_2AFC.set(
+        xlabel="RT (s)", ylabel="",
+        xlim=example_dfs["2AFC", "RT"]["value"].quantile([0.05, 0.95]),
+        title=f"2AFC · {EXAMPLE_SUBJECTS['2AFC']}\n{EXAMPLE_MODEL}",
+    )
+    rt_example_2AFC.xaxis.set_major_locator(plt.MaxNLocator(3))
+    sns.despine(ax=rt_example_2AFC)
+    if not mount_figure:
+        rt_example_2AFC.figure.savefig(path_panels / "svg" / "rt_example_2AFC.svg")
+        rt_example_2AFC.figure.savefig(path_panels / "png" / "rt_example_2AFC.png", dpi=300)
+    rt_example_2AFC
+    return (rt_example_2AFC,)
+
+
+@app.cell
+def _(
+    EXAMPLE_MODEL,
+    EXAMPLE_SUBJECTS,
+    axd,
+    example_bins,
+    example_dfs,
+    fig_size,
+    mount_figure,
+    path_panels,
+    plt,
+    sns,
+    state_order,
+    state_palette,
+):
+    nlicks_example_2AFC = axd["nlicks_2AFC"] if mount_figure else plt.figure(
+        figsize=fig_size(3, 1), constrained_layout=True,
+    ).gca()
+    nlicks_example_2AFC.clear()
+    sns.histplot(
+        data=example_dfs["2AFC", "nLicks"], x="value", hue="state",
+        hue_order=state_order, palette=state_palette, bins=example_bins["2AFC", "nLicks"],
+        stat="probability", common_norm=False, element="step", fill=False,
+        linewidth=1, legend=False, ax=nlicks_example_2AFC,
+    )
+    nlicks_example_2AFC.set(
+        xlabel="nLicks", ylabel="",
+        xlim=example_dfs["2AFC", "nLicks"]["value"].quantile([0.05, 0.95]),
+        title=f"2AFC · {EXAMPLE_SUBJECTS['2AFC']}\n{EXAMPLE_MODEL}",
+    )
+    sns.despine(ax=nlicks_example_2AFC)
+    if not mount_figure:
+        nlicks_example_2AFC.figure.savefig(path_panels / "svg" / "nlicks_example_2AFC.svg")
+        nlicks_example_2AFC.figure.savefig(path_panels / "png" / "nlicks_example_2AFC.png", dpi=300)
+    nlicks_example_2AFC
+    return (nlicks_example_2AFC,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### 2AFC
+    ## Behavioral AUC by emission constraint
+
+    ### 2ADC + 2AFC (animal-level pooling)
     """)
     return
 
@@ -1086,40 +1271,35 @@ def _(
     axd,
     behavior_auc_dfs,
     fig_size,
+    metric_palette,
     mount_figure,
     path_panels,
     plt,
     sns,
 ):
-    plt.figure(figsize=fig_size(1, 2), constrained_layout=True)
-    auc_behavior_2AFC = plt.gca() if not mount_figure else axd["auc_behavior_2AFC"]
-    auc_behavior_2AFC.clear()
+    auc_behavior = axd["auc_behavior"] if mount_figure else plt.figure(
+        figsize=fig_size(1, 2.5), constrained_layout=True,
+    ).gca()
+    auc_behavior.clear()
     sns.boxplot(
-        data=behavior_auc_dfs["2AFC"],
-        x="metric",
-        y="auc",
-        hue="model",
-        order=auc_metric_order,
-        hue_order=auc_model_order,
-        palette="Set2",
-        ax=auc_behavior_2AFC,
-        **BOXPLOT_STYLE,
+        data=behavior_auc_dfs["combined"], x="model", y="auc", hue="metric",
+        order=auc_model_order, hue_order=auc_metric_order, palette=metric_palette,
+        ax=auc_behavior, **BOXPLOT_STYLE,
     )
-    auc_behavior_2AFC.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
-    auc_behavior_2AFC.set(xlabel="Metric", ylabel="", ylim=(0.4, 0.9))
+    auc_behavior.axhline(0.5, color="0.5", linestyle="--", linewidth=0.8)
+    auc_behavior.set(xlabel="", ylabel="State AUC")
     add_grouped_model_pair_annotations(
-        auc_behavior_2AFC,
-        behavior_auc_dfs["2AFC"],
-        metric_order=auc_metric_order,
-        model_order=auc_model_order,
+        auc_behavior, behavior_auc_dfs["combined"],
+        metric_order=auc_metric_order, model_order=auc_model_order,
+        metric_palette=metric_palette,
     )
-    auc_behavior_2AFC.legend_.remove()
-    sns.despine(ax=auc_behavior_2AFC)
+    auc_behavior.legend(title="", frameon=False, ncol=2, loc="lower center", bbox_to_anchor=(0.5, 1.02))
+    sns.despine(ax=auc_behavior)
     if not mount_figure:
-        auc_behavior_2AFC.figure.savefig(path_panels / "svg" / "behavior_auc_2AFC.svg")
-        auc_behavior_2AFC.figure.savefig(path_panels / "png" / "behavior_auc_2AFC.png", dpi=300)
-    auc_behavior_2AFC
-    return
+        auc_behavior.figure.savefig(path_panels / "svg" / "behavior_auc_combined.svg")
+        auc_behavior.figure.savefig(path_panels / "png" / "behavior_auc_combined.png", dpi=300)
+    auc_behavior
+    return (auc_behavior,)
 
 
 @app.cell(hide_code=True)
@@ -1285,19 +1465,32 @@ def _(mo):
 
 
 @app.cell
-def _(axd, fig, freeze_ll_2ADC, freeze_ll_2AFC, mount_figure, path_panels):
+def _(
+    auc_behavior,
+    fig,
+    freeze_ll_2ADC,
+    freeze_ll_2AFC,
+    mount_figure,
+    nlicks_example_2ADC,
+    nlicks_example_2AFC,
+    path_panels,
+    rt_example_2ADC,
+    rt_example_2AFC,
+    state_palette,
+):
+    mounted_axes = [
+        freeze_ll_2ADC, freeze_ll_2AFC, auc_behavior,
+        rt_example_2ADC, nlicks_example_2ADC, rt_example_2AFC, nlicks_example_2AFC,
+    ]
     if mount_figure:
-        for _name, _axis in axd.items():
-            if _name.startswith("auc_"):
-                _axis.set_ylim(0.4, 0.9)
-
-        for _axis in (freeze_ll_2ADC, freeze_ll_2AFC):
-            _axis.set_xlabel("")
-
-        freeze_ll_2ADC.set_title("2ADC")
-        freeze_ll_2AFC.set_title("2AFC")
-
-        fig.align_labels()
+        freeze_ll_2ADC.set(xlabel="", title="2ADC")
+        freeze_ll_2AFC.set(xlabel="", title="2AFC")
+        for panel_label, axis in zip("abcdefg", mounted_axes):
+            axis.text(-0.15 if axis in (freeze_ll_2ADC, freeze_ll_2AFC, auc_behavior) else -0.35,
+                      1.12, panel_label, transform=axis.transAxes, weight="bold", va="top")
+        for state, color in state_palette.items():
+            rt_example_2ADC.plot([], [], color=color, label=state)
+        rt_example_2ADC.legend(frameon=False, fontsize=6, loc="upper right")
         fig.savefig(path_panels / "supplementary_figure32.svg")
         fig.savefig(path_panels / "supplementary_figure32.png", dpi=300)
         fig.savefig(path_panels / "supplementary_figure32.pdf")
@@ -1316,7 +1509,6 @@ def _(mo):
 @app.cell
 def _(
     auc_metric_order,
-    auc_model_order,
     behavior_auc_dfs,
     freeze_plot_dfs,
     panel_names,
@@ -1367,13 +1559,12 @@ def _(
             )
 
     _auc_pairs = [
-        (auc_model_order[0], auc_model_order[1]),
-        (auc_model_order[1], auc_model_order[2]),
-        (auc_model_order[0], auc_model_order[2]),
+        ("Stim0", "Hist0"),
+        ("Stim0", "Free"),
+        ("Stim0", "Both0"),
     ]
     for _task, _panel_key in {
-        "2ADC": "auc_behavior_2ADC",
-        "2AFC": "auc_behavior_2AFC",
+        "combined": "auc_behavior",
     }.items():
         _test_df = behavior_auc_dfs[_task]
         for _metric in auc_metric_order:
@@ -1503,7 +1694,9 @@ def _(mo, path_panels, pd, tests):
 
 
 @app.cell
-def _():
+def _(example_counts_df, path_panels):
+    example_counts_df.to_csv(path_panels / "example_trial_counts.csv", index=False)
+    example_counts_df
     return
 
 

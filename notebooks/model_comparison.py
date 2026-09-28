@@ -25,7 +25,12 @@ def _():
         model_aliases_for_kind,
     )
     from glmhmmt.plots_common import custom_boxplot
-    from glmhmmt.postprocess import build_emission_weights_df, build_trial_df
+    import glmhmmt.plots as model_plots
+    from glmhmmt.postprocess import (
+        build_emission_weights_df,
+        build_session_deepdive_payload,
+        build_trial_df,
+    )
     from glmhmmt.runtime import get_runtime_paths
     from glmhmmt.tasks import get_adapter, get_task_options
     from glmhmmt.views import build_views
@@ -39,6 +44,7 @@ def _():
         Line2D,
         adapter_behavioral_column,
         build_emission_weights_df,
+        build_session_deepdive_payload,
         build_trial_df,
         build_views,
         custom_boxplot,
@@ -52,6 +58,7 @@ def _():
         make_plot_saver,
         mo,
         model_aliases_for_kind,
+        model_plots,
         np,
         paths,
         pd,
@@ -2061,6 +2068,321 @@ def _(
     return pairwise_trial_df_a, pairwise_trial_df_b
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Single-session comparison
+    """)
+    return
+
+
+@app.cell
+def _(mo, pairwise_trial_df_a, pairwise_trial_df_b, pl):
+    mo.stop(
+        pairwise_trial_df_a.is_empty() or pairwise_trial_df_b.is_empty(),
+        mo.md("No trial-level data are available for both selected models."),
+    )
+
+    # Only offer subject-session pairs represented in both fitted models.
+    pairwise_sessions_a = (
+        pairwise_trial_df_a
+        .select(
+            pl.col("subject").cast(pl.Utf8),
+            pl.col("session").cast(pl.Utf8),
+        )
+        .unique()
+    )
+    pairwise_sessions_b = (
+        pairwise_trial_df_b
+        .select(
+            pl.col("subject").cast(pl.Utf8),
+            pl.col("session").cast(pl.Utf8),
+        )
+        .unique()
+    )
+    pairwise_common_sessions = (
+        pairwise_sessions_a
+        .join(pairwise_sessions_b, on=["subject", "session"], how="inner")
+        .sort(["subject", "session"])
+    )
+    mo.stop(
+        pairwise_common_sessions.is_empty(),
+        mo.md("No common sessions are available for the selected models."),
+    )
+    return (pairwise_common_sessions,)
+
+
+@app.cell
+def _(mo):
+    get_pairwise_session_pick, set_pairwise_session_pick = mo.state(None)
+    ui_pairwise_random_session = mo.ui.run_button(label="Pick random session")
+    return (
+        get_pairwise_session_pick,
+        set_pairwise_session_pick,
+        ui_pairwise_random_session,
+    )
+
+
+@app.cell
+def _(
+    np,
+    pairwise_common_sessions,
+    set_pairwise_session_pick,
+    ui_pairwise_random_session,
+):
+    if ui_pairwise_random_session.value:
+        session_rows = pairwise_common_sessions.to_dicts()
+        session_row = session_rows[
+            int(np.random.default_rng().integers(len(session_rows)))
+        ]
+        set_pairwise_session_pick(session_row)
+    return
+
+
+@app.cell
+def _(
+    get_pairwise_session_pick,
+    mo,
+    pairwise_common_sessions,
+    set_pairwise_session_pick,
+):
+    pairwise_session_subjects = pairwise_common_sessions["subject"].unique().sort().to_list()
+    _pairwise_session_pick = get_pairwise_session_pick() or {}
+    pairwise_picked_subject = _pairwise_session_pick.get("subject")
+    pairwise_default_subject = (
+        pairwise_picked_subject
+        if pairwise_picked_subject in pairwise_session_subjects
+        else pairwise_session_subjects[0]
+    )
+    ui_pairwise_session_subj = mo.ui.dropdown(
+        options=pairwise_session_subjects,
+        value=pairwise_default_subject,
+        label="Subject",
+        on_change=lambda value: set_pairwise_session_pick(
+            {"subject": value, "session": None}
+        ),
+    )
+    return (ui_pairwise_session_subj,)
+
+
+@app.cell
+def _(
+    get_pairwise_session_pick,
+    mo,
+    pairwise_common_sessions,
+    set_pairwise_session_pick,
+    ui_pairwise_session_subj,
+):
+    pairwise_session_ids = (
+        pairwise_common_sessions
+        .filter(pairwise_common_sessions["subject"] == ui_pairwise_session_subj.value)
+        ["session"]
+        .sort()
+        .to_list()
+    )
+    _pairwise_session_pick = get_pairwise_session_pick() or {}
+    pairwise_picked_session = (
+        _pairwise_session_pick.get("session")
+        if _pairwise_session_pick.get("subject") == ui_pairwise_session_subj.value
+        else None
+    )
+    pairwise_default_session = (
+        pairwise_picked_session
+        if pairwise_picked_session in pairwise_session_ids
+        else pairwise_session_ids[0]
+    )
+    ui_pairwise_session_id = mo.ui.dropdown(
+        options=pairwise_session_ids,
+        value=pairwise_default_session,
+        label="Session",
+        on_change=lambda value: set_pairwise_session_pick(
+            {"subject": ui_pairwise_session_subj.value, "session": value}
+        ),
+    )
+    ui_pairwise_engaged_window = mo.ui.dropdown(
+        options=["1", "5", "10", "20", "50"],
+        value="20",
+        label="P(engaged) window",
+    )
+    ui_pairwise_engaged_trace_mode = mo.ui.radio(
+        options={"Rolling": "rolling", "Raw": "raw"},
+        value="Rolling",
+        inline=False,
+        label="P(engaged) trace",
+    )
+    return (
+        ui_pairwise_engaged_trace_mode,
+        ui_pairwise_engaged_window,
+        ui_pairwise_session_id,
+    )
+
+
+@app.function
+def put_pairwise_figure_legend_at_bottom(
+    fig, *, bottom=0.24, max_ncol=8, x_anchor=0.46, y_anchor=0.01
+):
+    """Move a figure's unique legend entries below its plotting panels."""
+    legend_entries = {}
+    legend_title = None
+
+    def add_entries(handles, labels):
+        for handle, label in zip(handles, labels, strict=False):
+            label_text = str(label)
+            label_key = label_text.lower().replace(" ", "")
+            is_engaged_trace = (
+                ("p(" in label_key or label_key.startswith("$p") or "mathit{p}" in label_key)
+                and ("engag" in label_key or "enag" in label_key)
+                and ("rolling" in label_key or "raw" in label_key)
+            )
+            if label_text and not label_text.startswith("_") and not is_engaged_trace:
+                legend_entries.setdefault(label_text, handle)
+
+    for axis in fig.axes:
+        add_entries(*axis.get_legend_handles_labels())
+
+    legends = list(fig.legends)
+    legends.extend(fig.findobj(lambda artist: artist.__class__.__name__ == "Legend"))
+    for legend in dict.fromkeys(legends):
+        handles = getattr(
+            legend,
+            "legend_handles",
+            getattr(legend, "legendHandles", []),
+        )
+        labels = [text.get_text() for text in legend.get_texts()]
+        legend_title = legend_title or legend.get_title().get_text() or None
+        add_entries(handles, labels)
+        legend.remove()
+
+    if not legend_entries:
+        return
+
+    if hasattr(fig, "set_layout_engine"):
+        fig.set_layout_engine(None)
+    fig.legend(
+        legend_entries.values(),
+        legend_entries.keys(),
+        title=legend_title,
+        loc="lower center",
+        bbox_to_anchor=(x_anchor, y_anchor),
+        bbox_transform=fig.transFigure,
+        ncol=min(max(1, len(legend_entries)), max_ncol),
+        fontsize=8,
+        title_fontsize=9,
+        frameon=False,
+        columnspacing=1.6,
+        handlelength=1.6,
+    )
+    fig.subplots_adjust(bottom=bottom)
+
+
+@app.cell
+def _(
+    build_session_deepdive_payload,
+    mo,
+    model_plots,
+    pairwise_K_a,
+    pairwise_K_b,
+    pairwise_adapter_a,
+    pairwise_adapter_b,
+    pairwise_alias_a,
+    pairwise_alias_b,
+    pairwise_trial_df_a,
+    pairwise_trial_df_b,
+    pairwise_views_a,
+    pairwise_views_b,
+    pl,
+    ui_pairwise_engaged_trace_mode,
+    ui_pairwise_engaged_window,
+    ui_pairwise_random_session,
+    ui_pairwise_session_id,
+    ui_pairwise_session_subj,
+):
+    pairwise_session_subject = ui_pairwise_session_subj.value
+    mo.stop(
+        pairwise_session_subject not in pairwise_views_a
+        or pairwise_session_subject not in pairwise_views_b,
+        mo.md("No fitted arrays are available for this subject in both models."),
+    )
+    pairwise_session_id = (
+        int(ui_pairwise_session_id.value)
+        if str(ui_pairwise_session_id.value).isdigit()
+        else ui_pairwise_session_id.value
+    )
+
+    pairwise_deepdive_a = build_session_deepdive_payload(
+        pairwise_trial_df_a,
+        subject=pairwise_session_subject,
+        session=pairwise_session_id,
+        session_col="session",
+        sort_col="trial_idx",
+        engaged_window=int(ui_pairwise_engaged_window.value),
+        engaged_trace_mode=ui_pairwise_engaged_trace_mode.value,
+        chance_level=1.0 / pairwise_adapter_a.num_classes,
+        num_classes=pairwise_adapter_a.num_classes,
+        views=pairwise_views_a,
+    )
+    pairwise_deepdive_b = build_session_deepdive_payload(
+        pairwise_trial_df_b,
+        subject=pairwise_session_subject,
+        session=pairwise_session_id,
+        session_col="session",
+        sort_col="trial_idx",
+        engaged_window=int(ui_pairwise_engaged_window.value),
+        engaged_trace_mode=ui_pairwise_engaged_trace_mode.value,
+        chance_level=1.0 / pairwise_adapter_b.num_classes,
+        num_classes=pairwise_adapter_b.num_classes,
+        views=pairwise_views_b,
+    )
+
+    pairwise_session_fig_a = model_plots.session_deepdive(pairwise_deepdive_a)
+    pairwise_session_traces_a = model_plots.session_deepdive_state_traces(
+        pairwise_deepdive_a
+    )
+    pairwise_session_fig_b = model_plots.session_deepdive(pairwise_deepdive_b)
+    pairwise_session_traces_b = model_plots.session_deepdive_state_traces(
+        pairwise_deepdive_b
+    )
+    put_pairwise_figure_legend_at_bottom(pairwise_session_fig_a, bottom=0.18)
+    put_pairwise_figure_legend_at_bottom(pairwise_session_traces_a, bottom=0.28)
+    put_pairwise_figure_legend_at_bottom(pairwise_session_fig_b, bottom=0.18)
+    put_pairwise_figure_legend_at_bottom(pairwise_session_traces_b, bottom=0.28)
+
+    pairwise_session_content = [
+        mo.hstack(
+            [
+                ui_pairwise_random_session,
+                ui_pairwise_session_subj,
+                ui_pairwise_session_id,
+                ui_pairwise_engaged_window,
+                ui_pairwise_engaged_trace_mode,
+            ],
+            align="center",
+        )
+    ]
+    if "Drug" in pairwise_trial_df_a.columns:
+        pairwise_drug_value = (
+            pairwise_trial_df_a
+            .filter(
+                pl.col("subject") == pairwise_session_subject,
+                pl.col("session") == pairwise_session_id,
+            )["Drug"]
+            .unique()[0]
+        )
+        pairwise_session_content.append(
+            mo.md("**Drug**" if pairwise_drug_value == 1 else "**Saline**")
+        )
+    pairwise_session_content.extend(
+        [
+            mo.md(f"#### Model A — `{pairwise_alias_a}` (K={pairwise_K_a})"),
+            pairwise_session_fig_a,
+            mo.md(f"#### Model B — `{pairwise_alias_b}` (K={pairwise_K_b})"),
+            pairwise_session_fig_b,
+        ]
+    )
+    mo.vstack(pairwise_session_content, align="center")
+    return
+
+
 @app.cell
 def _(
     df_all,
@@ -2785,11 +3107,6 @@ def _(
             stem=f"auc_comparison_{pairwise_alias_a}_{pairwise_alias_b}",
         ),
     ])
-    return
-
-
-@app.cell
-def _():
     return
 
 

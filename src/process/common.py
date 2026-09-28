@@ -765,6 +765,57 @@ def lapse_logistic_label(
     )
 
 
+def frozen_loso_weight_frames(run_dir, fold_metrics: pl.DataFrame, base_config: dict):
+    """Read fixed-base LOSO weights; return fold rows and animal means for plotting.
+
+    Drug terms are converted from training-standardized z to the drug-minus-saline
+    contrast (2 * coefficient / training SD) before averaging folds. Base terms
+    retain their fitted scale. Folds are repeated estimates, not independent animals.
+    The stimulus-zero constraint identifies the disengaged state across all folds.
+    """
+    stimulus = next(name for name in base_config["emission_cols"] if name.startswith("stim"))
+    disengaged = [int(state) for state, weights in base_config["frozen_emissions"].items()
+                  if weights.get(stimulus) == 0]
+    assert len(disengaged) == 1 and disengaged[0] in (0, 1), "Expected one stimulus-zero state."
+    labels = {disengaged[0]: "Disengaged", 1 - disengaged[0]: "Engaged"}
+    records = []
+    for fit in fold_metrics.filter(pl.col("model").is_in(["Emissions", "Transitions"])).iter_rows(named=True):
+        sd = fit["drug_train_sd"]
+        assert np.isfinite(sd) and sd > 0, "Drug normalization requires both training conditions."
+        component = "emissions" if fit["model"] == "Emissions" else "transitions"
+        path = run_dir / str(fit["subject"]) / f"repeat_{fit['repeat']:02d}" / f"fold_{fit['fold']:02d}"
+        with np.load(path / f"{component}_params.npz", allow_pickle=False) as arrays:
+            if component == "emissions":
+                features = arrays["X_cols"].tolist()
+                assert arrays["emission_weights"].shape == (2, 1, len(features))
+                weights = arrays["emission_weights"][:, 0, :]
+            else:
+                features = ["bias", *arrays["U_cols"].tolist()]
+                assert arrays["transition_weights"].shape == (2, 1, len(features) - 1)
+                weights = np.column_stack([arrays["transition_bias"][:, 0], arrays["transition_weights"][:, 0, :]])
+        for state in range(2):
+            # Self-transition logit is zero; the single fitted target is the other state.
+            group = labels[state] if component == "emissions" else f"{labels[state]} → {labels[1 - state]}"
+            for feature, coefficient in zip(features, weights[state]):
+                is_drug = feature == "drug_z" or feature.startswith("drug_z_x_")
+                frozen = base_config["frozen_emissions"].get(str(state), {})
+                fixed = component == "emissions" and (
+                    feature in frozen or (is_drug and frozen.get(feature.removeprefix("drug_z_x_")) == 0)
+                )
+                records.append(dict(
+                    subject=str(fit["subject"]), repeat=fit["repeat"], fold=fit["fold"],
+                    model=fit["model"], component=component, group=group, feature=feature,
+                    raw_weight=float(coefficient), weight=float(coefficient * 2 / sd if is_drug else coefficient),
+                    weight_kind="Drug − saline contrast" if is_drug else "Base coefficient",
+                    drug_train_sd=sd, fixed=fixed,
+                ))
+    fold_weights = pl.DataFrame(records)
+    animal_weights = fold_weights.group_by("subject", "model", "component", "group", "feature", "weight_kind", "fixed").agg(
+        pl.col("weight").mean(), pl.col("raw_weight").mean(), pl.len().alias("n_folds"),
+    ).sort("component", "subject", "group", "feature")
+    return fold_weights, animal_weights
+
+
 def glmhmmt_transition_weights_df(arrays_by_subject: dict, views_by_subject: dict | None = None) -> pd.DataFrame:
     """Build a long transition-weight dataframe from loaded GLM-HMM-T arrays."""
 
@@ -1639,13 +1690,16 @@ def prepare_treatment_accuracy_repetition_curves(
     *,
     task_name: str,
     treatment_order: Sequence[str] = ("Saline", "Drug"),
+    state_label: str | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict]:
     """Summarize observed and model-predicted accuracy and repetition bias.
 
     Values are first computed within animal. Repetition bias is additionally
     balanced over the previous left/right response before animals are averaged,
     matching :func:`compute_rb_by_x`. Model repetition is the expected
-    probability of repeating the observed previous response.
+    probability of repeating the observed previous response. When ``state_label``
+    is provided, the state filter is applied after lagging so the previous response
+    remains the immediately preceding trial.
     """
     df = to_pandas_df(plot_df)
     required = {
@@ -1712,6 +1766,8 @@ def prepare_treatment_accuracy_repetition_curves(
         work["_model_p_right"],
         1.0 - work["_model_p_right"],
     )
+    if state_label is not None:
+        work = work[work["state_label"] == state_label].copy()
 
     accuracy_subject = (
         work.dropna(

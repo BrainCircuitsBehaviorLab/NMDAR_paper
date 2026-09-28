@@ -1,7 +1,7 @@
 # /// script
 # [tool.marimo.opengraph]
 # title = "Supplementary Figure 4"
-# description = "GLM-relative model comparisons for 2ADC and 2AFC."
+# description = "History- and GLM-relative model comparisons for 2ADC and 2AFC."
 # ///
 
 import marimo
@@ -114,7 +114,9 @@ def _(paths):
         },
     }
     for _config in TASK_CONFIGS.values():
-        _config["glm_dir"] = paths.RESULTS / "fits" / _config["task"] / "glm" / "one hot"
+        _config["glm_dir"] = (
+            paths.RESULTS / "fits" / _config["task"] / "glm" / "one hot2 lapses"
+        )
         _config["freeze_root"] = paths.RESULTS / "fits" / _config["task"] / "glmhmm"
         _config["ashwood_dir"] = _config["freeze_root"] / "ashwood"
     return (TASK_CONFIGS,)
@@ -183,6 +185,22 @@ def _(math, pl, ttest_1samp, ttest_rel):
             if label:
                 axis.text(x_index, text_y, label, ha="center", va="bottom")
 
+    def add_pointwise_zero_annotations(axis, dataframe, *, x, y, order):
+        finite_values = dataframe[y].dropna()
+        if finite_values.empty:
+            return
+        padding = max(float(finite_values.max() - finite_values.min()) * 0.025, 1e-6)
+        for x_value in order:
+            values = dataframe.loc[dataframe[x] == x_value, y].dropna()
+            if len(values) < 2 or float(values.std()) == 0:
+                continue
+            label = significance_stars(
+                float(ttest_1samp(values.to_numpy(dtype=float), popmean=0.0).pvalue)
+            )
+            if label:
+                text_y = float(values.mean() + values.sem()) + padding
+                axis.text(x_value, text_y, label, ha="center", va="bottom", fontsize=8)
+
     def add_model_pair_annotations(axis, dataframe, *, y, order, pairs):
         finite_values = dataframe[y].dropna()
         if finite_values.empty:
@@ -224,39 +242,6 @@ def _(math, pl, ttest_1samp, ttest_rel):
                 ha="center",
                 va="bottom",
             )
-
-    def add_numeric_pair_annotations(axis, dataframe, *, y, pairs):
-        finite_values = dataframe[y].dropna()
-        if finite_values.empty:
-            return
-        value_range = float(finite_values.max() - finite_values.min())
-        padding = max(value_range * 0.08, 1e-6)
-        tested_pairs = []
-        for left, right in pairs:
-            paired = (
-                dataframe.loc[dataframe["plot_order"].isin([left, right]), ["subject", "plot_order", y]]
-                .pivot_table(index="subject", columns="plot_order", values=y, aggfunc="first")
-            )
-            if left not in paired.columns or right not in paired.columns:
-                continue
-            paired = paired.dropna(subset=[left, right])
-            if len(paired) < 2:
-                continue
-            pvalue = float(ttest_rel(paired[left], paired[right]).pvalue)
-            if math.isfinite(pvalue):
-                tested_pairs.append((left, right, significance_stars(pvalue) or "ns"))
-        base_y = float(finite_values.max()) + padding
-        axis.set_ylim(top=base_y + padding * (len(tested_pairs) + 1))
-        for pair_index, (left, right, label) in enumerate(tested_pairs):
-            line_y = base_y + pair_index * padding
-            cap = padding * 0.25
-            axis.plot(
-                [left, right],
-                [line_y + cap, line_y + cap],
-                color="0.35",
-                linewidth=0.7,
-            )
-            axis.text((left + right) / 2, line_y + cap * 1.2, label, ha="center", va="bottom")
 
     def add_state_comparison_annotations(axis, dataframe, *, y):
         finite_values = dataframe[y].dropna()
@@ -343,10 +328,9 @@ def _(math, pl, ttest_1samp, ttest_rel):
 
     return (
         add_model_pair_annotations,
-        add_numeric_pair_annotations,
         add_one_sample_zero_annotations,
+        add_pointwise_zero_annotations,
         add_state_comparison_annotations,
-        align_zero_fraction,
         clean_plot_edges,
         plot_ashwood_point,
         read_metric_directory,
@@ -380,8 +364,6 @@ def _(TASK_CONFIGS, math, pl, read_metric_directory):
             lag_frames.append(
                 lag_metrics.with_columns(
                     pl.lit(n_regressors, dtype=pl.Int64).alias("n_regressors"),
-                    pl.lit(n_regressors, dtype=pl.Int64).alias("plot_order"),
-                    pl.lit(str(n_regressors)).alias("regressor_label"),
                 )
             )
 
@@ -390,33 +372,33 @@ def _(TASK_CONFIGS, math, pl, read_metric_directory):
             "*_metrics.parquet",
         ).with_columns(
             pl.lit(15, dtype=pl.Int64).alias("n_regressors"),
-            pl.lit(12, dtype=pl.Int64).alias("plot_order"),
-            pl.lit("15").alias("regressor_label"),
         )
         lag_metrics = pl.concat([*lag_frames, full_model_metrics], how="diagonal_relaxed")
         lag_deltas = (
             lag_metrics
-            .join(glm_baseline, on="subject", how="inner")
+            .sort(["subject", "n_regressors"])
             .with_columns(
-                ((pl.col(score_column) - pl.col("glm_ll")) / math.log(2)).alias("delta_ll_vs_glm")
+                pl.col(score_column).shift(1).over("subject").alias("previous_ll"),
+                pl.col("n_regressors")
+                .shift(1)
+                .over("subject")
+                .alias("previous_n_regressors"),
+            )
+            .filter(pl.col("previous_n_regressors").is_not_null())
+            .with_columns(
+                ((pl.col(score_column) - pl.col("previous_ll")) / math.log(2)).alias(
+                    "delta_ll_from_previous_choice_count"
+                ),
             )
             .select(
                 "subject",
+                "previous_n_regressors",
                 "n_regressors",
-                "plot_order",
-                "regressor_label",
-                "delta_ll_vs_glm",
+                "delta_ll_from_previous_choice_count",
             )
+            .sort(["n_regressors", "subject"])
         )
-        glm_zero = glm_baseline.select(
-            "subject",
-            pl.lit(0, dtype=pl.Int64).alias("n_regressors"),
-            pl.lit(0, dtype=pl.Int64).alias("plot_order"),
-            pl.lit("GLM").alias("regressor_label"),
-            pl.lit(0.0).alias("delta_ll_vs_glm"),
-        )
-        lag_with_glm = pl.concat([glm_zero, lag_deltas]).sort(["plot_order", "subject"])
-        lag_plot_dfs[task_label] = lag_with_glm.to_pandas()
+        lag_plot_dfs[task_label] = lag_deltas.to_pandas()
         count_rows.append(
             {
                 "task": task_label,
@@ -558,9 +540,9 @@ def _(fig_size, mount_figure, plt):
             # Active scheme: the LL-only comparisons occupy separate rows,
             # followed by LL + BIC state-count rows.
             [
+                ["state_free_ll_2ADC", "state_free_bic_2ADC", "state_free_ll_2AFC", "state_free_bic_2AFC"],
                 ["lag_ll_2ADC", "lag_ll_2ADC", "lag_ll_2AFC", "lag_ll_2AFC"],
                 # ["freeze_ll_2ADC", "freeze_ll_2ADC", "freeze_ll_2AFC", "freeze_ll_2AFC"],
-                ["state_free_ll_2ADC", "state_free_bic_2ADC", "state_free_ll_2AFC", "state_free_bic_2AFC"],
                 # ["state_frozen_ll_2ADC", "state_frozen_bic_2ADC", "state_frozen_ll_2AFC", "state_frozen_bic_2AFC"],
             ],
             # Full ΔLL + ΔBIC alternative:
@@ -586,14 +568,14 @@ def _(fig_size, mount_figure, plt):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Number of action-trace regressors
+    ## Incremental effect of previous choices
     """)
     return
 
 
 @app.cell
 def _(
-    add_numeric_pair_annotations,
+    add_pointwise_zero_annotations,
     axd,
     clean_plot_edges,
     lag_plot_dfs,
@@ -606,22 +588,24 @@ def _(
     lag_ll_2ADC = plt.gca() if not mount_figure else axd["lag_ll_2ADC"]
     lag_ll_2ADC.clear()
     _plot_df = lag_plot_dfs["2ADC"]
-    sns.lineplot(data=_plot_df, x="plot_order", y="delta_ll_vs_glm", units="subject", estimator=None, color="0.82", linewidth=0.6, marker="o", sort=True, ax=lag_ll_2ADC)
-    sns.lineplot(data=_plot_df, x="plot_order", y="delta_ll_vs_glm", errorbar=("se", 1), color="black", linewidth=1, marker="o", markersize=4, markeredgewidth=0, markeredgecolor="none", sort=True, ax=lag_ll_2ADC)
+    sns.lineplot(data=_plot_df, x="n_regressors", y="delta_ll_from_previous_choice_count", units="subject", estimator=None, color="0.82", linewidth=0.6, marker="o", sort=True, ax=lag_ll_2ADC)
+    sns.lineplot(data=_plot_df, x="n_regressors", y="delta_ll_from_previous_choice_count", errorbar=("se", 1), color="black", linewidth=1, marker="o", markersize=4, markeredgewidth=0, markeredgecolor="none", sort=True, ax=lag_ll_2ADC)
     lag_ll_2ADC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    add_numeric_pair_annotations(
+    add_pointwise_zero_annotations(
         lag_ll_2ADC,
         _plot_df,
-        y="delta_ll_vs_glm",
-        pairs=[(0, 1), (9, 10), (10, 12)],
+        x="n_regressors",
+        y="delta_ll_from_previous_choice_count",
+        order=[2, 3, 4, 5, 6, 7, 8, 9, 10, 15],
     )
     lag_ll_2ADC.set(
-        xlabel="Number of previous choices used",
-        ylabel="$\Delta$ LL vs GLM\n with 15 previous choices\n (bits/trial)",
-        xticks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12],
-        xticklabels=["GLM", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "15"],
+        xlabel="Increase in previous choices used",
+        ylabel="$\\Delta$ LL from previous choice count\n(bits/trial)",
+        xticks=[2, 3, 4, 5, 6, 7, 8, 9, 10, 15],
+        xticklabels=["1→2", "2→3", "3→4", "4→5", "5→6", "6→7", "7→8", "8→9", "9→10", "10→15"],
     )
-    if _plot_df["plot_order"].max() == 0:
+    lag_ll_2ADC.tick_params(axis="x", labelrotation=45)
+    if _plot_df.empty:
         lag_ll_2ADC.text(
             0.5,
             0.5,
@@ -631,8 +615,6 @@ def _(
             color="0.4",
             transform=lag_ll_2ADC.transAxes,
         )
-    lag_ll_2ADC.get_xticklabels()[0].set_ha("right")
-    lag_ll_2ADC.get_xticklabels()[1].set_ha("left")
     clean_plot_edges(lag_ll_2ADC)
     sns.despine(ax=lag_ll_2ADC)
     if not mount_figure:
@@ -644,7 +626,7 @@ def _(
 
 @app.cell
 def _(
-    add_numeric_pair_annotations,
+    add_pointwise_zero_annotations,
     axd,
     clean_plot_edges,
     lag_plot_dfs,
@@ -657,23 +639,23 @@ def _(
     lag_ll_2AFC = plt.gca() if not mount_figure else axd["lag_ll_2AFC"]
     lag_ll_2AFC.clear()
     _plot_df = lag_plot_dfs["2AFC"]
-    sns.lineplot(data=_plot_df, x="plot_order", y="delta_ll_vs_glm", units="subject", estimator=None, color="0.82", linewidth=0.6, marker="o", sort=True, ax=lag_ll_2AFC)
-    sns.lineplot(data=_plot_df, x="plot_order", y="delta_ll_vs_glm", errorbar=("se", 1), color="black", linewidth=1, marker="o", markersize=4, markeredgewidth=0, markeredgecolor="none", sort=True, ax=lag_ll_2AFC)
+    sns.lineplot(data=_plot_df, x="n_regressors", y="delta_ll_from_previous_choice_count", units="subject", estimator=None, color="0.82", linewidth=0.6, marker="o", sort=True, ax=lag_ll_2AFC)
+    sns.lineplot(data=_plot_df, x="n_regressors", y="delta_ll_from_previous_choice_count", errorbar=("se", 1), color="black", linewidth=1, marker="o", markersize=4, markeredgewidth=0, markeredgecolor="none", sort=True, ax=lag_ll_2AFC)
     lag_ll_2AFC.axhline(0, color="0.5", linestyle="--", linewidth=0.8)
-    add_numeric_pair_annotations(
+    add_pointwise_zero_annotations(
         lag_ll_2AFC,
         _plot_df,
-        y="delta_ll_vs_glm",
-        pairs=[(0, 1), (9, 10), (10, 12)],
+        x="n_regressors",
+        y="delta_ll_from_previous_choice_count",
+        order=[2, 3, 4, 5, 6, 7, 8, 9, 10, 15],
     )
     lag_ll_2AFC.set(
-        xlabel="Number of action-trace regressors",
+        xlabel="Increase in previous choices used",
         ylabel="",
-        xticks=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12],
-        xticklabels=["GLM", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "15"],
+        xticks=[2, 3, 4, 5, 6, 7, 8, 9, 10, 15],
+        xticklabels=["1→2", "2→3", "3→4", "4→5", "5→6", "6→7", "7→8", "8→9", "9→10", "10→15"],
     )
-    lag_ll_2AFC.get_xticklabels()[0].set_ha("right")
-    lag_ll_2AFC.get_xticklabels()[1].set_ha("left")
+    lag_ll_2AFC.tick_params(axis="x", labelrotation=45)
     clean_plot_edges(lag_ll_2AFC)
     sns.despine(ax=lag_ll_2AFC)
     if not mount_figure:
@@ -1008,7 +990,7 @@ def _(
         state_frozen_ll_2ADC.figure.savefig(path_panels / "svg" / "state_frozen_delta_ll_2ADC.svg")
         state_frozen_ll_2ADC.figure.savefig(path_panels / "png" / "state_frozen_delta_ll_2ADC.png", dpi=300)
     state_frozen_ll_2ADC
-    return (state_frozen_ll_2ADC,)
+    return
 
 
 @app.cell
@@ -1076,7 +1058,7 @@ def _(
         state_frozen_ll_2AFC.figure.savefig(path_panels / "svg" / "state_frozen_delta_ll_2AFC.svg")
         state_frozen_ll_2AFC.figure.savefig(path_panels / "png" / "state_frozen_delta_ll_2AFC.png", dpi=300)
     state_frozen_ll_2AFC
-    return (state_frozen_ll_2AFC,)
+    return
 
 
 @app.cell
@@ -1122,7 +1104,6 @@ def _(mo):
 
 @app.cell
 def _(
-    align_zero_fraction,
     axd,
     fig,
     freeze_ll_2ADC,
@@ -1137,32 +1118,30 @@ def _(
     state_free_ll_2AFC,
     state_frozen_bic_2ADC,
     state_frozen_bic_2AFC,
-    state_frozen_ll_2ADC,
-    state_frozen_ll_2AFC,
     state_plot_dfs,
     zoom_zero_centered,
 ):
     if mount_figure:
         # Reset from artists before applying layout adjustments. This keeps the
         # limits and significance brackets fixed when this cell is rerun.
-        for _axis in axd.values():
-            _axis.relim()
-            _axis.autoscale(enable=True, axis="y")
-            _axis.margins(y=0.08)
+        # for _axis in axd.values():
+        #     _axis.relim()
+        #     _axis.autoscale(enable=True, axis="y")
+        #     _axis.margins(y=0.08)
 
-        align_zero_fraction(
-            [
-                lag_ll_2ADC,
-                freeze_ll_2ADC,
-                state_free_ll_2ADC,
-                state_frozen_ll_2ADC,
-                lag_ll_2AFC,
-                freeze_ll_2AFC,
-                state_free_ll_2AFC,
-                state_frozen_ll_2AFC,
-            ],
-            fraction=0.25,
-        )
+        # align_zero_fraction(
+        #     [
+        #         lag_ll_2ADC,
+        #         freeze_ll_2ADC,
+        #         state_free_ll_2ADC,
+        #         state_frozen_ll_2ADC,
+        #         lag_ll_2AFC,
+        #         freeze_ll_2AFC,
+        #         state_free_ll_2AFC,
+        #         state_frozen_ll_2AFC,
+        #     ],
+        #     fraction=0.25,
+        # )
 
         zoom_zero_centered(
             state_free_bic_2ADC,

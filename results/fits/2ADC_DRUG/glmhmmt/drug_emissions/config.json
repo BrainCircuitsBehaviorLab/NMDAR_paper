@@ -21,7 +21,7 @@
         "bias"
     ],
     "transition_cols": [
-        "filtered_reward"
+        "cumulative_reward"
     ],
     "frozen_emissions": {
         "1": {

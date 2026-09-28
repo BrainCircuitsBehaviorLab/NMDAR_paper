@@ -43,6 +43,27 @@ BOXPLOT_STYLE = dict(
 boxplot_STYLE = BOXPLOT_STYLE
 
 
+def annotate_weight_tests(ax, tests, *, order, hue_order, palette):
+    """Annotate precomputed animal-level tests; brackets pair hues, colored text tests zero."""
+    transform = ax.get_xaxis_transform()
+    for row in tests.itertuples(index=False):
+        if row.status == "fixed":
+            label = "fixed"
+        elif not np.isfinite(row.p_holm):
+            label = "n/a"
+        else:
+            label = _significance_stars(row.p_holm) or "ns"
+        x = order.index(row.feature_label)
+        if row.kind == "paired":
+            ax.plot([x - .2, x - .2, x + .2, x + .2], [1.09, 1.11, 1.11, 1.09],
+                    color="0.25", linewidth=.8, transform=transform, clip_on=False)
+            ax.text(x, 1.12, label, ha="center", va="bottom", fontsize=9, transform=transform)
+        else:
+            offset = -.2 if row.group == hue_order[0] else .2
+            ax.text(x + offset, 1.01, label, color=palette[row.group], ha="center",
+                    va="bottom", fontsize=8, transform=transform)
+
+
 def _significance_stars(pvalue: float) -> str:
     if not np.isfinite(pvalue) or pvalue >= 0.05:
         return ""

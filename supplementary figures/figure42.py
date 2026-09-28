@@ -94,8 +94,10 @@ def _():
     mount_figure = True
     format = "svg"
     MODEL_BY_TASK = {
-        "2ADC_DRUG": "drug_transitions2_nocv",
-        "2AFC_DRUG": "drug_transitions2_nocv",
+        # "2ADC_DRUG": "drug_transitions2_nocv",
+        # "2AFC_DRUG": "drug_transitions2_nocv",
+        "2ADC_DRUG": "drug_emissions",
+        "2AFC_DRUG": "drug_emissions",
     }
     GLM_MODEL_BY_TASK = {
         "2ADC_DRUG": "one hot",
@@ -183,13 +185,13 @@ def _(fig_size, mount_figure, plt):
             [
                 [
                     "psychometric_2ADC",
-                    "engaged_psychometric_2ADC",
+                    # "engaged_psychometric_2ADC",
                     "repetition_bias_2ADC",
                     "engaged_repetition_bias_2ADC",
                 ],
                 [
                     "psychometric_2AFC",
-                    "engaged_psychometric_2AFC",
+                    # "engaged_psychometric_2AFC",
                     "repetition_bias_2AFC",
                     "engaged_repetition_bias_2AFC",
                 ],
@@ -460,6 +462,13 @@ def _(np, pd, plot_dfs, task_names):
     engaged_psychometric_dfs = {}
     disengaged_psychometric_dfs = {}
     psychometric_limits = {}
+    psychometric_bin_tables = []
+
+    evidence_column_by_task = {
+        "2ADC_DRUG": "stim_x_delay_param",
+        "2AFC_DRUG": "stim_param",
+    }
+    number_of_quantile_bins = 9
 
     for _task_name in task_names:
         _trials = plot_dfs[_task_name].to_pandas().copy()
@@ -468,41 +477,18 @@ def _(np, pd, plot_dfs, task_names):
         _trials = _trials.dropna(subset=["subject", "treatment"])
         _trials["subject"] = _trials["subject"].astype(str)
 
-        _evidence_col = {
-            "2ADC_DRUG": "stim_x_delay_param",
-            "2AFC_DRUG": "stim_param",
-        }[_task_name]
-        _model_col = next(
-            (
-                _column
-                for _column in ("p_model_right", "p_pred", "pR")
-                if _column in _trials.columns
-            ),
-            None,
-        )
-        if _model_col is None:
-            _trials["p_right_model"] = np.where(
-                pd.to_numeric(_trials["state_idx"], errors="coerce").eq(0),
-                pd.to_numeric(_trials["pR_state_0"], errors="coerce"),
-                pd.to_numeric(_trials["pR_state_1"], errors="coerce"),
-            )
-        else:
-            _trials["p_right_model"] = pd.to_numeric(_trials[_model_col], errors="coerce")
+        # All-trial curves use the marginal P(right) supplied by the model.
+        _trials["p_right_model"] = _trials["p_pred"]
+        # State-restricted curves use P(right) conditional on the assigned state (K=2).
         _trials["p_right_state"] = np.where(
-            pd.to_numeric(_trials["state_idx"], errors="coerce").eq(0),
-            pd.to_numeric(_trials["pR_state_0"], errors="coerce"),
-            pd.to_numeric(_trials["pR_state_1"], errors="coerce"),
+            _trials["state_idx"].eq(0), _trials["pR_state_0"], _trials["pR_state_1"]
         )
 
-        _response = pd.to_numeric(_trials["response"], errors="coerce")
-        _trials["p_right_data"] = np.where(
-            _response.notna(),
-            (_response > 0).astype(float),
-            np.nan,
+        # Right choices are 1, left choices are 0; missing responses stay missing.
+        _trials["p_right_data"] = (_trials["response"] > 0).astype(float).where(
+            _trials["response"].notna()
         )
-        _trials["stimulus_evidence"] = pd.to_numeric(
-            _trials[_evidence_col], errors="coerce"
-        )
+        _trials["stimulus_evidence"] = _trials[evidence_column_by_task[_task_name]]
         _psychometric_trials = _trials.dropna(
             subset=[
                 "subject",
@@ -516,9 +502,30 @@ def _(np, pd, plot_dfs, task_names):
             float(_psychometric_trials["stimulus_evidence"].min()),
             float(_psychometric_trials["stimulus_evidence"].max()),
         )
+        # Pool subjects and treatments to define 9 quantiles; repeated edges are dropped.
         _psychometric_trials["_evidence_bin"] = pd.qcut(
-            _psychometric_trials["stimulus_evidence"], q=9, duplicates="drop"
+            _psychometric_trials["stimulus_evidence"],
+            q=number_of_quantile_bins,
+            duplicates="drop",
         )
+        _bin_table = (
+            _psychometric_trials.groupby("_evidence_bin", observed=True)
+            .agg(
+                x_value=("stimulus_evidence", "mean"),
+                n_trials=("stimulus_evidence", "size"),
+            )
+            .reset_index()
+        )
+        _bin_table["task"] = _task_name
+        _bin_table["trials"] = "All"
+        _bin_table["bin"] = np.arange(1, len(_bin_table) + 1)
+        _bin_table["interval"] = _bin_table["_evidence_bin"].map(
+            lambda _interval: f"({_interval.left:.3f}, {_interval.right:.3f}]"
+        )
+        psychometric_bin_tables.append(
+            _bin_table[["task", "trials", "bin", "interval", "x_value", "n_trials"]]
+        )
+        # Each bin's x is its mean evidence; average choices and predictions per subject/treatment.
         _psychometric_trials["stimulus_evidence"] = _psychometric_trials.groupby(
             "_evidence_bin", observed=True
         )["stimulus_evidence"].transform("mean")
@@ -535,6 +542,7 @@ def _(np, pd, plot_dfs, task_names):
             .sort_values(["treatment", "stimulus_evidence", "subject"])
         )
 
+        # Filter by assigned state first, then recompute bins pooling saline and drug.
         for _state_label, _state_dfs in {
             "Engaged": engaged_psychometric_dfs,
             "Disengaged": disengaged_psychometric_dfs,
@@ -549,7 +557,28 @@ def _(np, pd, plot_dfs, task_names):
                 ]
             ).copy()
             _state_trials["_evidence_bin"] = pd.qcut(
-                _state_trials["stimulus_evidence"], q=9, duplicates="drop"
+                _state_trials["stimulus_evidence"],
+                q=number_of_quantile_bins,
+                duplicates="drop",
+            )
+            _bin_table = (
+                _state_trials.groupby("_evidence_bin", observed=True)
+                .agg(
+                    x_value=("stimulus_evidence", "mean"),
+                    n_trials=("stimulus_evidence", "size"),
+                )
+                .reset_index()
+            )
+            _bin_table["task"] = _task_name
+            _bin_table["trials"] = _state_label
+            _bin_table["bin"] = np.arange(1, len(_bin_table) + 1)
+            _bin_table["interval"] = _bin_table["_evidence_bin"].map(
+                lambda _interval: f"({_interval.left:.3f}, {_interval.right:.3f}]"
+            )
+            psychometric_bin_tables.append(
+                _bin_table[
+                    ["task", "trials", "bin", "interval", "x_value", "n_trials"]
+                ]
             )
             _state_trials["stimulus_evidence"] = _state_trials.groupby(
                 "_evidence_bin", observed=True
@@ -566,6 +595,8 @@ def _(np, pd, plot_dfs, task_names):
                 )
                 .sort_values(["treatment", "stimulus_evidence", "subject"])
             )
+    psychometric_bins = pd.concat(psychometric_bin_tables, ignore_index=True)
+    print(psychometric_bins.to_string(index=False))
     return (
         disengaged_psychometric_dfs,
         engaged_psychometric_dfs,
@@ -674,9 +705,9 @@ def _(
     treatment_order,
     treatment_palette,
 ):
-    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     engaged_psychometric_2ADC = (
-        plt.gca() if not mount_figure else axd["engaged_psychometric_2ADC"]
+        plt.gca() if not mount_figure or "engaged_psychometric_2ADC" not in axd else axd["engaged_psychometric_2ADC"]
     )
     engaged_psychometric_2ADC.clear()
     sns.lineplot(
@@ -1014,9 +1045,9 @@ def _(
     treatment_order,
     treatment_palette,
 ):
-    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     engaged_psychometric_2AFC = (
-        plt.gca() if not mount_figure else axd["engaged_psychometric_2AFC"]
+        plt.gca() if not mount_figure or "engaged_psychometric_2AFC" not in axd else axd["engaged_psychometric_2AFC"]
     )
     engaged_psychometric_2AFC.clear()
     sns.lineplot(
@@ -1410,29 +1441,21 @@ def _(mo):
     mo.md(r"""
     ## Pooled-treatment repetition bias preview
 
-    Saline and drug trials are pooled within each animal. Task conditions are
-    aligned from easier to harder because delay and |ILD| use different units.
+    Saline and drug trials are pooled within each animal. Each task uses its
+    original stimulus values: delay in seconds for 2ADC and |ILD| in dB for 2AFC.
     """)
     return
 
 
 @app.cell
 def _(
-    Line2D,
-    fig_size,
     glm_plot_dfs,
-    np,
-    path_panels,
     plot_dfs,
-    plt,
     prepare_treatment_accuracy_repetition_curves,
-    task_labels,
     task_names,
-    task_palette,
 ):
-    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    pooled_repetition_bias_preview = plt.gca()
-
+    pooled_repetition_curves = {}
+    glm_pooled_repetition_curves = {}
     for _task_name in task_names:
         _pooled_trials = plot_dfs[_task_name].to_pandas().copy()
         _pooled_trials["condition"] = "Pooled"
@@ -1448,105 +1471,171 @@ def _(
             task_name=_task_name,
             treatment_order=("Pooled",),
         )
-        _task_curve = _pooled_curves["repetition_bias"].sort_values("x_value")
-        _glm_task_curve = _glm_pooled_curves["repetition_bias"].sort_values("x_value")
-        if _task_name == "2AFC_DRUG":
-            _task_curve = _task_curve.iloc[::-1]
-            _glm_task_curve = _glm_task_curve.iloc[::-1]
-        _task_curve = _task_curve.reset_index(drop=True)
-        _glm_task_curve = _glm_task_curve.reset_index(drop=True)
-        _difficulty_rank = np.linspace(0.0, 1.0, len(_task_curve))
-        _glm_difficulty_rank = np.linspace(0.0, 1.0, len(_glm_task_curve))
-        _model_mean = _task_curve["model_mean"].to_numpy(dtype=float)
-        _model_sem = _task_curve["model_sem"].to_numpy(dtype=float)
-        _color = task_palette[_task_name]
+        pooled_repetition_curves[_task_name] = _pooled_curves["repetition_bias"].sort_values("x_value")
+        glm_pooled_repetition_curves[_task_name] = _glm_pooled_curves["repetition_bias"].sort_values("x_value")
+    return glm_pooled_repetition_curves, pooled_repetition_curves
 
-        pooled_repetition_bias_preview.plot(
-            _difficulty_rank,
-            _model_mean,
-            color=_color,
-            linewidth=1.8,
-        )
-        pooled_repetition_bias_preview.fill_between(
-            _difficulty_rank,
-            np.clip(_model_mean - _model_sem, 0, 1),
-            np.clip(_model_mean + _model_sem, 0, 1),
-            color=_color,
-            alpha=0.18,
-            linewidth=0,
-        )
-        pooled_repetition_bias_preview.plot(
-            _glm_difficulty_rank,
-            _glm_task_curve["model_mean"].to_numpy(dtype=float),
-            color=_color,
-            linestyle="--",
-            linewidth=1.8,
-        )
-        pooled_repetition_bias_preview.errorbar(
-            _difficulty_rank,
-            _task_curve["data_mean"].to_numpy(dtype=float),
-            yerr=_task_curve["data_sem"].to_numpy(dtype=float),
-            fmt="o",
-            color=_color,
-            markeredgewidth=0,
-            capsize=2,
-            zorder=3,
-        )
 
-    pooled_repetition_bias_preview.axhline(
-        0.5,
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2ADC pooled RB
+    """)
+    return
+
+
+@app.cell
+def _(
+    curve_meta,
+    fig_size,
+    glm_pooled_repetition_curves,
+    np,
+    path_panels,
+    plt,
+    pooled_repetition_curves,
+    task_labels,
+    task_palette,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    pooled_repetition_bias_2ADC = plt.gca()
+    _task_curve = pooled_repetition_curves["2ADC_DRUG"]
+    _glm_task_curve = glm_pooled_repetition_curves["2ADC_DRUG"]
+    _x = _task_curve["x_value"].to_numpy(dtype=float)
+    _model_mean = _task_curve["model_mean"].to_numpy(dtype=float)
+    _model_sem = _task_curve["model_sem"].to_numpy(dtype=float)
+    _color = task_palette["2ADC_DRUG"]
+
+    pooled_repetition_bias_2ADC.plot(
+        _x, _model_mean, color=_color, linewidth=1.8,
+    )
+    pooled_repetition_bias_2ADC.fill_between(
+        _x,
+        np.clip(_model_mean - _model_sem, 0, 1),
+        np.clip(_model_mean + _model_sem, 0, 1),
+        color=_color,
+        alpha=0.18,
+        linewidth=0,
+    )
+    pooled_repetition_bias_2ADC.plot(
+        _glm_task_curve["x_value"].to_numpy(dtype=float),
+        _glm_task_curve["model_mean"].to_numpy(dtype=float),
+        color=_color,
+        linestyle="--",
+        linewidth=1.8,
+    )
+    pooled_repetition_bias_2ADC.errorbar(
+        _x,
+        _task_curve["data_mean"].to_numpy(dtype=float),
+        yerr=_task_curve["data_sem"].to_numpy(dtype=float),
+        fmt="o",
+        color=_color,
+        markeredgewidth=0,
+        capsize=2,
+        zorder=3,
+    )
+    pooled_repetition_bias_2ADC.axhline(
+        curve_meta["2ADC_DRUG"]["baseline"],
         color="0.6",
         linestyle="--",
         linewidth=0.8,
     )
-    pooled_repetition_bias_preview.set(
-        title="Saline + drug pooled",
-        xlabel="Task difficulty",
+    pooled_repetition_bias_2ADC.set(
+        title=task_labels["2ADC_DRUG"],
+        xlabel=curve_meta["2ADC_DRUG"]["xlabel"],
         ylabel="Rep. bias",
-        xlim=(0, 1),
-        ylim=(0.45, 1),
+        ylim=(0.45, 0.7),
     )
-    pooled_repetition_bias_preview.set_xticks([0, 1], ["Easier", "Harder"])
-    pooled_repetition_bias_preview.legend(
-        handles=[
-            *[
-                Line2D(
-                    [0],
-                    [0],
-                    color=task_palette[_task_name],
-                    label=task_labels[_task_name],
-                )
-                for _task_name in task_names
-            ],
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="black",
-                linestyle="None",
-                markeredgewidth=0,
-                label="Data",
-            ),
-            Line2D([0], [0], color="black", label="GLM-HMM-T"),
-            Line2D(
-                [0],
-                [0],
-                color="black",
-                linestyle="--",
-                label="GLM one-hot",
-            ),
-        ],
-        frameon=False,
-        ncol=3,
+    pooled_repetition_bias_2ADC.figure.savefig(
+        path_panels / "svg" / "pooled_repetition_bias_2ADC.svg"
     )
-    pooled_repetition_bias_preview.figure.savefig(
-        path_panels / "svg" / "pooled_repetition_bias_preview.svg"
-    )
-    pooled_repetition_bias_preview.figure.savefig(
-        path_panels / "png" / "pooled_repetition_bias_preview.png",
+    pooled_repetition_bias_2ADC.figure.savefig(
+        path_panels / "png" / "pooled_repetition_bias_2ADC.png",
         dpi=300,
     )
-    pooled_repetition_bias_preview
+    pooled_repetition_bias_2ADC
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2AFC pooled RB
+    """)
+    return
+
+
+@app.cell
+def _(
+    curve_meta,
+    fig_size,
+    glm_pooled_repetition_curves,
+    np,
+    path_panels,
+    plt,
+    pooled_repetition_curves,
+    task_labels,
+    task_palette,
+):
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    pooled_repetition_bias_2AFC = plt.gca()
+    _task_curve = pooled_repetition_curves["2AFC_DRUG"]
+    _glm_task_curve = glm_pooled_repetition_curves["2AFC_DRUG"]
+    _x = _task_curve["x_value"].to_numpy(dtype=float)
+    _model_mean = _task_curve["model_mean"].to_numpy(dtype=float)
+    _model_sem = _task_curve["model_sem"].to_numpy(dtype=float)
+    _color = task_palette["2AFC_DRUG"]
+
+    pooled_repetition_bias_2AFC.plot(
+        _x, _model_mean, color=_color, linewidth=1.8,
+    )
+    pooled_repetition_bias_2AFC.fill_between(
+        _x,
+        np.clip(_model_mean - _model_sem, 0, 1),
+        np.clip(_model_mean + _model_sem, 0, 1),
+        color=_color,
+        alpha=0.18,
+        linewidth=0,
+    )
+    pooled_repetition_bias_2AFC.plot(
+        _glm_task_curve["x_value"].to_numpy(dtype=float),
+        _glm_task_curve["model_mean"].to_numpy(dtype=float),
+        color=_color,
+        linestyle="--",
+        linewidth=1.8,
+    )
+    pooled_repetition_bias_2AFC.errorbar(
+        _x,
+        _task_curve["data_mean"].to_numpy(dtype=float),
+        yerr=_task_curve["data_sem"].to_numpy(dtype=float),
+        fmt="o",
+        color=_color,
+        markeredgewidth=0,
+        capsize=2,
+        zorder=3,
+    )
+    pooled_repetition_bias_2AFC.axhline(
+        curve_meta["2AFC_DRUG"]["baseline"],
+        color="0.6",
+        linestyle="--",
+        linewidth=0.8,
+    )
+    pooled_repetition_bias_2AFC.set(
+        title=task_labels["2AFC_DRUG"],
+        xlabel=curve_meta["2AFC_DRUG"]["xlabel"],
+        ylabel="Rep. bias",
+        ylim=(0.45, 0.8),
+    )
+    pooled_repetition_bias_2AFC.set_xticks([0, 8, 20])
+    if curve_meta["2AFC_DRUG"]["invert_x"]:
+        pooled_repetition_bias_2AFC.invert_xaxis()
+    pooled_repetition_bias_2AFC.figure.savefig(
+        path_panels / "svg" / "pooled_repetition_bias_2AFC.svg"
+    )
+    pooled_repetition_bias_2AFC.figure.savefig(
+        path_panels / "png" / "pooled_repetition_bias_2AFC.png",
+        dpi=300,
+    )
+    pooled_repetition_bias_2AFC
     return
 
 
