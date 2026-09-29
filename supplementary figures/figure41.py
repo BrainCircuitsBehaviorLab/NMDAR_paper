@@ -623,12 +623,11 @@ def _(
     fig_size,
     model_display_labels,
     model_order,
-    path_panels,
     plot_df_pooled,
     plt,
     sns,
 ):
-    fig_pooled, drug_ll_pooled = plt.subplots(figsize=fig_size(3), constrained_layout=True)
+    fig_pooled, drug_ll_pooled = plt.subplots(figsize=fig_size(2), constrained_layout=True)
     _task_markers = {"2ADC": "o", "2AFC": "^"}
     _task_display_labels = {"2ADC": "STM", "2AFC": "EA"}
     sns.lineplot(
@@ -680,10 +679,10 @@ def _(
 
     plt.xticks([0, 1, 2, 3], [f'No\ndrug', 'Em.', 'Trans.', 'Both'])
     # plt.xticks(rotation=45, ha='right')
-    plt.ylim(-0.05, 0.05)
+    # plt.ylim(-0.05, 0.05)
 
-    fig_pooled.savefig(path_panels / "svg" / "drug_delta_ll_pooled.svg")
-    fig_pooled.savefig(path_panels / "png" / "drug_delta_ll_pooled.png", dpi=300)
+    # fig_pooled.savefig(path_panels / "svg" / "drug_delta_ll_pooled.svg")
+    # fig_pooled.savefig(path_panels / "png" / "drug_delta_ll_pooled.png", dpi=300)
     drug_ll_pooled
     return
 

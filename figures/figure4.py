@@ -1255,26 +1255,41 @@ def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
-                ["sessions_2ADC", "sessions_2ADC", "sessions_2AFC", "sessions_2AFC"],
-                ["sessions_2ADC", "sessions_2ADC", "sessions_2AFC", "sessions_2AFC"],
-                ["state_switch_histogram_pooled", "state_switch_histogram_pooled",
-                 "dwell_time_pooled", "transition_weights_pooled"],
-                ["accuracy_treatment_2ADC", "accuracy_state_2ADC",
-                 "accuracy_treatment_2AFC", "accuracy_state_2AFC"],
+                [
+                    "single_session_saline_2ADC",
+                    "single_session_saline_2ADC",
+                    "single_session_saline_2AFC",
+                    "single_session_saline_2AFC",
+                ],
+                [
+                    "single_session_drug_2ADC",
+                    "single_session_drug_2ADC",
+                    "single_session_drug_2AFC",
+                    "single_session_drug_2AFC",
+                ],
+                [
+                    "switches_occupancy_pooled",
+                    "switches_occupancy_pooled",
+                    "dwell_time_pooled",
+                    "transition_weights_pooled",
+                ],
+                [
+                    "accuracy_treatment_2ADC",
+                    "accuracy_state_2ADC",
+                    "accuracy_treatment_2AFC",
+                    "accuracy_state_2AFC",
+                ],
             ],
             figsize=fig_size(1, 1),
             constrained_layout=True,
         )
 
-        # Occupancy uses one quarter of each task block, beside both sessions.
-        for _task in ("2ADC", "2AFC"):
-            _placeholder = axd.pop(f"sessions_{_task}")
-            _grid = _placeholder.get_subplotspec().subgridspec(2, 2, width_ratios=[3, 1])
-            fig.delaxes(_placeholder)
-            axd[f"single_session_saline_{_task}"] = fig.add_subplot(_grid[0, 0])
-            axd[f"single_session_drug_{_task}"] = fig.add_subplot(_grid[1, 0])
-            axd[f"occupancy_by_state_{_task}"] = fig.add_subplot(_grid[:, 1])
-
+        # Nested split keeps every other panel on the 4-column grid.
+        _placeholder = axd.pop("switches_occupancy_pooled")
+        _grid = _placeholder.get_subplotspec().subgridspec(1, 2, width_ratios=[2, 1])
+        fig.delaxes(_placeholder)
+        axd["state_switch_histogram_pooled"] = fig.add_subplot(_grid[0, 0])
+        axd["engaged_occupancy_pooled"] = fig.add_subplot(_grid[0, 1])
     else:
         fig, axd = None, {}
     return axd, fig
@@ -1437,7 +1452,6 @@ def _(transition_plot_dfs):
 def _(
     add_one_sample_zero_annotations_test,
     add_subject_pair_lines,
-    axd,
     boxplot_STYLE,
     fig_size,
     format,
@@ -1446,12 +1460,13 @@ def _(
     path_panels,
     plt,
     sns,
+    supp_axd,
     transition_orders,
     transition_plot_dfs,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     transition_weights_2ADC = (
-        plt.gca() if not mount_figure else axd.get("transition_weights_2ADC", plt.gca())
+        plt.gca() if not mount_figure else supp_axd.get("transition_weights_2ADC", plt.gca())
     )
     transition_weights_2ADC.clear()
     if model_type != "glmhmmt":
@@ -1508,16 +1523,22 @@ def _(
     transition_weights_2ADC.set_ylim(top = 20)
     handles, _ = transition_weights_2ADC.get_legend_handles_labels()
 
+    # Legend above the axes, matching the pooled transition-weights panel.
     transition_weights_2ADC.legend(
         handles,
-        [r"E$\rightarrow$D", r"D$\rightarrow$E"],
-        frameon=False, ncol=1, handlelength=1, handletextpad=0.5 ,columnspacing=1, loc='upper left', bbox_to_anchor=(-0.05, 1.05)
+        ["E→D", "D→E"],
+        ncols=2,
+        frameon=False,
+        handlelength=0.25,
+        handletextpad=0.25,
+        columnspacing=0.25,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.0),
     )
-    transition_weights_2ADC.legend_.remove()
     if not mount_figure:
         transition_weights_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{format}"))
     transition_weights_2ADC
-    return (palette,)
+    return palette, transition_weights_2ADC
 
 
 @app.cell(hide_code=True)
@@ -1532,7 +1553,6 @@ def _(mo):
 def _(
     add_one_sample_zero_annotations_test,
     add_subject_pair_lines,
-    axd,
     boxplot_STYLE,
     fig_size,
     format,
@@ -1542,12 +1562,13 @@ def _(
     path_panels,
     plt,
     sns,
+    supp_axd,
     transition_orders,
     transition_plot_dfs,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     transition_weights_2AFC = (
-        plt.gca() if not mount_figure else axd.get("transition_weights_2AFC", plt.gca())
+        plt.gca() if not mount_figure else supp_axd.get("transition_weights_2AFC", plt.gca())
     )
     transition_weights_2AFC.clear()
     if model_type != "glmhmmt":
@@ -1621,7 +1642,7 @@ def _(
         )
 
     transition_weights_2AFC
-    return
+    return (transition_weights_2AFC,)
 
 
 @app.cell(hide_code=True)
@@ -1831,7 +1852,6 @@ def _(
         title=task_labels["2ADC_DRUG"],
         xlabel=treatment_accuracy_meta["2ADC_DRUG"]["xlabel"],
         ylabel="Accuracy",
-        ylim=(0.45, 1),
     )
     if treatment_accuracy_meta["2ADC_DRUG"]["invert_x"]:
         accuracy_treatment_2ADC.invert_xaxis()
@@ -1841,7 +1861,7 @@ def _(
         Line2D([0], [0], marker="o", color="black", linestyle="None", label="Data"),
         Line2D([0], [0], color="black", label="Model"),
     ]
-    accuracy_treatment_2ADC.legend(handles=_legend_handles, frameon=False, ncol=2, handlelength=0.25, handletextpad=0.25, columnspacing=0.5, loc="upper right")
+    accuracy_treatment_2ADC.legend(handles=_legend_handles, frameon=False, ncol=2, handlelength=0.25, handletextpad=0.25, columnspacing=0.5, loc="lower right")
     if not mount_figure:
         accuracy_treatment_2ADC.figure.savefig(
             (path_panels / "accuracy_treatment_2ADC").with_suffix(f".{format}")
@@ -1905,9 +1925,8 @@ def _(
         title=task_labels["2AFC_DRUG"],
         xlabel=treatment_accuracy_meta["2AFC_DRUG"]["xlabel"],
         ylabel="Accuracy",
-        ylim=(0.45, 1),
     )
-    accuracy_treatment_2AFC.set_xticks([0, 2, 4, 8, 20])
+    accuracy_treatment_2AFC.set_xticks([0, 20])
     if treatment_accuracy_meta["2AFC_DRUG"]["invert_x"]:
         accuracy_treatment_2AFC.invert_xaxis()
     _legend_handles = [
@@ -2066,7 +2085,7 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     accuracy_state_2ADC = plt.gca() if not mount_figure else axd["accuracy_state_2ADC"]
     accuracy_state_2ADC.clear()
-    for _state, _linestyle, _marker in (("Engaged", "-", "o"), ("Disengaged", "--", "s")):
+    for _state, _linestyle, _marker in (("Engaged", "-", "o"), ("Disengaged", ":", "s")):
         for _treatment in treatment_order:
             _curve = state_accuracy_curves["2ADC_DRUG"][_state]
             _curve = _curve[_curve["treatment"] == _treatment]
@@ -2085,18 +2104,18 @@ def _(
                 _curve["x_value"], _curve["data_mean"], yerr=_curve["data_sem"],
                 fmt=_marker, color=_color, markeredgewidth=0, capsize=2, zorder=3,
             )
-    accuracy_state_2ADC.axhline(0.5, color="0.6", linestyle=":")
+    accuracy_state_2ADC.axhline(0.5, color="0.6", linestyle="--")
     accuracy_state_2ADC.set(
         title=task_labels["2ADC_DRUG"],
         xlabel=treatment_accuracy_meta["2ADC_DRUG"]["xlabel"],
-        ylabel="Accuracy", ylim=(0, 1), yticks=[0, 0.5, 1],
+        ylabel="Accuracy",
     )
     if treatment_accuracy_meta["2ADC_DRUG"]["invert_x"]:
         accuracy_state_2ADC.invert_xaxis()
     accuracy_state_2ADC.legend(handles=[
         Line2D([], [], color="black", linestyle="-", marker="o", markeredgewidth=0, label="Engaged"),
-        Line2D([], [], color="black", linestyle="--", marker="s", markeredgewidth=0, label="Disengaged"),
-    ], frameon=False, handlelength=1, columnspacing = 0.5, handletextpad= 0.3)
+        Line2D([], [], color="black", linestyle=":", marker="s", markeredgewidth=0, label="Disengaged"),
+    ], frameon=False, loc="center right", bbox_to_anchor=(1, 0.63), handlelength=1, columnspacing=0.5, handletextpad=0.3)
     if not mount_figure:
         accuracy_state_2ADC.figure.savefig(
             (path_panels / "accuracy_state_2ADC").with_suffix(f".{format}")
@@ -2231,7 +2250,7 @@ def _(
     plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
     accuracy_state_2AFC = plt.gca() if not mount_figure else axd["accuracy_state_2AFC"]
     accuracy_state_2AFC.clear()
-    for _state, _linestyle, _marker in (("Engaged", "-", "o"), ("Disengaged", "--", "s")):
+    for _state, _linestyle, _marker in (("Engaged", "-", "o"), ("Disengaged", ":", "s")):
         for _treatment in treatment_order:
             _curve = state_accuracy_curves["2AFC_DRUG"][_state]
             _curve = _curve[_curve["treatment"] == _treatment]
@@ -2250,18 +2269,18 @@ def _(
                 _curve["x_value"], _curve["data_mean"], yerr=_curve["data_sem"],
                 fmt=_marker, color=_color, markeredgewidth=0, capsize=2, zorder=3,
             )
-    accuracy_state_2AFC.axhline(0.5, color="0.6", linestyle=":")
+    accuracy_state_2AFC.axhline(0.5, color="0.6", linestyle="--")
     accuracy_state_2AFC.set(
         title=task_labels["2AFC_DRUG"],
         xlabel=treatment_accuracy_meta["2AFC_DRUG"]["xlabel"],
-        ylabel="Accuracy", ylim=(0, 1), yticks=[0, 0.5, 1],
+        ylabel="Accuracy",
     )
     if treatment_accuracy_meta["2AFC_DRUG"]["invert_x"]:
         accuracy_state_2AFC.invert_xaxis()
-    accuracy_state_2AFC.set_xticks([0, 2, 4, 8, 20])
+    accuracy_state_2AFC.set_xticks([0, 20])
     accuracy_state_2AFC.legend(handles=[
         Line2D([], [], color="black", linestyle="-", marker="o", markeredgewidth=0, label="Engaged"),
-        Line2D([], [], color="black", linestyle="--", marker="s", markeredgewidth=0, label="Disengaged"),
+        Line2D([], [], color="black", linestyle=":", marker="s", markeredgewidth=0, label="Disengaged"),
     ], frameon=False, handlelength=1.5)
     if not mount_figure:
         accuracy_state_2AFC.figure.savefig(
@@ -2700,7 +2719,7 @@ def _(
     treatment_palette,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    occupancy_by_state_2ADC = plt.gca() if not mount_figure else axd["occupancy_by_state_2ADC"]
+    occupancy_by_state_2ADC = plt.gca() if not mount_figure else axd.get("occupancy_by_state_2ADC", plt.gca())
     occupancy_by_state_2ADC.clear()
     sns.boxplot(
         data=treatment_occupancy_dfs["2ADC_DRUG"],
@@ -2752,7 +2771,7 @@ def _(
     treatment_palette,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
-    occupancy_by_state_2AFC = plt.gca() if not mount_figure else axd["occupancy_by_state_2AFC"]
+    occupancy_by_state_2AFC = plt.gca() if not mount_figure else axd.get("occupancy_by_state_2AFC", plt.gca())
     occupancy_by_state_2AFC.clear()
     sns.boxplot(
         data=treatment_occupancy_dfs["2AFC_DRUG"],
@@ -2887,7 +2906,7 @@ def _(
         (path_panels / "engaged_occupancy_treatment").with_suffix(f".{format}")
     )
     engaged_occupancy_fig
-    return (engaged_occupancy_df,)
+    return engaged_occupancy_df, engaged_occupancy_subject_df
 
 
 @app.cell
@@ -2952,7 +2971,9 @@ def engaged_occupancy_pooled(
         hue_order=treatment_order,
     )
     engaged_occupancy_pooled.set_xticks([-0.2, 0.2])
-    engaged_occupancy_pooled.set_xticklabels(treatment_order)
+    engaged_occupancy_pooled.set_xticklabels(
+        treatment_order, rotation=45, ha="right", rotation_mode="anchor"
+    )
     engaged_occupancy_pooled.set_xlabel("")
     engaged_occupancy_pooled.set_ylabel(f"Occupancy | eng.")
     if not mount_figure:
@@ -2961,6 +2982,69 @@ def engaged_occupancy_pooled(
         )
     engaged_occupancy_pooled
     return
+
+
+@app.cell
+def engaged_occupancy_supp(
+    add_paired_state_annotation,
+    add_subject_pair_lines,
+    boxplot_STYLE,
+    engaged_occupancy_subject_df,
+    mount_figure,
+    sns,
+    supp_axd,
+    task_labels,
+    treatment_order,
+    treatment_palette,
+):
+    # Supplementary: engaged occupancy per task, styled like the pooled panel
+    # (one box per treatment over per-animal means, paired lines per animal).
+    engaged_occupancy_supp_axes = {}
+    if mount_figure:
+        for _task_name, _suffix in (("2ADC_DRUG", "2ADC"), ("2AFC_DRUG", "2AFC")):
+            _ax = supp_axd[f"engaged_occupancy_{_suffix}"]
+            _ax.clear()
+            _task_label = task_labels[_task_name]
+            _task_subject_df = engaged_occupancy_subject_df[
+                engaged_occupancy_subject_df["task_label"] == _task_label
+            ]
+            sns.boxplot(
+                data=_task_subject_df,
+                x="task_label",
+                y="occupancy",
+                hue="treatment",
+                order=[_task_label],
+                hue_order=treatment_order,
+                palette=treatment_palette,
+                legend=False,
+                ax=_ax,
+                **boxplot_STYLE,
+            )
+            add_subject_pair_lines(
+                _ax,
+                _task_subject_df,
+                x="task_label",
+                y="occupancy",
+                order=[_task_label],
+                hue="treatment",
+                hue_order=treatment_order,
+            )
+            add_paired_state_annotation(
+                _ax,
+                _task_subject_df,
+                x="task_label",
+                y="occupancy",
+                order=[_task_label],
+                hue="treatment",
+                hue_order=treatment_order,
+            )
+            _ax.set_xticks([-0.2, 0.2])
+            _ax.set_xticklabels(treatment_order)
+            _ax.set_xlabel("")
+            _ax.set_ylabel("Occupancy | eng.")
+            engaged_occupancy_supp_axes[_task_name] = _ax
+    engaged_occupancy_supp_axes
+    return (engaged_occupancy_supp_axes,)
 
 
 @app.cell(hide_code=True)
@@ -4148,13 +4232,14 @@ def _(
     path_panels,
     plt,
     sns,
+    supp_axd,
     treatment_order,
     treatment_palette,
     treatment_switch_dfs,
 ):
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     histogram_transitions_2ADC = (
-        # plt.gca() if not mount_figure else supp_axd.get("histogram_transitions_2ADC", plt.gca())
+        plt.gca() if not mount_figure else supp_axd.get("histogram_transitions_2ADC", plt.gca())
     )
     histogram_transitions_2ADC.clear()
     # Fixed BIN WIDTH (not bin count), matching the 2AFC panel -- see that
@@ -5001,7 +5086,7 @@ def _(
         _data["trial_x"],
         _data["p_engaged"],
         color='tab:gray',#state_palette["Engaged"],
-        label="saline",
+        label="Saline",
     )
     for _trial_x, _probability in zip(
         _data["trial_x"], _data["p_engaged"], strict=False
@@ -5146,7 +5231,7 @@ def _(
         _data["trial_x"],
         _data["p_engaged"],
         color='tab:pink',#state_palette["Engaged"],
-        label="drug",
+        label="Drug",
     )
     for _trial_x, _probability in zip(
         _data["trial_x"], _data["p_engaged"], strict=False
@@ -5790,7 +5875,6 @@ def _(mo):
 def _(FuncFormatter, axd, fig, mount_figure, path_panels):
     if mount_figure:
         for _name in (
-            "single_session_drug_2ADC",
             "single_session_saline_2AFC",
             "single_session_drug_2AFC",
             "dwell_time_pooled",
@@ -5816,27 +5900,85 @@ def _(FuncFormatter, axd, fig, mount_figure, path_panels):
         axd["single_session_drug_2AFC"].set_yticklabels("")
 
         axd["accuracy_state_2ADC"].set_title("")
-        axd["accuracy_state_2ADC"].set_ylabel("Accuracy")
+        axd["accuracy_state_2ADC"].set_ylabel("")
         axd["accuracy_state_2AFC"].set_title("")
-        axd["accuracy_state_2AFC"].set_ylabel("Accuracy")
+        axd["accuracy_state_2AFC"].set_ylabel("")
 
         axd["accuracy_treatment_2ADC"].set_title("")
         axd["accuracy_treatment_2AFC"].set_title("")
+        axd["accuracy_treatment_2AFC"].set_ylabel("")
 
-        # Render whole-number yticks (e.g. the ylim=1.0 top) without a
+        # Shared y-range for the accuracy row: widest autoscaled span across the
+        # four panels, capped at 1.
+        _accuracy_axes = [
+            axd[_name]
+            for _name in (
+                "accuracy_treatment_2ADC",
+                "accuracy_state_2ADC",
+                "accuracy_treatment_2AFC",
+                "accuracy_state_2AFC",
+            )
+        ]
+        _accuracy_ylims = [_ax.get_ylim() for _ax in _accuracy_axes]
+        _accuracy_ylim = (
+            min(_bottom for _bottom, _ in _accuracy_ylims),
+            min(1, max(_top for _, _top in _accuracy_ylims)),
+        )
+        for _ax in _accuracy_axes:
+            _ax.set_ylim(_accuracy_ylim)
+
+        # Render whole-number yticks (e.g. a 1.0 top tick) without a
         # trailing ".0" -- "1" instead of "1.0" -- while leaving fractional
         # ticks (0.5, 0.6, ...) displayed normally.
         def _format_accuracy_tick(value, pos):
             return f"{value:g}"
 
-        for _acc_key in ("accuracy_treatment_2ADC", "accuracy_treatment_2AFC"):
+        for _acc_key in (
+            "accuracy_treatment_2ADC",
+            "accuracy_state_2ADC",
+            "accuracy_treatment_2AFC",
+            "accuracy_state_2AFC",
+        ):
             axd[_acc_key].yaxis.set_major_formatter(FuncFormatter(_format_accuracy_tick))
+
+        # Constrained layout solves the nested histogram/occupancy split on its
+        # own, so snap it to the rest of the pooled row, then freeze the layout.
+        if fig.get_layout_engine() is not None and fig.get_layout_engine().adjust_compatible is False:
+            fig.get_layout_engine().execute(fig)
+            _row_pos = axd["dwell_time_pooled"].get_position()
+            _hist_ax = axd["state_switch_histogram_pooled"]
+            _occ_ax = axd["engaged_occupancy_pooled"]
+            # Split the STM half 2:1 between the two plot areas, leaving room
+            # for the occupancy y-label and tick labels.
+            _occ_deco = (
+                _occ_ax.get_position().x0
+                - fig.transFigure.inverted().transform(
+                    (_occ_ax.get_tightbbox().x0, 0)
+                )[0]
+            )
+            _left = _hist_ax.get_position().x0
+            _right = _occ_ax.get_position().x1
+            _pad = 0.02
+            _occ_width = (_right - _left - _occ_deco - _pad) / 3
+            _hist_ax.set_position([_left, _row_pos.y0, 2 * _occ_width, _row_pos.height])
+            _occ_ax.set_position(
+                [_right - _occ_width, _row_pos.y0, _occ_width, _row_pos.height]
+            )
+            fig.set_layout_engine("none")
+
+        # The nested histogram/occupancy pair keeps its own label positions.
+        _aligned_axes = [
+            _ax
+            for _name, _ax in axd.items()
+            if _name not in ("state_switch_histogram_pooled", "engaged_occupancy_pooled")
+        ]
+        # Panels without an x-label would drag their neighbours' labels down.
+        fig.align_xlabels([_ax for _ax in _aligned_axes if _ax.get_xlabel()])
+        fig.align_ylabels(_aligned_axes)
 
         fig.savefig((path_panels / "figure4").with_suffix(".pdf"))
         fig.savefig((path_panels / "figure4").with_suffix(".svg"))
         fig.savefig((path_panels / "figure4").with_suffix(".png"))
-
-        # Constrained layout aligns labels within the nested task blocks.
     fig
     return
 
@@ -5860,8 +6002,14 @@ def figure4_supp(fig_size, mount_figure, plt):
                     "histogram_transitions_2AFC",
                     "dwell_time_2AFC",
                 ],
+                [
+                    "engaged_occupancy_2ADC",
+                    "transition_weights_2ADC",
+                    "engaged_occupancy_2AFC",
+                    "transition_weights_2AFC",
+                ],
             ],
-            figsize=fig_size(1, 4),
+            figsize=fig_size(1, 2),
             constrained_layout=True,
         )
     else:
@@ -5873,23 +6021,29 @@ def figure4_supp(fig_size, mount_figure, plt):
 def figure4_supp_finalize(
     dwell_time_2ADC,
     dwell_time_2AFC,
+    engaged_occupancy_supp_axes,
     histogram_transitions_2ADC,
     histogram_transitions_2AFC,
     mount_figure,
     path_panels,
     supp_fig,
+    transition_weights_2ADC,
+    transition_weights_2AFC,
 ):
     if mount_figure:
-        _ = (histogram_transitions_2ADC, histogram_transitions_2AFC, dwell_time_2ADC, dwell_time_2AFC)
+        _ = (
+            histogram_transitions_2ADC,
+            histogram_transitions_2AFC,
+            dwell_time_2ADC,
+            dwell_time_2AFC,
+            engaged_occupancy_supp_axes,
+            transition_weights_2ADC,
+            transition_weights_2AFC,
+        )
         supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".pdf"))
         supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".svg"))
         supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".png"))
     supp_fig
-    return
-
-
-@app.cell
-def _():
     return
 
 
