@@ -2293,15 +2293,6 @@ def psychometric_2AFC_engaged(
     treatment_palette,
     treatment_trial_dfs,
 ):
-    # Same as treatment_psychometric_dfs["2AFC_DRUG"] (ecfG cell), filtered to
-    # Engaged-state trials -- EXCEPT for the model column. Per the colleague's
-    # reference implementation (supplementary figures/figure42.py, the cell
-    # building engaged_psychometric_dfs, just before "## 2ADC PC"): for a
-    # state-restricted curve the model prediction should be the STATE-
-    # CONDITIONAL prediction p_right_state = pR_state_<state_idx> (the model's
-    # "as if fully in this state" probability, using that state's own emission
-    # weights), not the general p_right_model/pR column (which is a marginal,
-    # posterior-state-weighted blend across both states).
     _engaged_trials_2AFC = treatment_trial_dfs["2AFC_DRUG"].copy()
     _state_idx_2AFC = pd.to_numeric(_engaged_trials_2AFC["state_idx"], errors="coerce")
     _engaged_trials_2AFC["p_right_state"] = np.where(
@@ -2829,12 +2820,6 @@ def _(
     treatment_order,
     treatment_palette,
 ):
-    # Engaged-state occupancy (fraction of trials per session spent Engaged),
-    # Saline vs Drug, one panel per task (2ADC left, 2AFC right). Not part of
-    # the main mosaic -- reuses occupancy_dfs (glmhmmt_state_occupancy_df,
-    # already computed above) and session_options (subject/session -> treatment,
-    # built in the ecfG cell) rather than a task-level pooled dataframe, since
-    # this is a standalone supplementary check.
     _engaged_occupancy_frames = []
     for _task_name in task_names:
         _occ = occupancy_dfs[_task_name].copy()
@@ -2846,23 +2831,16 @@ def _(
         _engaged_occupancy_frames.append(_occ)
     engaged_occupancy_df = pd.concat(_engaged_occupancy_frames, ignore_index=True)
 
-    # Per-subject mean (a subject can have several sessions per treatment arm)
-    # for add_subject_pair_lines / add_paired_state_annotation below.
     engaged_occupancy_subject_df = (
         engaged_occupancy_df.groupby(
             ["subject", "task_label", "treatment"], as_index=False, observed=True
         ).agg(occupancy=("occupancy", "mean"))
     )
 
-    # sharey=True so both panels use the same y-axis range/tick labels.
     engaged_occupancy_fig, engaged_occupancy_axes = plt.subplots(
         1, 2, figsize=fig_size(2, 2), constrained_layout=True, sharey=True
     )
-    # x is the (single-value) task label with treatment as the dodged hue --
-    # the layout add_subject_pair_lines / add_paired_state_annotation expect
-    # (their default offset=0.2 matches seaborn's 2-level hue dodge) -- with
-    # the two dodge positions relabeled Saline/Drug directly instead of a
-    # legend.
+
     for _ax, _task_name in zip(engaged_occupancy_axes, ("2ADC_DRUG", "2AFC_DRUG")):
         _task_label = task_labels[_task_name]
         _task_df = engaged_occupancy_df[engaged_occupancy_df["task_label"] == _task_label]
@@ -2928,24 +2906,12 @@ def engaged_occupancy_pooled(
     treatment_order,
     treatment_palette,
 ):
-    # Pool engaged occupancy from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
-    # single Saline-vs-Drug boxplot, instead of one panel per task, to gain
-    # plotting space and statistical power (more animals per treatment arm) --
-    # same rationale as dwell_time_pooled / state_switch_histogram_pooled /
-    # transition_weights_pooled above. Subject ids don't collide between the
-    # two cohorts (2AFC_DRUG uses plain numeric ids, 2ADC_DRUG uses
-    # letter-prefixed ids), so pooling and pairing by subject is unambiguous.
     pooled_engaged_occupancy_subject_df = (
         engaged_occupancy_df.groupby(
             ["subject", "state_label", "treatment"], as_index=False, observed=True
         ).agg(occupancy=("occupancy", "mean"))
     )
 
-    # Sized to match a single panel of the per-task figure above (fig_size(2, 2)
-    # is that figure's TOTAL width for its 2 side-by-side panels) -- half that
-    # width, same height, rather than a fresh fig_size call. Only used when
-    # not mounted; inside the main mosaic the panel's size comes from its own
-    # grid cell, spanning both session rows in the rightmost quarter.
     _per_task_figsize = fig_size(2, 2)
     plt.figure(
         figsize=(_per_task_figsize[0] / 2, _per_task_figsize[1]),
@@ -4269,11 +4235,7 @@ def _(
         plt.gca() if not mount_figure else supp_axd.get("histogram_transitions_2AFC", plt.gca())
     )
     histogram_transitions_2AFC.clear()
-    # Fixed BIN WIDTH (not bin count) bumped up from the old bins=12 to
-    # increase resolution. Using a shared width (rather than a shared bin
-    # COUNT over each task's own data range) keeps bins the same visual size
-    # between the 2AFC and 2ADC panels -- a shared count made 2ADC's bins look
-    # much bigger since its n_switches range is ~2x wider (0-75 vs 0-38).
+
     HIST_BINWIDTH_2AFC = 2
     print(f"histogram_transitions_2AFC: binwidth={HIST_BINWIDTH_2AFC}")
     sns.histplot(
@@ -4291,9 +4253,6 @@ def _(
         ax=histogram_transitions_2AFC,
     )
 
-    # Put Drug (pink) on top of Saline (gray) via explicit zorder -- sns.histplot's
-    # draw order (and therefore default stacking) doesn't reliably match
-    # hue_order, so this is set explicitly rather than relied on implicitly.
     for _coll in histogram_transitions_2AFC.collections:
         _fc = _coll.get_facecolor()
         if len(_fc) and tuple(_fc[0][:3]) == plt.matplotlib.colors.to_rgb(treatment_palette["Drug"]):
@@ -4341,15 +4300,7 @@ def state_switch_histogram_pooled(
     treatment_palette,
     treatment_switch_dfs,
 ):
-    # Pool state-switch counts from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
-    # single Saline-vs-Drug histogram, instead of one panel per task, to gain
-    # plotting space and statistical power (more sessions per treatment arm).
-    # NOTE: session lengths (n_trials) are fairly similar between the two tasks
-    # (mean ~272 trials for 2AFC vs ~294 for 2ADC), so pooling the raw switch
-    # COUNT ("n_switches") is reasonably comparable here; if session-length
-    # differences ever matter more, "switch_rate" (n_switches / n_trials) is
-    # already a column in both treatment_switch_dfs tables and would be the
-    # safer quantity to pool instead
+
 
     pooled_switch_df = pd.concat(
         [
