@@ -86,69 +86,49 @@ def _():
 
 
 @app.cell
-def _(Annotator, np, pd, ttest_1samp):
-    def add_one_sample_zero_annotations(ax, df, *, x, y, order, hue=None, hue_order=None, show_pvalue_if_ns=False):
-        """Annotate each feature and transition with its one-sample test against zero."""
-        if df is None or df.empty or not {x, y}.issubset(df.columns):
-            return
+def _(np, pd, ttest_1samp):
+    def add_one_sample_zero_annotations(
+        ax, df, *, x, y, order, hue=None, hue_order=None,
+        show_pvalue_if_ns=False, offset=2
+    ):
+        def whisker(v):
+            v = pd.to_numeric(v, errors="coerce").dropna().to_numpy()
+            q1, q3 = np.percentile(v, [25, 75])
+            return v[v <= q3 + 1.5 * (q3 - q1)].max()
 
-        if hue is None:
-            groups = [(x_value, None) for x_value in order]
-        else:
-            groups = [(x_value, hue_value) for x_value in order for hue_value in hue_order]
+        def label(p):
+            if show_pvalue_if_ns and p >= .05:
+                return f"p={p:.3f}"
+            return "***" if p < .001 else "**" if p < .01 else "*" if p < .05 else "ns"
 
-        pairs = []
-        pvalues = []
-        for x_value, hue_value in groups:
-            mask = df[x] == x_value
-            if hue_value is not None:
-                mask &= df[hue] == hue_value
-            values = pd.to_numeric(df.loc[mask, y], errors="coerce").dropna()
-            if len(values) < 2:
-                continue
-            pvalue = float(ttest_1samp(values.to_numpy(dtype=float), popmean=0.0).pvalue)
-            if not np.isfinite(pvalue):
-                continue
-            key = x_value if hue_value is None else (x_value, hue_value)
-            pairs.append((key, key))
-            pvalues.append(pvalue)
+        hues = [None] if hue is None else hue_order
+        n = len(hues)
 
-        if not pairs:
-            return
+        for i, xv in enumerate(order):
+            for j, hv in enumerate(hues):
+                m = df[x].eq(xv)
+                if hv is not None:
+                    m &= df[hue].eq(hv)
 
-        annotator_kwargs = dict(x=x, y=y, order=order)
-        if hue is not None:
-            annotator_kwargs.update(hue=hue, hue_order=hue_order)
+                v = pd.to_numeric(df.loc[m, y], errors="coerce").dropna()
+                if len(v) < 2:
+                    continue
 
-        annotator = Annotator(ax, pairs, data=df, **annotator_kwargs)
-        annotator.configure(line_width=0, text_format="star", verbose=0)
+                p = ttest_1samp(v, 0).pvalue
+                if not np.isfinite(p):
+                    continue
 
-        texts_before = {id(t) for t in ax.texts}
-
-        if show_pvalue_if_ns:
-            def _label(pvalue):
-                if pvalue >= 0.05:
-                    return f"p={pvalue:.3f}"
-                    # return f"p={pvalue:.3f}".replace("p=0.", "p=.")
-                if pvalue < 0.001:
-                    return "***"
-                if pvalue < 0.01:
-                    return "**"
-                return "*"
-
-            annotator.set_custom_annotations([_label(p) for p in pvalues])
-            annotator.annotate()
-        else:
-            annotator.set_pvalues_and_annotate(pvalues)
-
-        # Pin all new annotation texts to a uniform y (the highest one wins).
-        new_texts = [t for t in ax.texts if id(t) not in texts_before]
-        if new_texts:
-            target_y = max(t.get_position()[1] for t in new_texts)
-            for t in new_texts:
-                t.set_position((t.get_position()[0], target_y))
-
-        return annotator
+                xpos = i if hue is None else i + (j - (n - 1) / 2) * (.8 / n)
+                ax.annotate(
+                    label(p),
+                    (xpos, whisker(v)),
+                    xytext=(0, offset),
+                    textcoords="offset points",
+                    ha="center",
+                    va="bottom",
+                    clip_on=False,
+                    size = "small"
+                )
 
     return (add_one_sample_zero_annotations,)
 
@@ -159,7 +139,7 @@ def _():
         fill=False,
         boxprops={"color": "0.5"},
         whiskerprops={"color": "0.5"},
-        medianprops={"linewidth": 3},
+        # medianprops={"linewidth": 3},
         showfliers=False,
         showcaps=False,
     )
@@ -326,77 +306,39 @@ def _(feature_labels):
 
 
 @app.cell
-def _(Annotator, pd):
+def _(Annotator, np, pd):
     state_order = ["Engaged", "Disengaged"]
-
     def add_paired_state_annotation(
-        ax,
-        df,
-        *,
-        x,
-        y,
-        order,
-        hue="state_label",
-        subject_col="subject",
-        hue_order=state_order,
-        show_pvalue_if_ns=False,
+        ax, df, *, x, y, order, hue="state_label", subject_col="subject",
+        hue_order=state_order, show_pvalue_if_ns=False, offset=.01
     ):
-        if df is None or df.empty or len(hue_order) != 2:
-            return
-        if not {x, y, hue, subject_col}.issubset(df.columns):
-            return
+        def whisker(v):
+            v = pd.Series(v).dropna().to_numpy()
+            q1, q3 = np.percentile(v, [25, 75])
+            return v[v <= q3 + 1.5 * (q3 - q1)].max()
 
-        paired_frames = []
-        available_pairs = []
-        for x_idx, x_value in enumerate(order):
-            sub = df[df[x] == x_value]
-            paired = sub.pivot_table(
-                values=y,
-                index=subject_col,
-                columns=hue,
-                aggfunc="first",
-            )
-            if not all(state in paired.columns for state in hue_order):
-                continue
-            paired = paired.dropna(subset=list(hue_order))
-            if len(paired) < 2:
-                continue
-            paired_subjects = set(paired.index.astype(str))
-            paired_sub = sub[sub[subject_col].astype(str).isin(paired_subjects)].copy()
-            paired_frames.append(paired_sub)
-            available_pairs.append(((x_value, hue_order[0]), (x_value, hue_order[1])))
+        for i, val in enumerate(order):
+            d = df[df[x] == val]
+            p = d.pivot_table(index=subject_col, columns=hue, values=y, aggfunc="first")
+            if not all(h in p for h in hue_order): continue
+            p = p.dropna(subset=hue_order)
+            if len(p) < 2: continue
 
-        if not available_pairs or not paired_frames:
-            return
+            d = d[d[subject_col].isin(p.index)]
+            pair = ((val, hue_order[0]), (val, hue_order[1]))
 
-        annotator = Annotator(
-            ax,
-            available_pairs,
-            data=pd.concat(paired_frames, ignore_index=True),
-            x=x,
-            y=y,
-            hue=hue,
-            order=order,
-            hue_order=hue_order,
-        )
-        annotator.configure(
-            test="t-test_paired",
-            text_format="star",
-            # loc="outside",
-            line_height=0,
-            verbose=False,
-        )
+            a = Annotator(
+                ax, [pair], data=d, x=x, y=y, hue=hue,
+                order=[val], hue_order=hue_order
+            ).configure(test="t-test_paired", text_format="star", verbose=False)
 
-        if show_pvalue_if_ns:
-            annotator.apply_test()
-            labels = [
-                f"p={_ann.data.pvalue:.3f}" if _ann.data.pvalue >= 0.05 else _ann.text
-                for _ann in annotator.annotations
-            ]
-            annotator.set_custom_annotations(labels)
-            annotator.annotate()
-        else:
-            annotator.apply_and_annotate()
+            a.apply_test()
+            ann = a.annotations[0]
+            txt = f"p={ann.data.pvalue:.3f}" if show_pvalue_if_ns and ann.data.pvalue >= .05 else ann.text
+            w = max(whisker(d.loc[d[hue] == h, y]) for h in hue_order)
+
+            ax.text(i, w + offset * np.ptp(ax.get_ylim()), txt,
+                    ha="center", va="bottom", clip_on=False, size = "small")
 
 
     def add_subject_pair_lines(
@@ -720,6 +662,7 @@ def _(active_task_names, emission_plot_dfs, state_order, transition_plot_dfs):
 @app.cell
 def _(treatment_switch_dfs):
     switch_xlim = (-0.5, max(df["n_switches"].max() for df in treatment_switch_dfs.values()) + 0.5)
+    switch_xlim = (-0.5, 45)
     return (switch_xlim,)
 
 
@@ -800,9 +743,17 @@ def _(
         ax=histogram_transitions_2ADC,
     )
     _legend = histogram_transitions_2ADC.get_legend()
-    _legend.set_frame_on(False)
-    _legend.set_title(None)
-    _legend.set_loc("upper right")
+    _handles = _legend.legend_handles
+    _labels = [text.get_text() for text in _legend.get_texts()]
+    _legend.remove()
+    histogram_transitions_2ADC.legend(
+        _handles,
+        _labels,
+        frameon=False,
+        title=None,
+        handlelength=1,
+        loc = "upper right"
+    )
     histogram_transitions_2ADC.set_title(task_labels["2ADC_DRUG"])
     histogram_transitions_2ADC.set_xlabel("State switches")
     histogram_transitions_2ADC.set_ylabel("Probability")
@@ -858,8 +809,18 @@ def _(
         ax=histogram_transitions_2AFC,
     )
     _legend = histogram_transitions_2AFC.get_legend()
-    _legend.set_frame_on(False)
-    _legend.set_title(None)
+    _handles = _legend.legend_handles
+    _labels = [text.get_text() for text in _legend.get_texts()]
+    _legend.remove()
+
+    histogram_transitions_2AFC.legend(
+        _handles,
+        _labels,
+        frameon=False,
+        title=None,
+        handlelength=1,
+    )
+
     histogram_transitions_2AFC.set_title(task_labels["2AFC_DRUG"])
     histogram_transitions_2AFC.set_xlabel("State switches")
     histogram_transitions_2AFC.set_ylabel("Probability")
@@ -940,7 +901,7 @@ def _(
     # dwell_time_2ADC.set_title(task_labels["2ADC_DRUG"])
     dwell_time_2ADC.set_xlabel("State")
     dwell_time_2ADC.set_ylabel("Dwell time (trials)")
-    dwell_time_2ADC.set_xticks([0, 1], ["Eng.", "Dis."])
+    dwell_time_2ADC.set_xticks([0, 1], ["Eng.", "Dis."], rotation = 45)
     dwell_time_2ADC
     return (dwell_time_2ADC,)
 
@@ -1006,7 +967,7 @@ def _(
     # dwell_time_2AFC.set_title(task_labels["2AFC_DRUG"])
     dwell_time_2AFC.set_xlabel("State")
     dwell_time_2AFC.set_ylabel("Dwell time (trials)")
-    dwell_time_2AFC.set_xticks([0, 1], ["Eng.", "Dis."])
+    dwell_time_2AFC.set_xticks([0, 1], ["Eng.", "Dis."], rotation = 45)
     dwell_time_2AFC
     return (dwell_time_2AFC,)
 
@@ -1081,7 +1042,8 @@ def _(
     emission_weights_2ADC.set_xlabel("")
     emission_weights_2ADC.set_ylabel("Emission weight")
     emission_weights_2ADC.tick_params(axis="x")
-    emission_weights_2ADC.legend(frameon=False, title="", ncols=2, fontsize=6, handletextpad=0.3)
+    emission_weights_2ADC.legend(frameon=False, title="", ncols=1, handlelength = 1, loc="lower left", bbox_to_anchor=(0, -0.08),)
+    emission_weights_2ADC.set_ylim(-2,2.5)
     if not mount_figure:
         for _format in ("svg", "png"):
             emission_weights_2ADC.figure.savefig((path_panels / _format / "2AFC_delay_glmhmmt_emission_weights").with_suffix(f".{_format}"))
@@ -1112,7 +1074,6 @@ def _(
     plt,
     sns,
     state_palette,
-    task_labels,
 ):
     if not mount_figure:
         plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
@@ -1133,12 +1094,12 @@ def _(
     add_subject_pair_lines(emission_weights_2AFC, emission_plot_dfs["2AFC_DRUG"], x="feature_label", y="weight", order=emission_orders["2AFC_DRUG"])
     add_paired_state_annotation(emission_weights_2AFC, emission_plot_dfs["2AFC_DRUG"], x="feature_label", y="weight", order=emission_orders["2AFC_DRUG"])
     emission_weights_2AFC.axhline(0, color="0.5", linestyle="--")
-    emission_weights_2AFC.set_title(task_labels["2AFC_DRUG"])
     emission_weights_2AFC.set_xlabel("")
     emission_weights_2AFC.set_ylabel("Emission weight")
     emission_weights_2AFC.tick_params(axis="x")
     emission_weights_2AFC.legend(frameon=False, title="")
     emission_weights_2AFC.legend().remove()
+    emission_weights_2AFC.set_ylim(-2,3.5)
     if not mount_figure:
         for _format in ("svg", "png"):
             emission_weights_2AFC.figure.savefig((path_panels / _format / "2AFC_glmhmmt_emission_weights").with_suffix(f".{_format}"))
@@ -1169,7 +1130,6 @@ def _(
     axd,
     boxplot_STYLE,
     fig_size,
-    model_type,
     mount_figure,
     path_panels,
     plt,
@@ -1184,48 +1144,41 @@ def _(
         plt.gca() if not mount_figure else axd["transition_weights_2ADC"]
     )
     transition_weights_2ADC.clear()
-    if model_type != "glmhmmt":
-        transition_weights_2ADC.set_axis_off()
-        transition_weights_2ADC.text(0.5, 0.5, "Transition", ha="center", va="center",)
-        transition_weights_2ADC.text(0.5, 0.3, "Weights", ha="center", va="center",)
-    else: 
-
-
-        sns.boxplot(
-            data=transition_plot_dfs["2ADC_DRUG"],
-            x="feature_label",
-            y="weight",
-            hue="transition_label",
-            order=transition_orders["2ADC_DRUG"],
-            palette=transition_palette,
-            ax=transition_weights_2ADC,
-            **boxplot_STYLE,
-        )
-        transition_weights_2ADC.axhline(0, color="0.5", linestyle="--")
-        add_subject_pair_lines(
-            transition_weights_2ADC,
-            transition_plot_dfs["2ADC_DRUG"],
-            x="feature_label",
-            y="weight",
-            order=transition_orders["2ADC_DRUG"],
-            hue="transition_label",
-            hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
-        )
-        # add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
-        add_one_sample_zero_annotations(
-            transition_weights_2ADC,
-            transition_plot_dfs["2ADC_DRUG"],
-            x="feature_label",
-            y="weight",
-            order=transition_orders["2ADC_DRUG"],
-            hue="transition_label",
-            hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
-            show_pvalue_if_ns=False
-        )
+    sns.boxplot(
+        data=transition_plot_dfs["2ADC_DRUG"],
+        x="feature_label",
+        y="weight",
+        hue="transition_label",
+        order=transition_orders["2ADC_DRUG"],
+        palette=transition_palette,
+        ax=transition_weights_2ADC,
+        **boxplot_STYLE,
+    )
+    transition_weights_2ADC.axhline(0, color="0.5", linestyle="--")
+    add_subject_pair_lines(
+        transition_weights_2ADC,
+        transition_plot_dfs["2ADC_DRUG"],
+        x="feature_label",
+        y="weight",
+        order=transition_orders["2ADC_DRUG"],
+        hue="transition_label",
+        hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+    )
+    # add_one_sample_zero_annotations(transition_weights_2ADC, transition_plot_dfs["2ADC_DRUG"], x="feature_label", y="weight", order=transition_orders["2ADC_DRUG"])
+    add_one_sample_zero_annotations(
+        transition_weights_2ADC,
+        transition_plot_dfs["2ADC_DRUG"],
+        x="feature_label",
+        y="weight",
+        order=transition_orders["2ADC_DRUG"],
+        hue="transition_label",
+        hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
+        show_pvalue_if_ns=False
+    )
     # transition_weights_2ADC.set_title(task_labels["2ADC_DRUG"])
     transition_weights_2ADC.set_xlabel("")
     transition_weights_2ADC.set_ylabel("Transition weight")
-    transition_weights_2ADC.tick_params(axis="x", labelrotation=0)
+    transition_weights_2ADC.tick_params(axis="x", labelrotation=45)
     handles, _ = transition_weights_2ADC.get_legend_handles_labels()
 
     transition_weights_2ADC.legend(
@@ -1234,6 +1187,8 @@ def _(
         frameon=False, ncol=1, handlelength=1, handletextpad=0.5 ,columnspacing=1, loc='upper left', bbox_to_anchor=(-0.05, 1.05)
     )
     transition_weights_2ADC.legend_.remove()
+    transition_weights_2ADC.set_ylim(-1,5)
+
     if not mount_figure:
         for _format in ("svg", "png"):
             transition_weights_2ADC.figure.savefig((path_panels / _format / "2AFC_delay_glmhmmt_transition_weights").with_suffix(f".{_format}"))
@@ -1330,7 +1285,8 @@ def _(
     # transition_weights_2AFC.set_title(task_labels["2AFC_DRUG"])
     transition_weights_2AFC.set_xlabel("")
     transition_weights_2AFC.set_ylabel("Transition weight")
-    transition_weights_2AFC.tick_params(axis="x", rotation=0)
+    transition_weights_2AFC.tick_params(axis="x", rotation=45)
+    transition_weights_2AFC.set_ylim(-4,5)
     if not mount_figure:
         for _format in ("svg", "png"):
             transition_weights_2AFC.figure.savefig((path_panels / _format / "2AFC_glmhmmt_transition_weights").with_suffix(f".{_format}"))
@@ -1769,8 +1725,8 @@ def _(
         ):
             _axis.set_title("")
         fig.align_ylabels()
-        histogram_transitions_2ADC.set_title("2ADC")
-        histogram_transitions_2AFC.set_title("2AFC")
+        histogram_transitions_2ADC.set_title("STM")
+        histogram_transitions_2AFC.set_title("EA")
         fig.savefig((path_panels / "figure4_models").with_suffix(".pdf"))
         for _format in ("svg", "png"):
             fig.savefig((path_panels / _format / f"figure4_{MODEL_BY_TASK["2ADC_DRUG"]}").with_suffix(f".{_format}"))

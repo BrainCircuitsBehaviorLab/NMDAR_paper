@@ -1698,8 +1698,11 @@ def prepare_treatment_accuracy_repetition_curves(
     balanced over the previous left/right response before animals are averaged,
     matching :func:`compute_rb_by_x`. Model repetition is the expected
     probability of repeating the observed previous response. When ``state_label``
-    is provided, the state filter is applied after lagging so the previous response
-    remains the immediately preceding trial.
+    is provided, model probabilities come from that trial's assigned state
+    (pR_state_k/pL_state_k), with k taken from state_idx for each animal.
+    Accuracy selects the probability of the correct side (stimulus > 0 is right
+    for both supported binary encodings). The state filter is applied after
+    lagging so the previous response remains the immediately preceding trial.
     """
     df = to_pandas_df(plot_df)
     required = {
@@ -1748,6 +1751,14 @@ def prepare_treatment_accuracy_repetition_curves(
     work["_data_accuracy"] = _binary_indicator_series(work["correct_bool"])
     work["_model_accuracy"] = pd.to_numeric(work["p_model_correct"], errors="coerce")
     work["_model_p_right"] = pd.to_numeric(work[p_right_col], errors="coerce")
+    if state_label is not None:
+        # Match the model prediction to the state used to select observed trials.
+        for state_idx, rows in work.groupby("state_idx").groups.items():
+            p_right = pd.to_numeric(work.loc[rows, f"pR_state_{int(state_idx)}"], errors="coerce")
+            p_left = pd.to_numeric(work.loc[rows, f"pL_state_{int(state_idx)}"], errors="coerce")
+            stimulus = pd.to_numeric(work.loc[rows, "stimulus"], errors="coerce")
+            work.loc[rows, "_model_accuracy"] = np.where(stimulus > 0, p_right, p_left)
+            work.loc[rows, "_model_p_right"] = p_right
 
     sort_cols = ["subject", "session"]
     trial_col = pick_existing_column(work, ("trial_idx", "trial"))

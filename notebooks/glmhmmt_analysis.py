@@ -254,7 +254,113 @@ def _(get_adapter, mo, model_cfg):
     df_all = adapter.filter_condition_df(df_all, model_cfg.condition_filter)
     is_2afc = adapter.num_classes == 2
     plots = adapter.get_plots()
+
+
     return adapter, df_all, is_2afc, plots, task_name
+
+
+@app.cell
+def _(df_all, pl, task_name):
+    if task_name == "2ADC_DRUG":
+        sessions = (
+            df_all
+            .select(["subject", "session", "condition"])
+            .unique()
+            .filter(pl.col("condition").is_in(["drug", "saline"]))
+            .sort(["subject", "session"])
+        )
+    
+        paired = []
+    
+        for sub_df in sessions.partition_by("subject"):
+            last_saline = None
+    
+            for row in sub_df.iter_rows(named=True):
+    
+                if row["condition"] == "saline":
+                    # Nos quedamos con la saline más reciente
+                    last_saline = row
+    
+                elif row["condition"] == "drug" and last_saline is not None:
+                    # Pareamos esta drug con la última saline anterior
+                    paired.extend([last_saline, row])
+    
+                    # La saline ya está usada:
+                    # siguientes drugs se descartan hasta encontrar otra saline
+                    last_saline = None
+    
+        paired_sessions = pl.DataFrame(paired)
+    
+        df_paired = df_all.join(
+            paired_sessions.select(["subject", "session"]),
+            on=["subject", "session"],
+            how="semi",
+        )
+    return (df_paired,)
+
+
+@app.cell
+def _(df_all, df_paired, pl):
+    df_paired
+
+    session_counts = (
+        df_paired
+        .select(["subject", "session", "condition"])
+        .unique()
+        .group_by(["subject", "condition"])
+        .agg(
+            pl.len().alias("sessions")
+        )
+        .sort(["subject", "condition"])
+    )
+    session_counts
+    _sessions = (
+        df_all
+        .select(["subject", "session", "condition"])
+        .unique()
+        .filter(pl.col("condition").is_in(["drug", "saline"]))
+        .sort(["subject", "session"])
+    )
+
+    all_sessions = (
+        df_all
+        .select(["subject", "session", "condition"])
+        .unique()
+        .filter(pl.col("condition").is_in(["drug", "saline"]))
+    )
+
+    kept_sessions = (
+        df_paired
+        .select(["subject", "session", "condition"])
+        .unique()
+    )
+
+    discarded_sessions = all_sessions.join(
+        kept_sessions,
+        on=["subject", "session", "condition"],
+        how="anti",
+    )
+
+    discard_summary = (
+        discarded_sessions
+        .group_by("condition")
+        .agg(pl.len().alias("discarded_sessions"))
+    )
+    kept_summary = (
+        kept_sessions
+        .group_by("condition")
+        .agg(pl.len().alias("kept_sessions"))
+    ).join(discard_summary, on = ["condition"])
+
+
+    kept_summary
+    return
+
+
+@app.cell
+def _(df_all):
+    df_all
+    return
 
 
 @app.cell
@@ -335,7 +441,7 @@ def _(
     mo.stop(fit_main is None, mo.md("`glmhmmt.cli.fit_glmhmmt` is not available in this environment."))
     set_last_fit_click(model_cfg.run_fit_clicks)
 
-    _n_restarts = 1
+    _n_restarts = 5
     _cv_repeats = int(model_cfg.cv_repeats) if model_cfg.cv_mode != "none" else 0
     _selected_id = model_cfg.existing or (model_cfg.alias if model_cfg.alias else current_hash)
     _OUT = paths.RESULTS / "fits" / task_name / "glmhmmt" / _selected_id
@@ -411,6 +517,7 @@ def _(
                 verbose=False,
                 baseline_class_idx=baseline_class_idx,
                 progress_callback=_on_progress,
+                base_seed=1,
             )
         mm_widget.saved_model_name = _selected_id
         mm_widget.alias_error = ""
@@ -700,7 +807,7 @@ def _(
     weights_df,
 ):
     mo.stop(not selected, mo.md("No fitted arrays found — run the fit first."))
-    emissions_fig, emissions_ax = plt.subplots(figsize=fig_size(2, 1))
+    emissions_fig, emissions_ax = plt.subplots(figsize=fig_size(1, 1))
     emissions_pdf = weights_df.to_pandas()
 
     sns.boxplot(

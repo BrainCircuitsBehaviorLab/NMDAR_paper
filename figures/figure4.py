@@ -219,8 +219,13 @@ def _(mo):
 @app.cell
 def _():
     mount_figure = True
+    return (mount_figure,)
+
+
+@app.cell
+def _():
     format = "svg"
-    return format, mount_figure
+    return (format,)
 
 
 @app.cell
@@ -709,6 +714,7 @@ def _(
     #     '014_stage_training_v6_20250822-160103',
     #     '014_stage_training_v6_20250828-154415',
     #     '014_stage_training_v6_20250829-171601',
+
 
     #     '018_stage_training_v6_20250813-132232',
     #     '018_stage_training_v6_20250814-133427',
@@ -1231,9 +1237,6 @@ def _(
         accuracy_plot_dfs,
         emission_hue_orders,
         emission_orders,
-        occupancy_annotation_dfs,
-        occupancy_hue_orders,
-        occupancy_plot_dfs,
         task_label_orders,
         transition_orders,
     )
@@ -1252,51 +1255,25 @@ def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
-                # [
-                #     "Diagram",
-                #     "Diagram",
-                #     "Diagram",
-                #     "Diagram",
-                # ],
-                [
-                    "single_session_saline_2ADC",
-                    "single_session_saline_2ADC",
-                    "single_session_saline_2AFC",
-                    "single_session_saline_2AFC",
-                ],
-                [
-                    "single_session_drug_2ADC",
-                    "single_session_drug_2ADC",
-                    "single_session_drug_2AFC",
-                    "single_session_drug_2AFC",
-                ],
-                # Pooled row (2AFC_DRUG + 2ADC_DRUG combined): state-switch
-                # histogram, engaged occupancy, dwell time, and transition
-                # weights each get 1/4 of the row. State-switch histogram used
-                # to get 2/4 (needed the x-range to read clearly) but was
-                # trimmed to 1/4 to make room for engaged occupancy.
-                # Using the mosaic's native 4-column grid directly (repeated
-                # labels to span columns, same technique as the rows above)
-                # rather than a manually split merged cell -- a nested
-                # subgridspec split (equal thirds, tried both with a custom
-                # wspace and with the subgridspec default) ate noticeably more
-                # of the row into blank gaps than the native columns do.
-                [
-                    "state_switch_histogram_pooled",
-                    "engaged_occupancy_pooled",
-                    "dwell_time_pooled",
-                    "transition_weights_pooled",
-                ],
-                [
-                    "accuracy_treatment_2ADC",  # was: "transition_weights_2ADC" (placeholder ".")
-                    "psychometric_2ADC_engaged",
-                    "accuracy_treatment_2AFC",  # was: "transition_weights_2AFC" (placeholder ".")
-                    "psychometric_2AFC_engaged",
-                ],
+                ["sessions_2ADC", "sessions_2ADC", "sessions_2AFC", "sessions_2AFC"],
+                ["sessions_2ADC", "sessions_2ADC", "sessions_2AFC", "sessions_2AFC"],
+                ["state_switch_histogram_pooled", "state_switch_histogram_pooled",
+                 "dwell_time_pooled", "transition_weights_pooled"],
+                ["accuracy_treatment_2ADC", "accuracy_state_2ADC",
+                 "accuracy_treatment_2AFC", "accuracy_state_2AFC"],
             ],
             figsize=fig_size(1, 1),
             constrained_layout=True,
         )
+
+        # Occupancy uses one quarter of each task block, beside both sessions.
+        for _task in ("2ADC", "2AFC"):
+            _placeholder = axd.pop(f"sessions_{_task}")
+            _grid = _placeholder.get_subplotspec().subgridspec(2, 2, width_ratios=[3, 1])
+            fig.delaxes(_placeholder)
+            axd[f"single_session_saline_{_task}"] = fig.add_subplot(_grid[0, 0])
+            axd[f"single_session_drug_{_task}"] = fig.add_subplot(_grid[1, 0])
+            axd[f"occupancy_by_state_{_task}"] = fig.add_subplot(_grid[:, 1])
 
     else:
         fig, axd = None, {}
@@ -1336,7 +1313,7 @@ def _(
     state_palette,
     task_labels,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     emission_weights_2ADC = plt.gca() if not mount_figure else axd.get("emission_weights_2ADC", plt.gca())
     emission_weights_2ADC.clear()
     sns.boxplot(
@@ -1390,7 +1367,7 @@ def _(
     state_palette,
     task_labels,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    plt.figure(figsize=fig_size(2, 2), constrained_layout=True)
     emission_weights_2AFC = plt.gca() if not mount_figure else axd.get("emission_weights_2AFC", plt.gca())
     emission_weights_2AFC.clear()
     sns.boxplot(
@@ -1673,13 +1650,6 @@ def transition_weights_pooled(
     transition_orders,
     transition_plot_dfs,
 ):
-    # Pool transition weights from both tasks (2AFC_DRUG + 2ADC_DRUG) into a
-    # single plot, instead of one panel per task, to gain plotting space and
-    # statistical power (more animals per feature/transition-direction group).
-    # Feature/transition categories match exactly between the two tasks
-    # ("Drug" and "Cum. reward" x "Engaged -> Disengaged", "Disengaged -> Engaged"),
-    # and subject ids don't collide, so pooling is unambiguous
-
     pooled_transition_df = pd.concat(
         [
             transition_plot_dfs["2AFC_DRUG"].assign(task=task_labels["2AFC_DRUG"]),
@@ -1693,10 +1663,6 @@ def transition_weights_pooled(
         plt.gca() if not mount_figure else axd["transition_weights_pooled"]
     )
     transition_weights_pooled.clear()
-    # Local copy of boxplot_STYLE (shared with several other transition-weight
-    # panels, so not mutated directly) with the median linewidth matched to
-    # BOXPLOT_STYLE's (used by dwell_time_pooled) -- boxplot_STYLE uses 3,
-    # which renders noticeably thicker than the dwell-time panel's median.
 
     sns.boxplot(
         data=pooled_transition_df,
@@ -1718,13 +1684,6 @@ def transition_weights_pooled(
         hue="transition_label",
         hue_order=["Engaged -> Disengaged", "Disengaged -> Engaged"],
     )
-    # NOTE: the one-sample annotation helper computes each label's pixel
-    # position from the axes' y-scale at call time, and (within the real
-    # multi-axes mounted mosaic specifically) can end up expanding the ylim
-    # well past our intended range, leaving a near-blank panel with floating
-    # annotation text. Clamping set_ylim both BEFORE and AFTER the annotation
-    # call makes the final range deterministic regardless of what the
-    # annotation helper does internally.
     add_one_sample_zero_annotations_test(
         transition_weights_pooled,
         pooled_transition_df,
@@ -1786,14 +1745,6 @@ def _(mo):
 
 @app.cell
 def _(plot_dfs, task_names, treatment_order):
-    # Per-treatment (Saline/Drug) accuracy curves: observed accuracy (data
-    # points, same computation figure1 uses for its accuracy panels -- mean of
-    # correct_bool vs stimulus difficulty) plus the GLM-HMM-T model's predicted
-    # accuracy (p_model_correct), both split by treatment. Reuses
-    # prepare_treatment_accuracy_repetition_curves from src/process/common.py
-    # (see supplementary figures/figure42.py, which already computes this
-    # "accuracy" summary but never plots it -- only its "repetition_bias"
-    # sibling is plotted there).
     from src.process.common import prepare_treatment_accuracy_repetition_curves
 
     treatment_accuracy_curves = {}
@@ -1806,8 +1757,20 @@ def _(plot_dfs, task_names, treatment_order):
                 treatment_order=treatment_order,
             )
         )
+    state_accuracy_curves = {}
+    for _task_name in task_names:
+        state_accuracy_curves[_task_name] = {}
+        for _state in ("Engaged", "Disengaged"):
+            _curves, _meta = prepare_treatment_accuracy_repetition_curves(
+                plot_dfs[_task_name],
+                task_name=_task_name,
+                treatment_order=treatment_order,
+                state_label=_state,
+            )
+            state_accuracy_curves[_task_name][_state] = _curves["accuracy"]
     return (
         prepare_treatment_accuracy_repetition_curves,
+        state_accuracy_curves,
         treatment_accuracy_curves,
         treatment_accuracy_meta,
     )
@@ -1829,10 +1792,6 @@ def _(
     treatment_order,
     treatment_palette,
 ):
-    # Accuracy vs delay, Saline vs Drug: data points (with SEM) + GLM-HMM-T
-    # model prediction (line + shaded SEM band). Same plotting template as
-    # repetition_bias_2ADC in supplementary figures/figure42.py, applied to the
-    # "accuracy" summary instead of "repetition_bias".
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     accuracy_treatment_2ADC = (
         plt.gca() if not mount_figure else axd.get("accuracy_treatment_2ADC", plt.gca())
@@ -1907,10 +1866,6 @@ def _(
     treatment_order,
     treatment_palette,
 ):
-    # Accuracy vs |ILD|, Saline vs Drug: data points (with SEM) + GLM-HMM-T
-    # model prediction (line + shaded SEM band). Same plotting template as
-    # repetition_bias_2AFC in supplementary figures/figure42.py, applied to the
-    # "accuracy" summary instead of "repetition_bias".
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     accuracy_treatment_2AFC = (
         plt.gca() if not mount_figure else axd.get("accuracy_treatment_2AFC", plt.gca())
@@ -1993,13 +1948,6 @@ def accuracy_treatment_engaged(
     treatment_palette,
     treatment_trial_dfs,
 ):
-    # Same accuracy-vs-difficulty summary as accuracy_treatment_2ADC/2AFC above
-    # (prepare_treatment_accuracy_repetition_curves), but restricted to
-    # Engaged-state trials only -- filter treatment_trial_dfs[task] to
-    # state_label == "Engaged" before summarizing, rather than deriving a
-    # state-conditional model column (unlike the engaged-only psychometric
-    # curves above, there's no marginal-blend concern here: p_model_correct is
-    # just evaluated on the subset of trials that were actually Engaged).
     treatment_accuracy_curves_engaged = {}
     treatment_accuracy_meta_engaged = {}
     for _task_name in task_names:
@@ -2071,7 +2019,7 @@ def accuracy_treatment_engaged(
         frameon=False,
         ncol=2,
         handlelength=0.25,
-        handletextpad=0.25,
+        handletextpad=0.5,
         columnspacing=0.5,
         loc="lower right",
     )
@@ -2103,144 +2051,57 @@ def _(mo):
 def _(
     Line2D,
     axd,
+    fig_size,
     format,
     mount_figure,
     np,
     path_panels,
-    pd,
     plt,
-    psychometric_limits,
-    sns,
+    state_accuracy_curves,
     task_labels,
+    treatment_accuracy_meta,
     treatment_order,
     treatment_palette,
-    treatment_trial_dfs,
 ):
-    psychometric_2ADC = plt.gca() if not mount_figure else axd["psychometric_2ADC_engaged"]
-    psychometric_2ADC.clear()
-
-    # --- ORIGINAL (all trials, both states) psychometric curve -- left commented
-    # out so this is easy to revert. Just uncomment this block and delete/comment
-    # the Engaged-only block below to go back.
-    # sns.lineplot(
-    #     data=treatment_psychometric_dfs["2ADC_DRUG"],
-    #     x="stimulus_evidence",
-    #     y="p_right_model",
-    #     hue="treatment",
-    #     hue_order=treatment_order,
-    #     estimator="mean",
-    #     errorbar="se",
-    #     err_kws={
-    #         "edgecolor": "none",
-    #         "linewidth": 0,
-    #     },
-    #     palette=treatment_palette,
-    #     ax=psychometric_2ADC,
-    # )
-    # sns.lineplot(
-    #     data=treatment_psychometric_dfs["2ADC_DRUG"],
-    #     x="stimulus_evidence",
-    #     y="p_right_data",
-    #     hue="treatment",
-    #     hue_order=treatment_order,
-    #     estimator="mean",
-    #     errorbar="se",
-    #     err_style="bars",
-    #     marker="o",
-    #     markeredgewidth=0,
-    #     linewidth=0,
-    #     palette=treatment_palette,
-    #     legend=False,
-    #     ax=psychometric_2ADC,
-    # )
-
-    # --- Engaged-only psychometric curve. Same as treatment_psychometric_dfs
-    # (9 quantile bins, per-subject averaging), but the model column is the
-    # STATE-CONDITIONAL prediction p_right_state = pR_state_<state_idx> (per
-    # the colleague's reference implementation in
-    # "supplementary figures/figure42.py", the engaged_psychometric_dfs cell
-    # just before "## 2ADC PC") rather than the marginal p_right_model/pR
-    # column -- using the marginal (posterior-state-weighted) prediction here
-    # was what made our engaged-only model curve diverge between Saline/Drug;
-    # the state-conditional one matches almost exactly.
-    _engaged_trials_2ADC_mounted = treatment_trial_dfs["2ADC_DRUG"].copy()
-    _state_idx_2ADC_mounted = pd.to_numeric(_engaged_trials_2ADC_mounted["state_idx"], errors="coerce")
-    _engaged_trials_2ADC_mounted["p_right_state"] = np.where(
-        _state_idx_2ADC_mounted.eq(0),
-        pd.to_numeric(_engaged_trials_2ADC_mounted["pR_state_0"], errors="coerce"),
-        pd.to_numeric(_engaged_trials_2ADC_mounted["pR_state_1"], errors="coerce"),
-    )
-    _engaged_trials_2ADC_mounted = _engaged_trials_2ADC_mounted[
-        _engaged_trials_2ADC_mounted["state_label"] == "Engaged"
-    ].copy()
-    _psychometric_engaged_2ADC_mounted = _engaged_trials_2ADC_mounted.dropna(
-        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_state"]
-    ).copy()
-    _psychometric_engaged_2ADC_mounted["_evidence_bin"] = pd.qcut(
-        _psychometric_engaged_2ADC_mounted["stimulus_evidence"], q=9, duplicates="drop"
-    )
-    _psychometric_engaged_2ADC_mounted["stimulus_evidence"] = (
-        _psychometric_engaged_2ADC_mounted.groupby("_evidence_bin", observed=True)["stimulus_evidence"]
-        .transform("mean")
-    )
-    _psychometric_engaged_2ADC_mounted_df = (
-        _psychometric_engaged_2ADC_mounted.groupby(
-            ["subject", "treatment", "stimulus_evidence"], as_index=False, observed=True
-        )
-        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_state", "mean"))
-        .sort_values(["treatment", "stimulus_evidence", "subject"])
-    )
-
-    sns.lineplot(
-        data=_psychometric_engaged_2ADC_mounted_df,
-        x="stimulus_evidence",
-        y="p_right_model",
-        hue="treatment",
-        hue_order=treatment_order,
-        estimator="mean",
-        errorbar="se",
-        err_kws={
-            "edgecolor": "none",
-            "linewidth": 0,
-        },
-        palette=treatment_palette,
-        ax=psychometric_2ADC,
-    )
-    sns.lineplot(
-        data=_psychometric_engaged_2ADC_mounted_df,
-        x="stimulus_evidence",
-        y="p_right_data",
-        hue="treatment",
-        hue_order=treatment_order,
-        estimator="mean",
-        errorbar="se",
-        err_style="bars",
-        marker="o",
-        markeredgewidth=0,
-        linewidth=0,
-        palette=treatment_palette,
-        legend=False,
-        ax=psychometric_2ADC,
-    )
-    # psychometric_2ADC.axhline(0.5, color="0.5", linestyle="--")
-    psychometric_2ADC.set_title(task_labels["2ADC_DRUG"] + " (Engaged only)")
-    psychometric_2ADC.set_xlabel("Stimulus evidence")
-    psychometric_2ADC.set_ylabel(r"$p(\mathrm{right})$")
-    _legend_handles = [
-        Line2D([0], [0], marker="o", color="black", linestyle="None", label="Data"),
-        Line2D([0], [0], color="black", label="Model"),
-    ]
-    psychometric_2ADC.legend(handles=_legend_handles, frameon=False, loc="upper left", bbox_to_anchor=(-0.05, 1.05), handlelength=0.5)
-    psychometric_2ADC.set_xlim(*psychometric_limits["2ADC_DRUG"])
-    psychometric_2ADC.set_ylim(0, 1)
-    psychometric_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-    if not mount_figure:
-        psychometric_2ADC.figure.savefig(
-            (path_panels / "2ADC_drug_psychometric").with_suffix(
-                f".{format}"
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    accuracy_state_2ADC = plt.gca() if not mount_figure else axd["accuracy_state_2ADC"]
+    accuracy_state_2ADC.clear()
+    for _state, _linestyle, _marker in (("Engaged", "-", "o"), ("Disengaged", "--", "s")):
+        for _treatment in treatment_order:
+            _curve = state_accuracy_curves["2ADC_DRUG"][_state]
+            _curve = _curve[_curve["treatment"] == _treatment]
+            _color = treatment_palette[_treatment]
+            accuracy_state_2ADC.plot(
+                _curve["x_value"], _curve["model_mean"],
+                color=_color, linestyle=_linestyle, linewidth=1.8,
             )
+            accuracy_state_2ADC.fill_between(
+                _curve["x_value"],
+                np.clip(_curve["model_mean"] - _curve["model_sem"], 0, 1),
+                np.clip(_curve["model_mean"] + _curve["model_sem"], 0, 1),
+                color=_color, alpha=0.12, linewidth=0,
+            )
+            accuracy_state_2ADC.errorbar(
+                _curve["x_value"], _curve["data_mean"], yerr=_curve["data_sem"],
+                fmt=_marker, color=_color, markeredgewidth=0, capsize=2, zorder=3,
+            )
+    accuracy_state_2ADC.axhline(0.5, color="0.6", linestyle=":")
+    accuracy_state_2ADC.set(
+        title=task_labels["2ADC_DRUG"],
+        xlabel=treatment_accuracy_meta["2ADC_DRUG"]["xlabel"],
+        ylabel="Accuracy", ylim=(0, 1), yticks=[0, 0.5, 1],
+    )
+    if treatment_accuracy_meta["2ADC_DRUG"]["invert_x"]:
+        accuracy_state_2ADC.invert_xaxis()
+    accuracy_state_2ADC.legend(handles=[
+        Line2D([], [], color="black", linestyle="-", marker="o", markeredgewidth=0, label="Engaged"),
+        Line2D([], [], color="black", linestyle="--", marker="s", markeredgewidth=0, label="Disengaged"),
+    ], frameon=False, handlelength=1, columnspacing = 0.5, handletextpad= 0.3)
+    if not mount_figure:
+        accuracy_state_2ADC.figure.savefig(
+            (path_panels / "accuracy_state_2ADC").with_suffix(f".{format}")
         )
-    psychometric_2ADC
+    accuracy_state_2ADC
     return
 
 
@@ -2266,17 +2127,6 @@ def psychometric_2ADC_engaged(
     treatment_palette,
     treatment_trial_dfs,
 ):
-    # Same as treatment_psychometric_dfs["2ADC_DRUG"] (ecfG cell), filtered to
-    # Engaged-state trials -- EXCEPT for the model column. Per the colleague's
-    # reference implementation (supplementary figures/figure42.py, the cell
-    # building engaged_psychometric_dfs, just before "## 2ADC PC"): for a
-    # state-restricted curve the model prediction should be the STATE-
-    # CONDITIONAL prediction p_right_state = pR_state_<state_idx> (the model's
-    # "as if fully in this state" probability, using that state's own emission
-    # weights), not the general p_right_model/pR column (which is a marginal,
-    # posterior-state-weighted blend across both states). That marginal blend is
-    # what was making our engaged-only model curve noisier/more divergent for
-    # 2ADC than the colleague's version.
     _engaged_trials_2ADC = treatment_trial_dfs["2ADC_DRUG"].copy()
     _state_idx_2ADC = pd.to_numeric(_engaged_trials_2ADC["state_idx"], errors="coerce")
     _engaged_trials_2ADC["p_right_state"] = np.where(
@@ -2366,142 +2216,58 @@ def _(mo):
 def _(
     Line2D,
     axd,
+    fig_size,
     format,
     mount_figure,
     np,
     path_panels,
-    pd,
     plt,
-    psychometric_limits,
-    sns,
+    state_accuracy_curves,
     task_labels,
+    treatment_accuracy_meta,
     treatment_order,
     treatment_palette,
-    treatment_trial_dfs,
 ):
-    psychometric_2AFC = plt.gca() if not mount_figure else axd["psychometric_2AFC_engaged"]
-    psychometric_2AFC.clear()
-
-    # --- ORIGINAL (all trials, both states) psychometric curve -- left commented
-    # out so this is easy to revert. Just uncomment this block and delete/comment
-    # the Engaged-only block below to go back.
-    # sns.lineplot(
-    #     data=treatment_psychometric_dfs["2AFC_DRUG"],
-    #     x="stimulus_evidence",
-    #     y="p_right_model",
-    #     hue="treatment",
-    #     hue_order=treatment_order,
-    #     estimator="mean",
-    #     errorbar="se",
-    #     err_kws={
-    #         "edgecolor": "none",
-    #         "linewidth": 0,
-    #     },
-    #     palette=treatment_palette,
-    #     ax=psychometric_2AFC,
-    # )
-    # sns.lineplot(
-    #     data=treatment_psychometric_dfs["2AFC_DRUG"],
-    #     x="stimulus_evidence",
-    #     y="p_right_data",
-    #     hue="treatment",
-    #     hue_order=treatment_order,
-    #     estimator="mean",
-    #     errorbar="se",
-    #     err_style="bars",
-    #     marker="o",
-    #     markeredgewidth=0,
-    #     linewidth=0,
-    #     palette=treatment_palette,
-    #     legend=False,
-    #     ax=psychometric_2AFC,
-    # )
-
-    # --- Engaged-only psychometric curve. Same as treatment_psychometric_dfs
-    # (9 quantile bins, per-subject averaging), but the model column is the
-    # STATE-CONDITIONAL prediction p_right_state = pR_state_<state_idx> (per
-    # the colleague's reference implementation in
-    # "supplementary figures/figure42.py", the engaged_psychometric_dfs cell
-    # just before "## 2ADC PC") rather than the marginal p_right_model/pR
-    # column. See psychometric_2ADC for the full rationale.
-    _engaged_trials_2AFC_mounted = treatment_trial_dfs["2AFC_DRUG"].copy()
-    _state_idx_2AFC_mounted = pd.to_numeric(_engaged_trials_2AFC_mounted["state_idx"], errors="coerce")
-    _engaged_trials_2AFC_mounted["p_right_state"] = np.where(
-        _state_idx_2AFC_mounted.eq(0),
-        pd.to_numeric(_engaged_trials_2AFC_mounted["pR_state_0"], errors="coerce"),
-        pd.to_numeric(_engaged_trials_2AFC_mounted["pR_state_1"], errors="coerce"),
-    )
-    _engaged_trials_2AFC_mounted = _engaged_trials_2AFC_mounted[
-        _engaged_trials_2AFC_mounted["state_label"] == "Engaged"
-    ].copy()
-    _psychometric_engaged_2AFC_mounted = _engaged_trials_2AFC_mounted.dropna(
-        subset=["subject", "treatment", "stimulus_evidence", "p_right_data", "p_right_state"]
-    ).copy()
-    _psychometric_engaged_2AFC_mounted["_evidence_bin"] = pd.qcut(
-        _psychometric_engaged_2AFC_mounted["stimulus_evidence"], q=9, duplicates="drop"
-    )
-    _psychometric_engaged_2AFC_mounted["stimulus_evidence"] = (
-        _psychometric_engaged_2AFC_mounted.groupby("_evidence_bin", observed=True)["stimulus_evidence"]
-        .transform("mean")
-    )
-    _psychometric_engaged_2AFC_mounted_df = (
-        _psychometric_engaged_2AFC_mounted.groupby(
-            ["subject", "treatment", "stimulus_evidence"], as_index=False, observed=True
-        )
-        .agg(p_right_data=("p_right_data", "mean"), p_right_model=("p_right_state", "mean"))
-        .sort_values(["treatment", "stimulus_evidence", "subject"])
-    )
-
-    sns.lineplot(
-        data=_psychometric_engaged_2AFC_mounted_df,
-        x="stimulus_evidence",
-        y="p_right_model",
-        hue="treatment",
-        hue_order=treatment_order,
-        estimator="mean",
-        errorbar="se",
-        err_kws={
-            "edgecolor": "none",
-            "linewidth": 0,
-        },
-        palette=treatment_palette,
-        ax=psychometric_2AFC,
-    )
-    sns.lineplot(
-        data=_psychometric_engaged_2AFC_mounted_df,
-        x="stimulus_evidence",
-        y="p_right_data",
-        hue="treatment",
-        hue_order=treatment_order,
-        estimator="mean",
-        errorbar="se",
-        err_style="bars",
-        marker="o",
-        markeredgewidth=0,
-        linewidth=0,
-        palette=treatment_palette,
-        legend=False,
-        ax=psychometric_2AFC,
-    )
-    # psychometric_2AFC.axhline(0.5, color="0.5", linestyle="--")
-    psychometric_2AFC.set_title(task_labels["2AFC_DRUG"] + " (Engaged only)")
-    psychometric_2AFC.set_xlabel("Stimulus evidence")
-    psychometric_2AFC.set_ylabel(r"$p(\mathrm{right})$")
-    _legend_handles = [
-        Line2D([0], [0], marker="o", color="black", linestyle="None", label="Data"),
-        Line2D([0], [0], color="black", label="Model"),
-    ]
-    psychometric_2AFC.legend(handles=_legend_handles, frameon=False, loc="upper left")
-    psychometric_2AFC.set_xlim(*psychometric_limits["2AFC_DRUG"])
-    psychometric_2AFC.set_ylim(0, 1)
-    psychometric_2AFC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
-    if not mount_figure:
-        psychometric_2AFC.figure.savefig(
-            (path_panels / "2AFC_drug_psychometric").with_suffix(
-                f".{format}"
+    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
+    accuracy_state_2AFC = plt.gca() if not mount_figure else axd["accuracy_state_2AFC"]
+    accuracy_state_2AFC.clear()
+    for _state, _linestyle, _marker in (("Engaged", "-", "o"), ("Disengaged", "--", "s")):
+        for _treatment in treatment_order:
+            _curve = state_accuracy_curves["2AFC_DRUG"][_state]
+            _curve = _curve[_curve["treatment"] == _treatment]
+            _color = treatment_palette[_treatment]
+            accuracy_state_2AFC.plot(
+                _curve["x_value"], _curve["model_mean"],
+                color=_color, linestyle=_linestyle, linewidth=1.8,
             )
+            accuracy_state_2AFC.fill_between(
+                _curve["x_value"],
+                np.clip(_curve["model_mean"] - _curve["model_sem"], 0, 1),
+                np.clip(_curve["model_mean"] + _curve["model_sem"], 0, 1),
+                color=_color, alpha=0.12, linewidth=0,
+            )
+            accuracy_state_2AFC.errorbar(
+                _curve["x_value"], _curve["data_mean"], yerr=_curve["data_sem"],
+                fmt=_marker, color=_color, markeredgewidth=0, capsize=2, zorder=3,
+            )
+    accuracy_state_2AFC.axhline(0.5, color="0.6", linestyle=":")
+    accuracy_state_2AFC.set(
+        title=task_labels["2AFC_DRUG"],
+        xlabel=treatment_accuracy_meta["2AFC_DRUG"]["xlabel"],
+        ylabel="Accuracy", ylim=(0, 1), yticks=[0, 0.5, 1],
+    )
+    if treatment_accuracy_meta["2AFC_DRUG"]["invert_x"]:
+        accuracy_state_2AFC.invert_xaxis()
+    accuracy_state_2AFC.set_xticks([0, 2, 4, 8, 20])
+    accuracy_state_2AFC.legend(handles=[
+        Line2D([], [], color="black", linestyle="-", marker="o", markeredgewidth=0, label="Engaged"),
+        Line2D([], [], color="black", linestyle="--", marker="s", markeredgewidth=0, label="Disengaged"),
+    ], frameon=False, handlelength=1.5)
+    if not mount_figure:
+        accuracy_state_2AFC.figure.savefig(
+            (path_panels / "accuracy_state_2AFC").with_suffix(f".{format}")
         )
-    psychometric_2AFC
+    accuracy_state_2AFC
     return
 
 
@@ -2904,6 +2670,30 @@ def _(mo):
 
 
 @app.cell
+def _(occupancy_dfs, session_options, task_names):
+    treatment_occupancy_dfs = {}
+    for _task in task_names:
+        # Include zero occupancy when a session never visits one of the states.
+        _occupancy = (
+            occupancy_dfs[_task]
+            .pivot(index=["subject", "session"], columns="state_label", values="occupancy")
+            .reindex(columns=["Engaged", "Disengaged"])
+            .fillna(0)
+            .rename_axis(columns="state_label")
+            .stack().rename("occupancy").reset_index()
+        )
+        _occupancy["subject"] = _occupancy["subject"].astype(str)
+        _occupancy["session"] = _occupancy["session"].astype(str)
+        # Each animal contributes its mean across sessions in each treatment.
+        treatment_occupancy_dfs[_task] = (
+            _occupancy.merge(session_options[_task], on=["subject", "session"], how="inner")
+            .groupby(["subject", "treatment", "state_label"], as_index=False, observed=True)
+            .agg(occupancy=("occupancy", "mean"))
+        )
+    return (treatment_occupancy_dfs,)
+
+
+@app.cell
 def _(
     add_subject_pair_lines,
     axd,
@@ -2911,35 +2701,38 @@ def _(
     fig_size,
     format,
     mount_figure,
-    occupancy_annotation_dfs,
-    occupancy_hue_orders,
-    occupancy_plot_dfs,
     path_panels,
     plt,
     sns,
-    state_palette,
-    task_label_orders,
+    treatment_occupancy_dfs,
+    treatment_order,
+    treatment_palette,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    occupancy_by_state_2ADC = plt.gca() if not mount_figure else axd.get("occupancy_by_state_2ADC", plt.gca())
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    occupancy_by_state_2ADC = plt.gca() if not mount_figure else axd["occupancy_by_state_2ADC"]
     occupancy_by_state_2ADC.clear()
     sns.boxplot(
-        data=occupancy_plot_dfs["2ADC_DRUG"],
-        x="task_label",
-        y="occupancy",
-        hue="state_label",
-        order=task_label_orders["2ADC_DRUG"],
-        hue_order=occupancy_hue_orders["2ADC_DRUG"],
-        palette=state_palette,
-        ax=occupancy_by_state_2ADC,
+        data=treatment_occupancy_dfs["2ADC_DRUG"],
+        x="state_label", y="occupancy", hue="treatment",
+        order=["Engaged", "Disengaged"], hue_order=treatment_order,
+        palette=treatment_palette, legend=False, ax=occupancy_by_state_2ADC,
         **boxplot_STYLE,
     )
-    add_subject_pair_lines(occupancy_by_state_2ADC, occupancy_annotation_dfs["2ADC_DRUG"], x="task_label", y="occupancy", order=task_label_orders["2ADC_DRUG"])
-    occupancy_by_state_2ADC.set_xlabel("")
-    occupancy_by_state_2ADC.set_ylabel("Occupancy")
-    occupancy_by_state_2ADC.legend(frameon=False, title="")
+    add_subject_pair_lines(
+        occupancy_by_state_2ADC, treatment_occupancy_dfs["2ADC_DRUG"],
+        x="state_label", y="occupancy", order=["Engaged", "Disengaged"],
+        hue="treatment", hue_order=treatment_order,
+    )
+    occupancy_by_state_2ADC.set(
+        xlabel="", ylabel="Occupancy", ylim=(0, 1),
+        xticks=[0, 1], xticklabels=["Eng.", "Dis."],
+        yticks=[0, 0.5, 1], yticklabels=["0", "0.5", "1"],
+    )
+    occupancy_by_state_2ADC.tick_params(axis="x", labelsize=7)
     if not mount_figure:
-        occupancy_by_state_2ADC.figure.savefig((path_panels / "2AFC_delay_glmhmmt_occupancy_by_state").with_suffix(f".{format}"))
+        occupancy_by_state_2ADC.figure.savefig(
+            (path_panels / "2ADC_occupancy_state_treatment").with_suffix(f".{format}")
+        )
     occupancy_by_state_2ADC
     return
 
@@ -2960,35 +2753,38 @@ def _(
     fig_size,
     format,
     mount_figure,
-    occupancy_annotation_dfs,
-    occupancy_hue_orders,
-    occupancy_plot_dfs,
     path_panels,
     plt,
     sns,
-    state_palette,
-    task_label_orders,
+    treatment_occupancy_dfs,
+    treatment_order,
+    treatment_palette,
 ):
-    plt.figure(figsize=fig_size(2, 1), constrained_layout=True)
-    occupancy_by_state_2AFC = plt.gca() if not mount_figure else axd.get("occupancy_by_state_2AFC", plt.gca())
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    occupancy_by_state_2AFC = plt.gca() if not mount_figure else axd["occupancy_by_state_2AFC"]
     occupancy_by_state_2AFC.clear()
     sns.boxplot(
-        data=occupancy_plot_dfs["2AFC_DRUG"],
-        x="task_label",
-        y="occupancy",
-        hue="state_label",
-        order=task_label_orders["2AFC_DRUG"],
-        hue_order=occupancy_hue_orders["2AFC_DRUG"],
-        palette=state_palette,
-        ax=occupancy_by_state_2AFC,
+        data=treatment_occupancy_dfs["2AFC_DRUG"],
+        x="state_label", y="occupancy", hue="treatment",
+        order=["Engaged", "Disengaged"], hue_order=treatment_order,
+        palette=treatment_palette, legend=False, ax=occupancy_by_state_2AFC,
         **boxplot_STYLE,
     )
-    add_subject_pair_lines(occupancy_by_state_2AFC, occupancy_annotation_dfs["2AFC_DRUG"], x="task_label", y="occupancy", order=task_label_orders["2AFC_DRUG"])
-    occupancy_by_state_2AFC.set_xlabel("")
-    occupancy_by_state_2AFC.set_ylabel("Occupancy")
-    occupancy_by_state_2AFC.legend(frameon=False, title="")
+    add_subject_pair_lines(
+        occupancy_by_state_2AFC, treatment_occupancy_dfs["2AFC_DRUG"],
+        x="state_label", y="occupancy", order=["Engaged", "Disengaged"],
+        hue="treatment", hue_order=treatment_order,
+    )
+    occupancy_by_state_2AFC.set(
+        xlabel="", ylabel="Occupancy", ylim=(0, 1),
+        xticks=[0, 1], xticklabels=["Eng.", "Dis."],
+        yticks=[0, 0.5, 1], yticklabels=["0", "0.5", "1"],
+    )
+    occupancy_by_state_2AFC.tick_params(axis="x", labelsize=7)
     if not mount_figure:
-        occupancy_by_state_2AFC.figure.savefig((path_panels / "2AFC_glmhmmt_occupancy_by_state").with_suffix(f".{format}"))
+        occupancy_by_state_2AFC.figure.savefig(
+            (path_panels / "2AFC_occupancy_state_treatment").with_suffix(f".{format}")
+        )
     occupancy_by_state_2AFC
     return
 
@@ -3149,15 +2945,14 @@ def engaged_occupancy_pooled(
     # is that figure's TOTAL width for its 2 side-by-side panels) -- half that
     # width, same height, rather than a fresh fig_size call. Only used when
     # not mounted; inside the main mosaic the panel's size comes from its own
-    # grid cell (see aLJB -- it now takes the 1/4-width slot the state-switch
-    # histogram gave up).
+    # grid cell, spanning both session rows in the rightmost quarter.
     _per_task_figsize = fig_size(2, 2)
     plt.figure(
         figsize=(_per_task_figsize[0] / 2, _per_task_figsize[1]),
         constrained_layout=True,
     )
     engaged_occupancy_pooled = (
-        plt.gca() if not mount_figure else axd["engaged_occupancy_pooled"]
+        plt.gca() if not mount_figure else axd.get("engaged_occupancy_pooled", plt.gca())
     )
     engaged_occupancy_pooled.clear()
     sns.boxplot(
@@ -6048,8 +5843,7 @@ def _(FuncFormatter, axd, fig, mount_figure, path_panels):
             "single_session_saline_2AFC",
             "single_session_drug_2AFC",
             "dwell_time_pooled",
-            "psychometric_2ADC_engaged",
-            "psychometric_2AFC_engaged",
+            "accuracy_state_2AFC",
             "accuracy_treatment_2AFC",
         ):
             if _name not in axd:
@@ -6070,10 +5864,10 @@ def _(FuncFormatter, axd, fig, mount_figure, path_panels):
         axd["single_session_drug_2AFC"].set_ylabel("")
         axd["single_session_drug_2AFC"].set_yticklabels("")
 
-        axd["psychometric_2ADC_engaged"].set_title("")
-        axd["psychometric_2ADC_engaged"].set_ylabel("$p$(right | eng.)")
-        axd["psychometric_2AFC_engaged"].set_title("")
-        axd["psychometric_2AFC_engaged"].set_ylabel("$p$(right | eng.)")
+        axd["accuracy_state_2ADC"].set_title("")
+        axd["accuracy_state_2ADC"].set_ylabel("Accuracy")
+        axd["accuracy_state_2AFC"].set_title("")
+        axd["accuracy_state_2AFC"].set_ylabel("Accuracy")
 
         axd["accuracy_treatment_2ADC"].set_title("")
         axd["accuracy_treatment_2AFC"].set_title("")
@@ -6091,9 +5885,7 @@ def _(FuncFormatter, axd, fig, mount_figure, path_panels):
         fig.savefig((path_panels / "figure4").with_suffix(".svg"))
         fig.savefig((path_panels / "figure4").with_suffix(".png"))
 
-        fig.align_xlabels()
-        fig.align_ylabels()
-        # fig.tight_layout()
+        # Constrained layout aligns labels within the nested task blocks.
     fig
     return
 
@@ -6108,25 +5900,6 @@ def _(mo):
 
 @app.cell
 def figure4_supp(fig_size, mount_figure, plt):
-    # Supplementary figure: the 4 per-task panels (state-switch histogram and
-    # dwell time, for 2ADC and 2AFC separately) that were displaced from the
-    # main figure4 mosaic when that row was replaced by pooled (2AFC+2ADC)
-    # versions of the same panels. Same 1x4 layout that row used in the main
-    # figure. Kept here as a supplement so the per-task breakdown is still
-    # available even though the main figure now reports the pooled version.
-    # histogram_transitions_2ADC / histogram_transitions_2AFC / dwell_time_2ADC
-    # / dwell_time_2AFC are drawn by their own existing cells further up the
-    # notebook -- those cells (and the dwell-time significance-annotation cell
-    # downstream of them) already target supp_axd whenever mount_figure is
-    # True, the same way the main panels target axd, so they redraw into this
-    # mosaic automatically once it exists; titles are already set by those
-    # cells too, so nothing else is needed here besides the layout.
-    #
-    # This cell only builds the (still-empty) mosaic -- it necessarily runs
-    # BEFORE the panel-drawing cells above, so its own output is blank. The
-    # populated figure is displayed/saved by a second cell at the very end of
-    # the notebook, which runs after those panel cells (same aLJB/elJp
-    # two-cell split the main figure4 mosaic uses, for the same reason).
     if mount_figure:
         supp_fig, supp_axd = plt.subplot_mosaic(
             [
@@ -6155,16 +5928,17 @@ def figure4_supp_finalize(
     path_panels,
     supp_fig,
 ):
-    # Finalize + save the supplementary figure (see figure4_supp above) --
-    # runs after histogram_transitions_2ADC/2AFC and dwell_time_2ADC/2AFC (and
-    # the dwell-time significance annotations) have drawn into it, so this is
-    # the actual populated result.
     if mount_figure:
         _ = (histogram_transitions_2ADC, histogram_transitions_2AFC, dwell_time_2ADC, dwell_time_2AFC)
         supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".pdf"))
         supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".svg"))
         supp_fig.savefig((path_panels / "figure4_supp_dwell_histograms").with_suffix(".png"))
     supp_fig
+    return
+
+
+@app.cell
+def _():
     return
 
 
