@@ -23,7 +23,7 @@ def _(mo):
     mo.md(r"""
     ## Description
 
-    We compare three two-state GLM-HMM-t models for the 2ADC and 2AFC tasks: a model without a drug regressor, a model with the drug regressor only in transitions, and a model with drug effects in the emissions. Model fit is quantified by the change in held-out log-likelihood relative to the model without the drug regressor.
+    We compare four two-state GLM-HMM-t models for the 2ADC and 2AFC tasks: a model without a drug regressor, a model with the drug regressor only in transitions, and a model with drug effects in the emissions. Model fit is quantified by the change in held-out log-likelihood relative to the model without the drug regressor.
     """)
     return
 

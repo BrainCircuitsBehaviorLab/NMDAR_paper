@@ -17,7 +17,6 @@
         "stim_x_delay_param",
         "choice_lag_param",
         "bias",
-        "drug_code",
         "drug_x_stim_x_delay_param",
         "drug_x_choice_lag_param"
     ],
@@ -27,6 +26,7 @@
     ],
     "frozen_emissions": {
         "1": {
+            "drug_x_stim_x_delay_param": 0.0,
             "stim_x_delay_param": 0.0
         }
     },
@@ -36,5 +36,5 @@
     ],
     "model_id": "drug_transitions_emissions",
     "cv_mode": "balanced_session_holdout",
-    "cv_repeats": 0
+    "cv_repeats": 5
 }

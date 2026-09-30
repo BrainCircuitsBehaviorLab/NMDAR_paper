@@ -255,7 +255,6 @@ def _(get_adapter, mo, model_cfg):
     is_2afc = adapter.num_classes == 2
     plots = adapter.get_plots()
 
-
     return adapter, df_all, is_2afc, plots, task_name
 
 
@@ -269,28 +268,28 @@ def _(df_all, pl, task_name):
             .filter(pl.col("condition").is_in(["drug", "saline"]))
             .sort(["subject", "session"])
         )
-    
+
         paired = []
-    
+
         for sub_df in sessions.partition_by("subject"):
             last_saline = None
-    
+
             for row in sub_df.iter_rows(named=True):
-    
+
                 if row["condition"] == "saline":
                     # Nos quedamos con la saline más reciente
                     last_saline = row
-    
+
                 elif row["condition"] == "drug" and last_saline is not None:
                     # Pareamos esta drug con la última saline anterior
                     paired.extend([last_saline, row])
-    
+
                     # La saline ya está usada:
                     # siguientes drugs se descartan hasta encontrar otra saline
                     last_saline = None
-    
+
         paired_sessions = pl.DataFrame(paired)
-    
+
         df_paired = df_all.join(
             paired_sessions.select(["subject", "session"]),
             on=["subject", "session"],

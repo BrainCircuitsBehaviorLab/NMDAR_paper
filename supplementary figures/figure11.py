@@ -26,13 +26,14 @@ def _():
     from glmhmmt.tasks import get_adapter
     from glmhmmt.runtime import configure_paths
     from glmhmmt.tasks.fitted_regressors import FittedWeightRegressorSpec, mean_feature_weights_from_fit
-    from src.process.common import attach_signed_delay_columns
+    from src.process.common import attach_signed_delay_columns, compute_rb_by_x
     from src.plots.common import BOXPLOT_STYLE, plot_mean_over_data, psychometric_repeat, fig_size
 
     return (
         BOXPLOT_STYLE,
         Path,
         attach_signed_delay_columns,
+        compute_rb_by_x,
         configure_paths,
         fig_size,
         get_adapter,
@@ -75,11 +76,12 @@ def _(fig_size, mount_figure, plt):
     if mount_figure:
         fig, axd = plt.subplot_mosaic(
             [
-                ["acc_2ADC", "rb_2ADC", "acc_animals_2ADC", "nlicks_2ADC"],
-                ["acc_2AFC", "rb_2AFC", "acc_animals_2AFC", "nlicks_2AFC"],
-                ["acc_MCDR", "rb_MCDR", "acc_animals_MCDR", "."],
+                ["acc_2ADC", "acc_animals_2ADC", "acc_2AFC", "acc_animals_2AFC"],
+                ["rb_2ADC", "rb_animals_2ADC", "rb_2AFC", "rb_animals_2AFC"],
+                # ["nlicks_2ADC", "nlicks_2AFC"],
+                # ["acc_MCDR", "rb_MCDR", "acc_animals_MCDR", "."],
             ],
-            figsize=fig_size(1),
+            figsize=fig_size(1, 1.6),
             constrained_layout=True,
         )
     else:
@@ -144,7 +146,14 @@ def _(MCDR, data_path, pl, two_afc, two_afc_delay):
         .alias("signed_ttype_c")
     )
     # df_MCDR = df_MCDR.filter(pl.col("batch") == "11B")
-    return df_2ADC_licks, df_2AFC, df_2AFC_control, df_2AFC_delay, df_2AFC_licks, df_MCDR
+    return (
+        df_2ADC_licks,
+        df_2AFC,
+        df_2AFC_control,
+        df_2AFC_delay,
+        df_2AFC_licks,
+        df_MCDR,
+    )
 
 
 @app.cell
@@ -157,7 +166,14 @@ def _(MCDR, two_afc, two_afc_delay):
 
 
 @app.cell
-def _(df_2ADC_licks, df_2AFC_control, df_2AFC_delay, df_2AFC_licks, df_MCDR, pl):
+def _(
+    df_2ADC_licks,
+    df_2AFC_control,
+    df_2AFC_delay,
+    df_2AFC_licks,
+    df_MCDR,
+    pl,
+):
     accuracy_animals_2ADC = (
         df_2AFC_delay.filter(pl.col("drug") == "Rest")
         .select("subject", "delays", pl.col("hit").cast(pl.Float64).alias("accuracy"))
@@ -359,9 +375,19 @@ def _(mo):
 
 
 @app.cell
-def _(BOXPLOT_STYLE, axd, figsize, mount_figure, nlicks_2ADC, path_panels, plt, sns, treatment_palette):
+def _(
+    BOXPLOT_STYLE,
+    axd,
+    figsize,
+    mount_figure,
+    nlicks_2ADC,
+    path_panels,
+    plt,
+    sns,
+    treatment_palette,
+):
     plt.figure(figsize=figsize, constrained_layout=True)
-    nlicks_axis_2ADC = plt.gca() if not mount_figure else axd["nlicks_2ADC"]
+    nlicks_axis_2ADC = plt.gca() if "nlicks_2ADC" not in axd else axd["nlicks_2ADC"]
     nlicks_axis_2ADC.clear()
     sns.boxplot(
         data=nlicks_2ADC,
@@ -666,9 +692,19 @@ def _(mo):
 
 
 @app.cell
-def _(BOXPLOT_STYLE, axd, figsize, mount_figure, nlicks_2AFC, path_panels, plt, sns, treatment_palette):
+def _(
+    BOXPLOT_STYLE,
+    axd,
+    figsize,
+    mount_figure,
+    nlicks_2AFC,
+    path_panels,
+    plt,
+    sns,
+    treatment_palette,
+):
     plt.figure(figsize=figsize, constrained_layout=True)
-    nlicks_axis_2AFC = plt.gca() if not mount_figure else axd["nlicks_2AFC"]
+    nlicks_axis_2AFC = plt.gca() if "nlicks_2AFC" not in axd else axd["nlicks_2AFC"]
     nlicks_axis_2AFC.clear()
     sns.boxplot(
         data=nlicks_2AFC,
@@ -809,6 +845,84 @@ def _(
     return
 
 
+@app.cell
+def single_animal_rep_bias(
+    axd,
+    compute_rb_by_x,
+    df_2AFC_control,
+    df_2AFC_delay,
+    figsize,
+    mo,
+    mount_figure,
+    path_panels,
+    pl,
+    plt,
+    sns,
+):
+    # Single-animal rep. bias
+    rb_animals_df_2ADC = compute_rb_by_x(
+        df_2AFC_delay.filter(pl.col("drug") == "Rest").to_pandas(),
+        x_col="delays",
+        choice_col="choices",
+    )
+    rb_animals_df_2AFC = compute_rb_by_x(
+        df_2AFC_control.with_columns(pl.col("ILD").abs().alias("abs_ILD")).to_pandas(),
+        x_col="abs_ILD",
+        choice_col="Choice",
+    )
+
+
+    def _plot_rb_animals(data, x_col, ax):
+        ax.clear()
+        sns.lineplot(
+            data=data,
+            x=x_col,
+            y="rb",
+            units="subject",
+            estimator=None,
+            color="black",
+            marker="o",
+            markersize=2,
+            markeredgewidth=0,
+            linewidth=0.6,
+            alpha=0.45,
+            legend=False,
+            ax=ax,
+        )
+        ax.axhline(0.5, color="gray", ls="--")
+        ax.set(ylabel="Rep. bias", ylim=(0.45, 1))
+        sns.despine(ax=ax)
+
+
+    plt.figure(figsize=figsize, constrained_layout=True)
+    rb_animals_2ADC = plt.gca() if "rb_animals_2ADC" not in axd else axd["rb_animals_2ADC"]
+    _plot_rb_animals(rb_animals_df_2ADC, "delays", rb_animals_2ADC)
+    rb_animals_2ADC.set(
+        xlabel="Delay (s)",
+        xticks=[0.1, 1, 3, 10],
+        xticklabels=["0", "1", "3", "10"],
+    )
+
+    plt.figure(figsize=figsize, constrained_layout=True)
+    rb_animals_2AFC = plt.gca() if "rb_animals_2AFC" not in axd else axd["rb_animals_2AFC"]
+    _plot_rb_animals(rb_animals_df_2AFC, "abs_ILD", rb_animals_2AFC)
+    rb_animals_2AFC.set(
+        xlabel="|ILD| (dB)",
+        xticks=[0, 2, 4, 8, 20],
+        xticklabels=["0", "2", "4", "8", "20"],
+    )
+    rb_animals_2AFC.invert_xaxis()
+
+    if not mount_figure:
+        rb_animals_2ADC.figure.savefig(path_panels / "rb_animals_2ADC.svg")
+        rb_animals_2ADC.figure.savefig(path_panels / "rb_animals_2ADC.png")
+        rb_animals_2AFC.figure.savefig(path_panels / "rb_animals_2AFC.svg")
+        rb_animals_2AFC.figure.savefig(path_panels / "rb_animals_2AFC.png")
+    mo.hstack([rb_animals_2ADC.figure, rb_animals_2AFC.figure]) if not mount_figure else None
+
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -899,7 +1013,7 @@ def _(
     plt,
 ):
     plt.figure(figsize=figsize, constrained_layout=True)
-    acc_MCDR = plt.gca() if not mount_figure else axd["acc_MCDR"]
+    acc_MCDR = plt.gca() if "acc_MCDR" not in axd else axd["acc_MCDR"]
 
     plot_mean_over_data(
         df_MCDR.filter(pl.col("drug") == "saline"),
@@ -973,7 +1087,7 @@ def _(
     sns,
 ):
     plt.figure(figsize=figsize, constrained_layout=True)
-    acc_animals_MCDR = plt.gca() if not mount_figure else axd["acc_animals_MCDR"]
+    acc_animals_MCDR = plt.gca() if "acc_animals_MCDR" not in axd else axd["acc_animals_MCDR"]
     acc_animals_MCDR.clear()
     sns.lineplot(
         data=accuracy_animals_MCDR,
@@ -1103,7 +1217,7 @@ def _(mo):
 @app.cell
 def _(MCDR_plots, axd, df_MCDR, figsize, mount_figure, path_panels, pl, plt):
     plt.figure(figsize=figsize, constrained_layout=True)
-    rb_MCDR = plt.gca() if not mount_figure else axd["rb_MCDR"]
+    rb_MCDR = plt.gca() if "rb_MCDR" not in axd else axd["rb_MCDR"]
     MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "saline", pl.col("batch") == "11B"), ax=rb_MCDR, title="", color="tab:gray")
     MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "drug", pl.col("batch") == "11B"), ax=rb_MCDR, title="", color="tab:pink")
     MCDR_plots.plot_rb(df_MCDR.filter(pl.col("drug") == "rest", pl.col("batch") == "11B"), ax=rb_MCDR, title='', color="k")
@@ -1379,18 +1493,27 @@ def _(axd, fig, mount_figure, path_panels):
 
         for _name, _ax in axd.items():
             _ax.set_ylabel("")
+            _ax.set_title("")
 
-        axd["acc_2ADC"].set_title("Accuracy")
-        axd["rb_2ADC"].set_title("Repeating bias")
-        axd["acc_animals_2ADC"].set_title("Single-animal\naccuracy")
-        axd["nlicks_2ADC"].set_title("Licks\n(correct trials)")
+        axd["acc_2ADC"].set_title("STM", fontweight="bold")
+        axd["acc_2AFC"].set_title("EA", fontweight="bold")
 
-        for _name in ["acc_2ADC", "rb_2ADC", "acc_animals_2ADC"]:
+        axd["acc_2ADC"].set_ylabel("Accuracy")
+        axd["rb_2ADC"].set_ylabel("Repeating bias")
+        axd["acc_animals_2ADC"].set_ylabel("Single-animal\naccuracy")
+        axd["acc_animals_2AFC"].set_ylabel("Single-animal\naccuracy")
+        axd["acc_2AFC"].set_ylabel("Accuracy")
+        axd["rb_2AFC"].set_ylabel("Repeating bias")
+        axd["rb_animals_2ADC"].set_ylabel("Single-animal\nrepeating bias")
+        axd["rb_animals_2AFC"].set_ylabel("Single-animal\nrepeating bias")
+        # axd["nlicks_2ADC"].set_ylabel("Licks\n(correct trials)")
+
+        for _name in ["acc_2ADC", "rb_2ADC", "acc_animals_2ADC", "rb_animals_2ADC"]:
             axd[_name].set_xticks([0.1, 3, 10], labels=["0", "3", "10"])
-        for _name in ["acc_2AFC", "rb_2AFC", "acc_animals_2AFC"]:
+        for _name in ["acc_2AFC", "rb_2AFC", "acc_animals_2AFC", "rb_animals_2AFC"]:
             axd[_name].set_xticks([20, 8, 0], labels=["20", "8", "0"])
-        for _name in ["acc_MCDR", "rb_MCDR", "acc_animals_MCDR"]:
-            axd[_name].set_xticks([0, 1, 2, 3], labels=["VG", "E", "M", "H"])
+        # for _name in ["acc_MCDR", "rb_MCDR", "acc_animals_MCDR"]:
+        #     axd[_name].set_xticks([0, 1, 2, 3], labels=["VG", "E", "M", "H"])
 
         fig.align_labels()
         fig.savefig(path_panels / "supplementary_figure11.svg")
@@ -1398,6 +1521,7 @@ def _(axd, fig, mount_figure, path_panels):
         fig.savefig(path_panels / "supplementary_figure11.pdf")
     fig
     return
+
 
 if __name__ == "__main__":
     app.run()

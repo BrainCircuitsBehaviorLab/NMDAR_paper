@@ -149,6 +149,8 @@ def test_hue_annotation(Annotator, np, pd, ttest_1samp):
         if hue is not None:
             annotator_kwargs.update(hue=hue, hue_order=hue_order)
 
+        ylim_before = ax.get_ylim()
+        lines_before = {id(line) for line in ax.lines}
         annotator = Annotator(ax, pairs, data=df, **annotator_kwargs)
         annotator.configure(line_width=0, text_format="star", verbose=0)
 
@@ -170,12 +172,20 @@ def test_hue_annotation(Annotator, np, pd, ttest_1samp):
         else:
             annotator.set_pvalues_and_annotate(pvalues)
 
-        # Pin all new annotation texts to a uniform y (the highest one wins).
+        # Annotator stacks each one-sample test as its own bracket, one level above
+        # the previous one, and grows ylim to fit the stack. Drop those brackets and
+        # put every label on one line just above the data, keeping the original ylim.
+        for line in [line for line in ax.lines if id(line) not in lines_before]:
+            line.remove()
         new_texts = [t for t in ax.texts if id(t) not in texts_before]
         if new_texts:
-            target_y = max(t.get_position()[1] for t in new_texts)
+            finite = pd.to_numeric(df[y], errors="coerce").dropna()
+            y_min, y_max = float(finite.min()), float(finite.max())
+            pad = 0.05 * max(y_max - y_min, 1e-9)
+            target_y = y_max + pad
             for t in new_texts:
-                t.set_position((t.get_position()[0], target_y))
+                t.xy = (t.xy[0], target_y)
+            ax.set_ylim(ylim_before[0], max(ylim_before[1], target_y + 2.5 * pad))
 
         return annotator
 
@@ -1268,16 +1278,16 @@ def _(fig_size, mount_figure, plt):
                     "single_session_drug_2AFC",
                 ],
                 [
-                    "switches_occupancy_pooled",
-                    "switches_occupancy_pooled",
-                    "dwell_time_pooled",
-                    "transition_weights_pooled",
-                ],
-                [
                     "accuracy_treatment_2ADC",
                     "accuracy_state_2ADC",
                     "accuracy_treatment_2AFC",
                     "accuracy_state_2AFC",
+                ],
+                [
+                    "switches_occupancy_pooled",
+                    "switches_occupancy_pooled",
+                    "dwell_time_pooled",
+                    "transition_weights_pooled",
                 ],
             ],
             figsize=fig_size(1, 1),
@@ -1718,8 +1728,7 @@ def transition_weights_pooled(
     # transition_weights_pooled.set_ylim(-15, 15)
 
     _handles, _ = transition_weights_pooled.get_legend_handles_labels()
-    # Legend at the top of the axes (where a title would go) instead of
-    # inside the plot, so it doesn't overlap the boxes/annotations.
+    # Legend inside the axes, centered along the bottom edge.
     transition_weights_pooled.legend(
         _handles,
         ["E→D", "D→E"],
@@ -1729,7 +1738,9 @@ def transition_weights_pooled(
         handletextpad=0.25,
         columnspacing=0.25,
         loc="lower center",
-        bbox_to_anchor=(0.5, 1.0),
+        bbox_to_anchor=(0.5, 0),
+        borderaxespad=0.2,
+        borderpad=0,
     )
     transition_weights_pooled.set_xlabel("")
     transition_weights_pooled.set_ylabel("Transition weight")
@@ -4371,6 +4382,14 @@ def _(mo):
 
 
 @app.cell
+def _():
+    # Which pooled state-switch panel goes into the mounted figure:
+    # "histogram" (probability per switch count) or "cdf" (cumulative).
+    switch_distribution = "cdf"
+    return (switch_distribution,)
+
+
+@app.cell
 def state_switch_histogram_pooled(
     axd,
     fig_size,
@@ -4380,6 +4399,7 @@ def state_switch_histogram_pooled(
     pd,
     plt,
     sns,
+    switch_distribution,
     task_labels,
     treatment_order,
     treatment_palette,
@@ -4397,7 +4417,9 @@ def state_switch_histogram_pooled(
 
     plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
     state_switch_histogram_pooled = (
-        plt.gca() if not mount_figure else axd["state_switch_histogram_pooled"]
+        axd["state_switch_histogram_pooled"]
+        if mount_figure and switch_distribution == "histogram"
+        else plt.gca()
     )
     state_switch_histogram_pooled.clear()
     # Fixed BIN WIDTH (not bin count), matching the per-task
@@ -4455,6 +4477,62 @@ def state_switch_histogram_pooled(
             (path_panels / "state_switch_histogram_pooled").with_suffix(f".{format}")
         )
     state_switch_histogram_pooled
+    return (pooled_switch_df,)
+
+
+@app.cell
+def state_switch_cdf_pooled(
+    axd,
+    fig_size,
+    format,
+    mount_figure,
+    path_panels,
+    plt,
+    pooled_switch_df,
+    sns,
+    switch_distribution,
+    treatment_order,
+    treatment_palette,
+):
+    plt.figure(figsize=fig_size(1, 1), constrained_layout=True)
+    state_switch_cdf_pooled = (
+        axd["state_switch_histogram_pooled"]
+        if mount_figure and switch_distribution == "cdf"
+        else plt.gca()
+    )
+    state_switch_cdf_pooled.clear()
+    sns.ecdfplot(
+        data=pooled_switch_df,
+        x="n_switches",
+        hue="treatment",
+        hue_order=treatment_order,
+        palette=treatment_palette,
+        linewidth=1.8,
+        ax=state_switch_cdf_pooled,
+    )
+    _legend = state_switch_cdf_pooled.get_legend()
+    _handles = _legend.legend_handles
+    _labels = [_t.get_text() for _t in _legend.get_texts()]
+    _legend.remove()
+    state_switch_cdf_pooled.legend(
+        _handles,
+        _labels,
+        frameon=False,
+        title=None,
+        handlelength=1 if mount_figure else None,
+        loc="lower right",
+    )
+    state_switch_cdf_pooled.set_xlim(0, 50)
+    state_switch_cdf_pooled.set_xticks([0, 25, 50])
+    state_switch_cdf_pooled.set_ylim(0, 1)
+    state_switch_cdf_pooled.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    state_switch_cdf_pooled.set_xlabel("State switches")
+    state_switch_cdf_pooled.set_ylabel("Cum. probability")
+    if not mount_figure:
+        state_switch_cdf_pooled.figure.savefig(
+            (path_panels / "state_switch_cdf_pooled").with_suffix(f".{format}")
+        )
+    state_switch_cdf_pooled
     return
 
 
@@ -4815,8 +4893,8 @@ def _():
     SELECTED_SESSIONS = {
         "saline_2ADC": {"subject": None, "session": None},
         "drug_2ADC": {"subject": None, "session": None},
-        "saline_2AFC": {"subject": None, "session": None},
-        "drug_2AFC": {"subject": None, "session": None},
+        "saline_2AFC": {"subject": "20", "session": "020_stage_training_v6_20250731-132940"},
+        "drug_2AFC": {"subject": "20", "session": "020_stage_training_v6_20250801-123448"},
     }
     return (SELECTED_SESSIONS,)
 
@@ -4987,7 +5065,7 @@ def _(
         "drug_2ADC": (
             "2ADC_DRUG",
             "N25",
-            "7",
+            "6",
         ),
         "saline_2AFC": (
             "2AFC_DRUG",
@@ -5088,18 +5166,23 @@ def _(
         color='tab:gray',#state_palette["Engaged"],
         label="Saline",
     )
-    for _trial_x, _probability in zip(
-        _data["trial_x"], _data["p_engaged"], strict=False
-    ):
-        single_session_saline_2ADC.axvspan(
-            _trial_x - 0.5,
-            _trial_x + 0.5,
-            color=state_palette[
-                "Engaged" if _probability > 0.5 else "Disengaged"
-            ],
-            alpha=0.5,
-            linewidth=0,
-        )
+    # One span per run of same-state trials, outlined in white so state
+    # changes stand out.
+    _states = ["Engaged" if _p > 0.5 else "Disengaged" for _p in _data["p_engaged"]]
+    _trial_xs = list(_data["trial_x"])
+    _run_start = 0
+    for _i in range(1, len(_states) + 1):
+        if _i == len(_states) or _states[_i] != _states[_run_start]:
+            single_session_saline_2ADC.axvspan(
+                _trial_xs[_run_start] - 0.5,
+                _trial_xs[_i - 1] + 0.5,
+                facecolor=plt.matplotlib.colors.to_rgba(
+                    state_palette[_states[_run_start]], 0.5
+                ),
+                edgecolor="white",
+                linewidth=1,
+            )
+            _run_start = _i
     # single_session_saline_2ADC.plot(
     #     "trial_x",
     #     "accuracy_window_fraction",
@@ -5119,6 +5202,7 @@ def _(
     )
     single_session_saline_2ADC.set_title("STM", fontweight="bold")
     single_session_saline_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    single_session_saline_2ADC.xaxis.set_major_locator(plt.matplotlib.ticker.MultipleLocator(100))
     single_session_saline_2ADC.legend(frameon=False, loc="lower left", handlelength=1)
     if not mount_figure:
         single_session_saline_2ADC.figure.savefig(
@@ -5161,18 +5245,23 @@ def _(
         color='tab:gray',#state_palette["Engaged"],
         label=r"$p$(Engaged)",
     )
-    for _trial_x, _probability in zip(
-        _data["trial_x"], _data["p_engaged"], strict=False
-    ):
-        single_session_saline_2AFC.axvspan(
-            _trial_x - 0.5,
-            _trial_x + 0.5,
-            color=state_palette[
-                "Engaged" if _probability > 0.5 else "Disengaged"
-            ],
-            alpha=0.5,
-            linewidth=0,
-        )
+    # One span per run of same-state trials, outlined in white so state
+    # changes stand out.
+    _states = ["Engaged" if _p > 0.5 else "Disengaged" for _p in _data["p_engaged"]]
+    _trial_xs = list(_data["trial_x"])
+    _run_start = 0
+    for _i in range(1, len(_states) + 1):
+        if _i == len(_states) or _states[_i] != _states[_run_start]:
+            single_session_saline_2AFC.axvspan(
+                _trial_xs[_run_start] - 0.5,
+                _trial_xs[_i - 1] + 0.5,
+                facecolor=plt.matplotlib.colors.to_rgba(
+                    state_palette[_states[_run_start]], 0.5
+                ),
+                edgecolor="white",
+                linewidth=1,
+            )
+            _run_start = _i
     # single_session_saline_2AFC.plot(
     #     "trial_x",
     #     "accuracy_window_fraction",
@@ -5191,6 +5280,7 @@ def _(
     )
     single_session_saline_2AFC.set_title("EA", fontweight="bold")
     single_session_saline_2AFC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    single_session_saline_2AFC.xaxis.set_major_locator(plt.matplotlib.ticker.MultipleLocator(100))
     # single_session_saline_2AFC.legend(frameon=False, loc="lower right")
     if not mount_figure:
         single_session_saline_2AFC.figure.savefig(
@@ -5233,18 +5323,23 @@ def _(
         color='tab:pink',#state_palette["Engaged"],
         label="Drug",
     )
-    for _trial_x, _probability in zip(
-        _data["trial_x"], _data["p_engaged"], strict=False
-    ):
-        single_session_drug_2ADC.axvspan(
-            _trial_x - 0.5,
-            _trial_x + 0.5,
-            color=state_palette[
-                "Engaged" if _probability > 0.5 else "Disengaged"
-            ],
-            alpha=0.5,
-            linewidth=0,
-        )
+    # One span per run of same-state trials, outlined in white so state
+    # changes stand out.
+    _states = ["Engaged" if _p > 0.5 else "Disengaged" for _p in _data["p_engaged"]]
+    _trial_xs = list(_data["trial_x"])
+    _run_start = 0
+    for _i in range(1, len(_states) + 1):
+        if _i == len(_states) or _states[_i] != _states[_run_start]:
+            single_session_drug_2ADC.axvspan(
+                _trial_xs[_run_start] - 0.5,
+                _trial_xs[_i - 1] + 0.5,
+                facecolor=plt.matplotlib.colors.to_rgba(
+                    state_palette[_states[_run_start]], 0.5
+                ),
+                edgecolor="white",
+                linewidth=1,
+            )
+            _run_start = _i
     # single_session_drug_2ADC.plot(
     #     "trial_x",
     #     "accuracy_window_fraction",
@@ -5263,6 +5358,7 @@ def _(
         ylim=(0, 1),
     )
     single_session_drug_2ADC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    single_session_drug_2ADC.xaxis.set_major_locator(plt.matplotlib.ticker.MultipleLocator(100))
     single_session_drug_2ADC.legend(frameon=False, loc="lower left", handlelength=1)
     if not mount_figure:
         single_session_drug_2ADC.figure.savefig(
@@ -5305,18 +5401,23 @@ def _(
         color='tab:pink',#state_palette["Engaged"],
         label=r"$p$(Engaged)",
     )
-    for _trial_x, _probability in zip(
-        _data["trial_x"], _data["p_engaged"], strict=False
-    ):
-        single_session_drug_2AFC.axvspan(
-            _trial_x - 0.5,
-            _trial_x + 0.5,
-            color=state_palette[
-                "Engaged" if _probability > 0.5 else "Disengaged"
-            ],
-            alpha=0.5,
-            linewidth=0,
-        )
+    # One span per run of same-state trials, outlined in white so state
+    # changes stand out.
+    _states = ["Engaged" if _p > 0.5 else "Disengaged" for _p in _data["p_engaged"]]
+    _trial_xs = list(_data["trial_x"])
+    _run_start = 0
+    for _i in range(1, len(_states) + 1):
+        if _i == len(_states) or _states[_i] != _states[_run_start]:
+            single_session_drug_2AFC.axvspan(
+                _trial_xs[_run_start] - 0.5,
+                _trial_xs[_i - 1] + 0.5,
+                facecolor=plt.matplotlib.colors.to_rgba(
+                    state_palette[_states[_run_start]], 0.5
+                ),
+                edgecolor="white",
+                linewidth=1,
+            )
+            _run_start = _i
     # single_session_drug_2AFC.plot(
     #     "trial_x",
     #     "accuracy_window_fraction",
@@ -5334,6 +5435,7 @@ def _(
         ylim=(0, 1),
     )
     single_session_drug_2AFC.set_yticks([0, 0.5, 1], ["0", "0.5", "1"])
+    single_session_drug_2AFC.xaxis.set_major_locator(plt.matplotlib.ticker.MultipleLocator(100))
     # single_session_drug_2AFC.legend(frameon=False, loc="lower right")
     if not mount_figure:
         single_session_drug_2AFC.figure.savefig(
@@ -5940,6 +6042,14 @@ def _(FuncFormatter, axd, fig, mount_figure, path_panels):
             "accuracy_state_2AFC",
         ):
             axd[_acc_key].yaxis.set_major_formatter(FuncFormatter(_format_accuracy_tick))
+
+        # Shared y-range, so only the leftmost accuracy panel keeps tick labels.
+        for _acc_key in (
+            "accuracy_state_2ADC",
+            "accuracy_treatment_2AFC",
+            "accuracy_state_2AFC",
+        ):
+            axd[_acc_key].tick_params(axis="y", labelleft=False)
 
         # Constrained layout solves the nested histogram/occupancy split on its
         # own, so snap it to the rest of the pooled row, then freeze the layout.
